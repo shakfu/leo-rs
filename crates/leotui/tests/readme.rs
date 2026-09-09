@@ -2,10 +2,16 @@
 //!
 //! `docs/dev/tui-design.md` makes the table the single source for the
 //! dispatcher, `F1` and `--keys`. The README is the fourth reader, and the
-//! only one a compiler cannot check, so it is checked here: a binding that is
-//! added, renamed or removed without touching the README fails this test.
+//! only one a compiler cannot check, so it is checked here: a binding added,
+//! renamed or removed without touching the README fails this test.
+//!
+//! The bindings come from running the binary, not from a copy of the table.
+//! An integration test cannot import a binary crate's modules, and a second
+//! copy of a hundred key specs is a thing to forget to update -- which is
+//! exactly what this test exists to prevent.
 
 use std::path::Path;
+use std::process::Command;
 
 /// The cheatsheet, between its markers.
 fn cheatsheet() -> String {
@@ -26,24 +32,42 @@ fn cheatsheet() -> String {
     text[begin..end].to_string()
 }
 
+/// Every key spec bound in NORMAL mode, straight from the binary.
+fn bindings() -> Vec<String> {
+    let out = Command::new(env!("CARGO_BIN_EXE_leotui"))
+        .arg("--key-specs")
+        .output()
+        .expect("could not run leotui --key-specs");
+    assert!(out.status.success(), "leotui --key-specs failed");
+    String::from_utf8(out.stdout)
+        .expect("--key-specs wrote invalid UTF-8")
+        .lines()
+        .map(|l| l.to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 /// Keys markdown cannot show inside inline code, with the reason.
 ///
-/// A lone backtick cannot appear between backticks. The README writes it as
-/// ``` `` ` `` ``` and as ``Ctrl-` ``, which no simple search can match.
+/// A lone backtick cannot appear between backticks. The README writes them as
+/// ``` `` ` `` ``` and ``` ``Ctrl-` `` ```, which no simple search can match;
+/// the test below checks their descriptions instead.
 const UNCHECKABLE: &[&str] = &["`", "Ctrl-`"];
 
 #[test]
 fn the_readme_documents_every_binding() {
     let sheet = cheatsheet();
-    let mut missing = Vec::new();
-    for binding in leotui_bindings() {
-        if UNCHECKABLE.contains(&binding) {
-            continue;
-        }
-        if !sheet.contains(&format!("`{binding}`")) {
-            missing.push(binding);
-        }
-    }
+    let all = bindings();
+    assert!(
+        all.len() > 50,
+        "only {} bindings: is --key-specs right?",
+        all.len()
+    );
+    let missing: Vec<&String> = all
+        .iter()
+        .filter(|spec| !UNCHECKABLE.contains(&spec.as_str()))
+        .filter(|spec| !sheet.contains(&format!("`{spec}`")))
+        .collect();
     assert!(
         missing.is_empty(),
         "the README cheatsheet does not mention: {missing:?}"
@@ -62,124 +86,3 @@ fn the_readme_mentions_the_keys_markdown_cannot_quote() {
         "Leo's Ctrl-` chord is undocumented"
     );
 }
-
-/// Every key spec bound in NORMAL mode, from `leotui --keys`.
-///
-/// The binary is the source rather than the library, because `leotui` is a
-/// binary crate: an integration test cannot import its modules.
-fn leotui_bindings() -> Vec<&'static str> {
-    // Kept in step by `bindings::tests::the_readme_test_lists_every_binding`,
-    // which fails if the table gains a key this list does not have.
-    BINDING_KEYS.to_vec()
-}
-
-/// The key specs in `bindings::BINDINGS` for `Mode::Normal`.
-pub static BINDING_KEYS: &[&str] = &[
-    "j",
-    "Down",
-    "k",
-    "Up",
-    "h",
-    "Left",
-    "l",
-    "Right",
-    "Enter",
-    "gg",
-    "Alt-Home",
-    "G",
-    "Alt-End",
-    "gp",
-    "{",
-    "}",
-    "[m",
-    "]m",
-    "]c",
-    "Alt-n",
-    "o",
-    "Insert",
-    "O",
-    "a",
-    "Ctrl-Insert",
-    "dd",
-    "Delete",
-    "Backspace",
-    "yy",
-    "p",
-    "`",
-    "m",
-    "M",
-    "J",
-    "Shift-Down",
-    "K",
-    "Shift-Up",
-    "<<",
-    "Shift-Left",
-    ">>",
-    "Shift-Right",
-    "g<",
-    "g>",
-    "e",
-    "Ctrl-h",
-    "i",
-    "Ctrl-i",
-    "Ctrl-m",
-    "Ctrl-[",
-    "Ctrl-]",
-    "Ctrl-`",
-    "Space",
-    "za",
-    "zo",
-    "Alt-]",
-    "zc",
-    "Alt-[",
-    "zR",
-    "zM",
-    "Alt--",
-    "zr",
-    "zm",
-    "zx",
-    "z1",
-    "z2",
-    "z3",
-    "z4",
-    "z5",
-    "z6",
-    "z7",
-    "z8",
-    "z9",
-    "h j k l",
-    "w W b B e E ge",
-    "0 ^ $ gg G { } %",
-    "f F t T ; ,",
-    "H M L",
-    "d c y > < gu gU g~",
-    "iw aw i\" a( ip",
-    "x X r s S D C Y J ~",
-    "i a I A o O",
-    "v V",
-    "p P",
-    ".",
-    "Escape",
-    "Tab",
-    "Ctrl-f",
-    "PageDown",
-    "Ctrl-b",
-    "PageUp",
-    "Ctrl-d",
-    "Ctrl-u",
-    "u",
-    "Ctrl-z",
-    "Ctrl-r",
-    "Ctrl-Shift-z",
-    "Ctrl-s",
-    "Ctrl-Left",
-    "Ctrl-Right",
-    "F1",
-    ":",
-    "/",
-    "?",
-    "n",
-    "N",
-    "w",
-    "q",
-];

@@ -157,7 +157,7 @@ One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 
 | | |
 |---|---|
-| `Tab` | move between the outline and the body |
+| `Tab` `Shift-Tab` | move between the outline and the body |
 | `Escape` | in the body, go back to the outline |
 | `:` | the command line |
 | `/` `?` | search forwards, backwards |
@@ -169,6 +169,7 @@ One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 | `Ctrl-f` `Ctrl-b` `PageDown` `PageUp` | a screen down, up |
 | `Ctrl-d` `Ctrl-u` | half a screen down, up |
 | `Ctrl-Left` `Ctrl-Right` | give the body, the outline more room |
+| `:set syntax` `:set nosyntax` | colour the body, or leave it plain |
 | `F1` | help |
 | `q` | quit |
 
@@ -176,7 +177,7 @@ One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 
 Every Leo command name, with Tab completion and Up/Down history, plus the vim
 spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
-the Nth visible row. `:set search=all|headlines split=N wrap number`.
+the Nth visible row. `:set search=all|headlines split=N wrap number syntax`.
 
 **Leo's own chords**
 
@@ -195,6 +196,15 @@ turns the protocol off.
 | `Ctrl-h` | edit the headline |
 
 <!-- keys:end -->
+
+The body is coloured by the language declared at the node: an `@language`
+directive in the node or an ancestor, or the nearest `@<file>` node's
+extension. A node with neither is left plain, so prose is never coloured as
+code. `@language` lines inside a body move it from that line on, so one node
+can hold Python and then C; `@nocolor`, `@color` and `@killcolor` work as they
+do in Leo. Comment and string delimiters come from Leo's own tables, so every
+language it knows gets comments and strings; keywords come from Leo's colorizer
+modes for 36 of them. `:set nosyntax` turns it off.
 
 Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty.
 `@<file>` nodes are green. The design, and what is still to come, is in

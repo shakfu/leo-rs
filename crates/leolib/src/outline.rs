@@ -846,38 +846,56 @@ impl Outline {
         set_delims_from_language(&language)
     }
 
-    /// The language in effect at p.
+    /// The language in effect at p, falling back to the outline's default.
     ///
-    /// Four passes, in Leo's order: an unambiguous @language directive in p's
-    /// body, then in its direct ancestors, then in ancestors reached through
-    /// clone links, then the file extension of the nearest @<file> headline.
+    /// Always answers, because the writers must have a language to pick
+    /// comment delimiters with. A caller that needs to know whether anything
+    /// actually *declared* one -- a colorizer, say -- wants
+    /// [`language_at`](Self::language_at) instead.
     pub fn get_language(&self, p: &Position) -> String {
+        self.language_at(p)
+            .unwrap_or_else(|| self.config.target_language.clone())
+    }
+
+    /// The language declared at p, or None when nothing declares one.
+    ///
+    /// Five passes, in Leo's order: an unambiguous `@language` directive in
+    /// p's body, then in its direct ancestors, then in ancestors reached
+    /// through clone links, then the file extension of the nearest `@<file>`
+    /// headline, direct then extended.
+    ///
+    /// None means no `@language` and no `@<file>` above p. Leo answers
+    /// `target_language` there and colours the node anyway, which paints
+    /// ordinary prose as Python: `class`, `if` and `import` become keywords
+    /// and an apostrophe opens a string. Reporting the absence lets a caller
+    /// leave such a node alone.
+    pub fn language_at(&self, p: &Position) -> Option<String> {
         if let Some(lang) = find_first_valid_at_language(p.b(self)) {
-            return lang;
+            return Some(lang);
         }
         for p2 in p.self_and_parents(self) {
             let langs = find_all_valid_languages(p2.b(self));
             if langs.len() == 1 {
-                return langs[0].clone();
+                return Some(langs[0].clone());
             }
         }
         for v in self.v_and_parents(p.v) {
             let langs = find_all_valid_languages(&self.node(v).b);
             if langs.len() == 1 {
-                return langs[0].clone();
+                return Some(langs[0].clone());
             }
         }
         for p2 in p.self_and_parents(self) {
             if let Some(lang) = self.language_from_headline(p2.v) {
-                return lang;
+                return Some(lang);
             }
         }
         for v in self.v_and_parents(p.v) {
             if let Some(lang) = self.language_from_headline(v) {
-                return lang;
+                return Some(lang);
             }
         }
-        self.config.target_language.clone()
+        None
     }
 
     fn language_from_headline(&self, v: VnodeId) -> Option<String> {
@@ -1163,6 +1181,48 @@ mod tests {
         let child = o.insert_as_last_child(&root);
         assert_eq!(o.get_language(&child), "python");
         assert_eq!(o.get_delims(&child).0, "#");
+    }
+
+    #[test]
+    fn a_node_with_nothing_declaring_a_language_has_none() {
+        // Leo answers target_language here, which paints prose as Python.
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "Notes");
+        o.set_body(&root, "Ideas for the class, not code.\n");
+        assert_eq!(o.language_at(&root), None);
+        assert_eq!(o.get_language(&root), "python");
+    }
+
+    #[test]
+    fn a_declared_language_reaches_the_descendants_and_no_further() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "Code");
+        o.set_body(&root, "@language c\n");
+        let child = o.insert_as_last_child(&root);
+        o.set_headline(&child, "a child");
+        let sibling = o.insert_after(&root);
+        o.set_headline(&sibling, "Notes");
+        assert_eq!(o.language_at(&root).as_deref(), Some("c"));
+        assert_eq!(o.language_at(&child).as_deref(), Some("c"));
+        assert_eq!(
+            o.language_at(&sibling),
+            None,
+            "a sibling is not a descendant"
+        );
+    }
+
+    #[test]
+    fn an_at_file_extension_declares_a_language_for_its_subtree() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file x.py");
+        let child = o.insert_as_last_child(&root);
+        let sibling = o.insert_after(&root);
+        o.set_headline(&sibling, "prose");
+        assert_eq!(o.language_at(&child).as_deref(), Some("python"));
+        assert_eq!(o.language_at(&sibling), None);
     }
 
     #[test]

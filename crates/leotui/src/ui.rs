@@ -9,6 +9,7 @@ use ratatui::Frame;
 use crate::app::{App, Focus, Mode};
 use crate::bindings::{self, BINDINGS};
 use crate::commands;
+use crate::highlight::{self, Class};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -153,32 +154,44 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         0
     };
     let text_width = inner_width.saturating_sub(number_width);
+    // The language comes from the model, and the body may change it partway
+    // through: see `highlight`. A node nothing declares a language for is left
+    // plain rather than coloured as whatever the outline's default is.
+    let spans = match app.options.syntax {
+        true => highlight::language_of(app.outline(), &app.current)
+            .map(|language| highlight::highlight(&lines, &language))
+            .unwrap_or_default(),
+        false => Vec::new(),
+    };
     let shown: Vec<Line> = lines
         .iter()
         .enumerate()
         .skip(top)
         .take(inner_height)
         .map(|(i, l)| {
-            let text = truncate(&l.replace('\t', "    "), text_width);
             // A selected line is shown reversed. The exact columns matter less
             // than seeing what an operator would take.
             let selected = matches!(selection, Some((a, b, _)) if i >= a.0 && i <= b.0);
-            let body = if selected {
-                Span::styled(text, Style::default().bg(Color::DarkGray).fg(Color::White))
-            } else {
-                Span::raw(text)
-            };
+            let mut cells: Vec<Span> = Vec::new();
             if number_width > 0 {
-                Line::from(vec![
-                    Span::styled(
-                        format!("{:>w$} ", i + 1, w = number_width.saturating_sub(1)),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    body,
-                ])
-            } else {
-                Line::from(body)
+                cells.push(Span::styled(
+                    format!("{:>w$} ", i + 1, w = number_width.saturating_sub(1)),
+                    Style::default().fg(Color::DarkGray),
+                ));
             }
+            let base = if selected {
+                Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else {
+                Style::default()
+            };
+            for (text, class) in split_line(l, spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])) {
+                let text = truncate(&text.replace('\t', "    "), text_width);
+                if text.is_empty() {
+                    continue;
+                }
+                cells.push(Span::styled(text, style_for(class, base)));
+            }
+            Line::from(cells)
         })
         .collect();
     let more = lines.len().saturating_sub(top + inner_height);
@@ -339,6 +352,38 @@ pub fn help_lines(focus: Focus) -> Vec<String> {
         ));
     }
     out
+}
+
+/// A line split into its classified runs, plain text included.
+fn split_line<'a>(line: &'a str, spans: &[highlight::Span]) -> Vec<(&'a str, Class)> {
+    let end = line.trim_end_matches('\n').len();
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    for span in spans {
+        if span.start > at {
+            out.push((&line[at..span.start.min(end)], Class::Plain));
+        }
+        out.push((&line[span.start.min(end)..span.end.min(end)], span.class));
+        at = span.end.min(end);
+    }
+    if at < end {
+        out.push((&line[at..end], Class::Plain));
+    }
+    out
+}
+
+/// The colour for one class, over whatever the line's own style is.
+fn style_for(class: Class, base: Style) -> Style {
+    match class {
+        Class::Plain => base,
+        Class::Directive => base.fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        Class::Section => base.fg(Color::Magenta),
+        Class::Comment => base.fg(Color::DarkGray),
+        Class::Str => base.fg(Color::Green),
+        Class::Number => base.fg(Color::Cyan),
+        Class::Keyword => base.fg(Color::Yellow),
+        Class::Builtin => base.fg(Color::Blue),
+    }
 }
 
 /// Cut a line to `width` display cells, counting characters, not bytes.

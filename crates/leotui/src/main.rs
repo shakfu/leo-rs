@@ -3,6 +3,7 @@
 //!     leotui FILE.leo            edit an outline
 //!     leotui FILE.leo --dump     print one composed frame and exit
 //!     leotui --keys              print the binding table and exit
+//!     leotui --key-specs         print one binding spec per line and exit
 //!     leotui F.leo --no-kitty-keys           plain terminal key decoding
 //!     leotui F.leo --dump --press "l,l,F1"   press keys, then dump
 //!
@@ -14,7 +15,9 @@ mod app;
 mod bindings;
 mod commands;
 mod editor;
+mod highlight;
 mod keys;
+mod keywords;
 mod minibuffer;
 mod search;
 mod ui;
@@ -39,6 +42,7 @@ struct Args {
     path: Option<String>,
     dump: bool,
     list_keys: bool,
+    list_key_specs: bool,
     press: Vec<String>,
     kitty_keys: bool,
     width: u16,
@@ -51,6 +55,7 @@ fn parse_args() -> Result<Args, String> {
         path: None,
         dump: false,
         list_keys: false,
+        list_key_specs: false,
         press: Vec::new(),
         kitty_keys: true,
         width: 100,
@@ -62,6 +67,7 @@ fn parse_args() -> Result<Args, String> {
         match arg.as_str() {
             "--dump" => args.dump = true,
             "--keys" => args.list_keys = true,
+            "--key-specs" => args.list_key_specs = true,
             "--press" => {
                 let spec = it.next().ok_or("--press needs a key sequence")?;
                 args.press = spec.split(',').map(|s| s.trim().to_string()).collect();
@@ -89,8 +95,8 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn usage() -> String {
-    "usage: leotui [FILE.leo] [--dump] [--keys] [--press KEYS] [--no-external] \
-[--no-kitty-keys] [--width N] [--height N]"
+    "usage: leotui [FILE.leo] [--dump] [--keys] [--key-specs] [--press KEYS] \
+[--no-external] [--no-kitty-keys] [--width N] [--height N]"
         .to_string()
 }
 
@@ -104,6 +110,12 @@ fn main() {
     };
     if args.list_keys {
         print_keys();
+        std::process::exit(0);
+    }
+    if args.list_key_specs {
+        for spec in bindings::normal_mode_specs() {
+            println!("{spec}");
+        }
         std::process::exit(0);
     }
     let doc = match &args.path {
@@ -425,6 +437,157 @@ mod tests {
                 crossterm::event::KeyModifiers::NONE,
             ));
         }
+    }
+
+    /// The foreground colours of one rendered row, left to right.
+    fn row_colours(app: &mut App, width: u16, height: u16, row: u16) -> Vec<(String, Color)> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| ui::draw(f, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut out: Vec<(String, Color)> = Vec::new();
+        for x in 0..width {
+            let cell = &buffer[(x, row)];
+            // Pane borders share DarkGray with comments, and would merge into
+            // the run beside them.
+            if cell
+                .symbol()
+                .chars()
+                .all(|c| ('\u{2500}'..='\u{257f}').contains(&c))
+            {
+                out.push((String::new(), Color::Reset));
+                continue;
+            }
+            match out.last_mut() {
+                Some((text, colour)) if *colour == cell.fg => text.push_str(cell.symbol()),
+                _ => out.push((cell.symbol().to_string(), cell.fg)),
+            }
+        }
+        out.into_iter()
+            .map(|(t, c)| (t.trim().to_string(), c))
+            .filter(|(t, _)| !t.is_empty())
+            .collect()
+    }
+
+    /// An app showing one node whose body is `text`, in a `.py` file.
+    fn highlighted(text: &str) -> App {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file demo.py");
+        o.set_body(&root, text);
+        App::new(Document::new(o))
+    }
+
+    #[test]
+    fn the_body_is_coloured_by_the_language_of_the_node() {
+        // The language comes from the @file extension: leolib's four-pass rule.
+        let mut app = highlighted("def f():\n    # note\n");
+        let first = row_colours(&mut app, 60, 8, 2);
+        assert!(
+            first.iter().any(|(t, c)| t == "def" && *c == Color::Yellow),
+            "`def` was not coloured as a keyword: {first:?}"
+        );
+        let second = row_colours(&mut app, 60, 8, 3);
+        assert!(
+            second
+                .iter()
+                .any(|(t, c)| t == "# note" && *c == Color::DarkGray),
+            "the comment was not coloured: {second:?}"
+        );
+    }
+
+    #[test]
+    fn an_at_language_line_changes_the_colouring_below_it() {
+        // The point of the feature: `#` is a comment above the second
+        // directive and `//` is one below it, in the same node.
+        //
+        // Two directives, because Leo's `scanLanguageDirectives` -- and
+        // leolib's `get_language` -- resolve a node to the *first* @language
+        // in its body. That first one is where the colouring starts; later
+        // ones move it.
+        let mut app = highlighted("@language python\n# python\n@language c\n// c\n");
+        let python = row_colours(&mut app, 60, 9, 3);
+        assert!(
+            python
+                .iter()
+                .any(|(t, c)| t == "# python" && *c == Color::DarkGray),
+            "{python:?}"
+        );
+        let directive = row_colours(&mut app, 60, 9, 4);
+        assert!(
+            directive
+                .iter()
+                .any(|(t, c)| t == "@language c" && *c == Color::Magenta),
+            "{directive:?}"
+        );
+        let c = row_colours(&mut app, 60, 9, 5);
+        assert!(
+            c.iter()
+                .any(|(t, col)| t == "// c" && *col == Color::DarkGray),
+            "the language did not switch: {c:?}"
+        );
+    }
+
+    #[test]
+    fn a_node_nothing_declares_a_language_for_is_left_plain() {
+        // The scope rule: `@language` reaches the node that holds it and its
+        // descendants, and nothing else. Without it a prose node was coloured
+        // as Python, so `class` was a keyword and `It's` opened a string.
+        let mut o = Outline::new_empty();
+        let prose = o.root_position().unwrap();
+        o.set_headline(&prose, "Notes");
+        o.set_body(&prose, "Ideas for the class, not code.\n");
+        let code = o.insert_after(&prose);
+        o.set_headline(&code, "Code");
+        o.set_body(&code, "@language python\ndef f(): pass\n");
+        let child = o.insert_as_last_child(&code);
+        o.set_headline(&child, "a child");
+        o.set_body(&child, "class C: pass\n");
+        o.expand(&code);
+        let mut app = App::new(Document::new(o));
+
+        // The whole line is one uncoloured run: no keyword, no string.
+        let plain = row_colours(&mut app, 70, 8, 2);
+        assert!(
+            plain
+                .iter()
+                .any(|(t, c)| t == "Ideas for the class, not code." && *c == Color::Reset),
+            "prose was coloured: {plain:?}"
+        );
+
+        // Its sibling declares one, so it and its child are coloured.
+        press(&mut app, &["j"]);
+        let declared = row_colours(&mut app, 70, 8, 3);
+        assert!(
+            declared
+                .iter()
+                .any(|(t, c)| t == "def" && *c == Color::Yellow),
+            "the declaring node was not coloured: {declared:?}"
+        );
+        press(&mut app, &["j"]);
+        let inherited = row_colours(&mut app, 70, 8, 2);
+        assert!(
+            inherited
+                .iter()
+                .any(|(t, c)| t == "class" && *c == Color::Yellow),
+            "the child did not inherit: {inherited:?}"
+        );
+    }
+
+    #[test]
+    fn set_nosyntax_leaves_the_body_plain() {
+        let mut app = highlighted("def f():\n");
+        let coloured = row_colours(&mut app, 60, 8, 2);
+        assert!(coloured
+            .iter()
+            .any(|(t, c)| t == "def" && *c == Color::Yellow));
+        app.run_command_line("set nosyntax");
+        let plain = row_colours(&mut app, 60, 8, 2);
+        assert!(
+            plain
+                .iter()
+                .any(|(t, c)| t == "def f():" && *c == Color::Reset),
+            "the body is still coloured: {plain:?}"
+        );
     }
 
     #[test]

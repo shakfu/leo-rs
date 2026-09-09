@@ -849,3 +849,78 @@ terminal in raw mode with the alternate screen up, so the panic message was
 invisible and the shell unusable. Verified by patching a panic into the loop
 and watching the pty: flags popped, alternate screen left, message visible,
 exit 101.
+
+---
+
+## 19. Highlighting the body
+
+The language a node is written in is a model question, and `leolib` already
+answers it: `Outline::get_language` is Leo's four-pass rule over the node, its
+ancestors and the nearest `@<file>` extension. That is where the colouring
+*starts*.
+
+A body may then change it. Leo's `match_at_language` returns 0 unless `i == 0`,
+so an `@language` line counts only at column 0, and it assigns `self.language`
+from that line onward. One node can hold Python and then C. `highlight.rs`
+follows the same rule, and `@nocolor`, `@color` and `@killcolor` bracket
+regions as they do in Leo.
+
+**Which language a node starts in is not the first line's.** Leo's
+`scanLanguageDirectives` calls `c.getLanguage(p)`, whose first pass returns the
+*first* valid `@language` anywhere in the body. A body with one directive
+halfway down is therefore coloured in that language from its first line, in Leo
+and here. Position matters once a body holds two.
+
+### 19.1 Scope: a declared language, or nothing
+
+`@language` reaches the node that holds it and that node's descendants. So does
+an `@<file>` node's extension. A node with neither above it is **left plain**.
+
+Leo does not stop there: `scanLanguageDirectives` ends in
+`language or c.target_language`, so an undeclared node is coloured as whatever
+the outline's default is -- Python, normally. That paints a prose node wrong.
+In `class`, `if`, `import`, `for` and `return` become keywords, `#` starts a
+comment, and an apostrophe in `It's a plan` opens a string that runs to the end
+of the body.
+
+`Outline::language_at` returns `Option<String>` and reports the absence;
+`get_language` keeps Leo's behaviour by falling back, because the writers must
+have a language to choose comment delimiters with. The colorizer takes the
+Option and colours nothing when it is None.
+
+### 19.2 Where the code lives
+
+In `leotui`, for the reason Leo keeps `leoColorizer` out of its model:
+colouring is a view's business, and `leoColorizer` is one of the nine view
+modules `leolib` was defined to exclude.
+
+It shares the model's *data* rather than restating it:
+
+| | from |
+|---|---|
+| comment delimiters | `leolib::outline::set_delims_from_language`, over Leo's 190-language table |
+| string delimiters | `leolib::importers::LANGUAGES`, whose `string_list` the importers already need |
+| keywords | `keywords.rs`, generated from `leo/modes/*.py` |
+
+So every language Leo knows gets comments and strings; 36 get keywords.
+
+### 19.3 The keyword cap
+
+Leo's mode files hold 44,259 keywords across 156 languages. jEdit's `keyword1`
+is a language's own keywords; `keyword2` to `keyword4` are its library names,
+and some modes list thousands -- 5,126 for matlab, 4,261 for r, 2,309 for php.
+Colouring every library name turns a script into confetti and the generated
+file into half a megabyte.
+
+The rule: `keyword1` always, the rest only when a language's whole set stays
+under 400. Python keeps all 265, C all 42, matlab keeps its 457 keywords and
+loses its 5,126 function names. The two classes are drawn differently, as Leo
+draws them.
+
+### 19.4 What is not done
+
+The scanner is a lexer, not a parser: it knows comments, strings, numbers,
+keywords and Leo's own constructs. It does not know that a Python `f"{x}"`
+holds an expression, or that a C `#include <a.h>` is not a comparison. Leo
+reads jEdit mode files with full span and regex rules to do better; that is 159
+more files and a rule engine, and the terminal's six colours do not repay it.

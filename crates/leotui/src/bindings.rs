@@ -139,9 +139,12 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BODY, "p P", "body-put"),
     b(Mode::Normal, BODY, ".", "body-repeat"),
     b(Mode::Normal, BODY, "Escape", "focus-to-tree"),
-    // Leo's own rule: Tab leaves the pane it is pressed in.
+    // Leo's own rule: Tab leaves the pane it is pressed in. Shift-Tab cycles
+    // the other way, which with two panes lands in the same place.
     b(Mode::Normal, BODY, "Tab", "focus-to-tree"),
+    b(Mode::Normal, BODY, "Shift-Tab", "focus-to-tree"),
     b(Mode::Normal, TREE, "Tab", "focus-to-body"),
+    b(Mode::Normal, TREE, "Shift-Tab", "focus-to-body"),
     // --- Both panes -------------------------------------------------------
     b(Mode::Normal, BOTH, "Ctrl-f", "page-down"),
     b(Mode::Normal, BOTH, "PageDown", "page-down"),
@@ -185,6 +188,22 @@ pub fn for_context(mode: Mode, focus: Focus) -> impl Iterator<Item = &'static Bi
     BINDINGS
         .iter()
         .filter(move |x| x.mode == mode && (x.focus.is_none() || x.focus == Some(focus)))
+}
+
+/// Every key spec bound in NORMAL mode, once each.
+///
+/// `--key-specs` prints these, which is how `tests/readme.rs` checks the
+/// README without a copy of the table: an integration test cannot import a
+/// binary crate's modules, but it can run the binary.
+pub fn normal_mode_specs() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = BINDINGS
+        .iter()
+        .filter(|b| b.mode == Mode::Normal)
+        .map(|b| b.keys)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The keys bound to `command`, for the help screen.
@@ -300,138 +319,6 @@ mod tests {
             }
         }
     }
-
-    /// The README's cheatsheet is checked against a list in
-    /// `tests/readme.rs`, because an integration test cannot import a binary
-    /// crate's modules. This keeps that list honest.
-    #[test]
-    fn the_readme_test_lists_every_binding() {
-        let listed: Vec<&str> = README_BINDING_KEYS.to_vec();
-        let mut missing: Vec<&str> = BINDINGS
-            .iter()
-            .filter(|b| b.mode == Mode::Normal && !listed.contains(&b.keys))
-            .map(|b| b.keys)
-            .collect();
-        missing.sort();
-        missing.dedup();
-        assert!(
-            missing.is_empty(),
-            "tests/readme.rs BINDING_KEYS is missing: {missing:?}. \
-             Add them there and to the README cheatsheet."
-        );
-    }
-
-    /// A copy of `tests/readme.rs`'s list. The test above fails if the table
-    /// grows a key that is not in it.
-    const README_BINDING_KEYS: &[&str] = &[
-        "j",
-        "Down",
-        "k",
-        "Up",
-        "h",
-        "Left",
-        "l",
-        "Right",
-        "Enter",
-        "gg",
-        "Alt-Home",
-        "G",
-        "Alt-End",
-        "gp",
-        "{",
-        "}",
-        "[m",
-        "]m",
-        "]c",
-        "Alt-n",
-        "o",
-        "Insert",
-        "O",
-        "a",
-        "Ctrl-Insert",
-        "dd",
-        "Delete",
-        "Backspace",
-        "yy",
-        "p",
-        "`",
-        "m",
-        "M",
-        "J",
-        "Shift-Down",
-        "K",
-        "Shift-Up",
-        "<<",
-        "Shift-Left",
-        ">>",
-        "Shift-Right",
-        "g<",
-        "g>",
-        "e",
-        "Ctrl-h",
-        "i",
-        "Ctrl-i",
-        "Ctrl-m",
-        "Ctrl-[",
-        "Ctrl-]",
-        "Ctrl-`",
-        "Space",
-        "za",
-        "zo",
-        "Alt-]",
-        "zc",
-        "Alt-[",
-        "zR",
-        "zM",
-        "Alt--",
-        "zr",
-        "zm",
-        "zx",
-        "z1",
-        "z2",
-        "z3",
-        "z4",
-        "z5",
-        "z6",
-        "z7",
-        "z8",
-        "z9",
-        "h j k l",
-        "w W b B e E ge",
-        "0 ^ $ gg G { } %",
-        "f F t T ; ,",
-        "H M L",
-        "d c y > < gu gU g~",
-        "iw aw i\" a( ip",
-        "x X r s S D C Y J ~",
-        "i a I A o O",
-        "v V",
-        "p P",
-        ".",
-        "Escape",
-        "Tab",
-        "Ctrl-f",
-        "PageDown",
-        "Ctrl-b",
-        "PageUp",
-        "Ctrl-d",
-        "Ctrl-u",
-        "u",
-        "Ctrl-z",
-        "Ctrl-r",
-        "Ctrl-Shift-z",
-        "Ctrl-s",
-        "Ctrl-Left",
-        "Ctrl-Right",
-        "F1",
-        ":",
-        "/",
-        "?",
-        "n",
-        "N",
-        "w",
-        "q",
-    ];
 
     #[test]
     fn leos_literal_bindings_are_present_for_enhanced_terminals() {

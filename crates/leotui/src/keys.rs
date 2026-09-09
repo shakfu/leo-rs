@@ -34,9 +34,19 @@ impl Key {
 /// - A control chord is named by its *lowercase* letter plus its modifiers:
 ///   Ctrl-Shift-Z arrives as `Char('z')+SHIFT|CONTROL` from some terminals and
 ///   `Char('Z')+SHIFT|CONTROL` from others. Both mean the same chord.
+///
+/// Shift-Tab gets the same treatment for the same reason: a terminal reports
+/// it as `BackTab`+SHIFT, and the table spells it `Shift-Tab`, which parses to
+/// `Tab`+SHIFT. Both become a bare `BackTab`.
 fn normalize(code: KeyCode, mods: KeyModifiers) -> (KeyCode, KeyModifiers) {
     let mut mods = mods;
     let mut code = code;
+    if code == KeyCode::Tab && mods.contains(KeyModifiers::SHIFT) {
+        code = KeyCode::BackTab;
+    }
+    if code == KeyCode::BackTab {
+        mods.remove(KeyModifiers::SHIFT);
+    }
     if let KeyCode::Char(c) = code {
         if mods.contains(KeyModifiers::CONTROL) {
             code = KeyCode::Char(c.to_ascii_lowercase());
@@ -99,6 +109,7 @@ fn named(name: &str) -> Option<KeyCode> {
         "space" => KeyCode::Char(' '),
         "enter" | "return" => KeyCode::Enter,
         "tab" => KeyCode::Tab,
+        "backtab" => KeyCode::BackTab,
         "esc" | "escape" => KeyCode::Esc,
         "backspace" => KeyCode::Backspace,
         "delete" | "del" => KeyCode::Delete,
@@ -174,6 +185,8 @@ pub fn display(key: &Key) -> String {
         out.push_str("Shift-");
     }
     let name = match key.code {
+        // The table spells it the way a keyboard does.
+        KeyCode::BackTab => return format!("{out}Shift-Tab"),
         KeyCode::Char(' ') => "Space".to_string(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::F(n) => format!("F{n}"),
@@ -266,6 +279,16 @@ mod tests {
         assert_eq!(lower, upper);
         assert_eq!(parse("Ctrl-Shift-Z")[0], lower);
         assert_eq!(parse("Ctrl-Shift-z")[0], lower);
+    }
+
+    #[test]
+    fn shift_tab_is_one_key_however_it_is_spelled() {
+        // A terminal sends BackTab+SHIFT; the table says Shift-Tab.
+        let from_terminal = Key::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        assert_eq!(parse("Shift-Tab")[0], from_terminal);
+        assert_eq!(parse("BackTab")[0], from_terminal);
+        assert_ne!(parse("Tab")[0], from_terminal);
+        assert_eq!(display(&from_terminal), "Shift-Tab");
     }
 
     #[test]

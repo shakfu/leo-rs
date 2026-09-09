@@ -152,7 +152,7 @@ impl Parser {
                     Action::Escape
                 };
             }
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::BackTab => {
                 self.reset();
                 return Action::FocusTree;
             }

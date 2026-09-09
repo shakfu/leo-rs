@@ -65,6 +65,7 @@ pub struct Options {
     pub search_scope: Scope,
     pub wrap: bool,
     pub number: bool,
+    pub syntax: bool,
 }
 
 impl Default for Options {
@@ -73,6 +74,7 @@ impl Default for Options {
             search_scope: Scope::Headlines,
             wrap: false,
             number: false,
+            syntax: true,
         }
     }
 }
@@ -793,6 +795,8 @@ impl App {
             ("nowrap", None) => self.options.wrap = false,
             ("number", None) | ("nu", None) => self.options.number = true,
             ("nonumber", None) | ("nonu", None) => self.options.number = false,
+            ("syntax", None) => self.options.syntax = true,
+            ("nosyntax", None) => self.options.syntax = false,
             _ => {
                 self.message = format!(
                     "set: unknown option: {arg}. try search=all|headlines, split=N, wrap, number"
@@ -1145,6 +1149,17 @@ mod tests {
         press(&mut app, "j");
         assert_eq!(app.current.h(app.outline()), "b");
         assert_eq!(app.editor.cursor.0, 1);
+    }
+
+    #[test]
+    fn shift_tab_moves_between_the_panes_like_tab() {
+        // A terminal sends BackTab+SHIFT for it; the table says Shift-Tab.
+        let back_tab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        let mut app = app();
+        app.handle_key(back_tab);
+        assert_eq!(app.focus, Focus::Body);
+        app.handle_key(back_tab);
+        assert_eq!(app.focus, Focus::Tree);
     }
 
     #[test]
