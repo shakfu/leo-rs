@@ -570,6 +570,149 @@ impl Outline {
         self.expanded.remove(&gnx);
     }
 
+    // --- Folds, in bulk ---------------------------------------------------
+
+    /// Every node in the outline, expanded.
+    pub fn expand_all(&mut self) {
+        for p in self.all_positions() {
+            self.expand(&p);
+        }
+    }
+
+    /// Every node in the outline, contracted.
+    pub fn contract_all(&mut self) {
+        self.expanded.clear();
+    }
+
+    pub fn expand_subtree(&mut self, p: &Position) {
+        for p2 in p.self_and_subtree(self) {
+            self.expand(&p2);
+        }
+    }
+
+    pub fn contract_subtree(&mut self, p: &Position) {
+        for p2 in p.subtree(self) {
+            self.contract(&p2);
+        }
+    }
+
+    /// Unfold p's ancestors, so p is on screen. Returns whether anything moved.
+    pub fn expand_all_ancestors(&mut self, p: &Position) -> bool {
+        let mut changed = false;
+        for p2 in p.parents(self) {
+            if !self.is_expanded(&p2) {
+                self.expand(&p2);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Expand p's subtree to `level` and contract the rest of it.
+    ///
+    /// Returns the deepest level actually expanded, which is what Leo reports
+    /// in the status line and what `expand-next-level` counts from.
+    pub fn expand_to_level(&mut self, p: &Position, level: usize) -> usize {
+        let n = p.level();
+        let mut max_level = 0;
+        for p2 in p.self_and_subtree(self) {
+            if p2.level() - n + 1 < level {
+                self.expand(&p2);
+                max_level = max_level.max(p2.level() - n + 1);
+            } else {
+                self.contract(&p2);
+            }
+        }
+        max_level
+    }
+
+    /// Contract everything except what is needed to see p.
+    pub fn contract_all_other_nodes(&mut self, p: &Position) {
+        let keep: HashSet<String> = p
+            .self_and_parents(self)
+            .iter()
+            .map(|p2| self.gnx(p2.v).to_string())
+            .collect();
+        self.expanded.retain(|gnx| keep.contains(gnx));
+        // p keeps whatever fold state it had: contracting it would hide its
+        // children without making anything else visible.
+        let gnx = self.gnx(p.v).to_string();
+        let was_expanded = keep.contains(&gnx) && self.expanded.contains(&gnx);
+        if !was_expanded {
+            self.expanded.remove(&gnx);
+        }
+        self.expand_all_ancestors(p);
+    }
+
+    // --- Navigation over the whole outline --------------------------------
+
+    /// The last node in outline order.
+    pub fn last_position(&self) -> Option<Position> {
+        self.root_position().map(|root| {
+            let mut p = root;
+            while let Some(next) = p.next(self) {
+                p = next;
+            }
+            p.last_node(self)
+        })
+    }
+
+    /// The last node a reader can see: the last root's last visible node.
+    pub fn last_visible_position(&self) -> Option<Position> {
+        self.root_position().map(|root| {
+            let mut p = root;
+            while let Some(next) = p.next(self) {
+                p = next;
+            }
+            p.last_visible_node(self)
+        })
+    }
+
+    /// The next marked node after p, wrapping to the top.
+    pub fn next_marked(&self, p: &Position) -> Option<Position> {
+        self.scan_from(p, true, |o, q| q.is_marked(o))
+    }
+
+    /// The previous marked node before p, wrapping to the bottom.
+    pub fn prev_marked(&self, p: &Position) -> Option<Position> {
+        self.scan_from(p, false, |o, q| q.is_marked(o))
+    }
+
+    /// The next node that is a clone of p, or the next cloned node if p is not
+    /// one. That is Leo's `goto-next-clone`, which falls back to
+    /// `find-next-clone`.
+    pub fn next_clone(&self, p: &Position) -> Option<Position> {
+        if p.is_cloned(self) {
+            let v = p.v;
+            self.scan_from(p, true, |_, q| q.v == v)
+        } else {
+            self.scan_from(p, true, |o, q| q.is_cloned(o))
+        }
+    }
+
+    /// Walk from p in outline order until `pred` holds, wrapping once.
+    fn scan_from(
+        &self,
+        p: &Position,
+        forward: bool,
+        pred: impl Fn(&Outline, &Position) -> bool,
+    ) -> Option<Position> {
+        let all = self.all_positions();
+        let start = all.iter().position(|q| q == p)?;
+        let n = all.len();
+        for step in 1..=n {
+            let i = if forward {
+                (start + step) % n
+            } else {
+                (start + n - step % n) % n
+            };
+            if pred(self, &all[i]) {
+                return Some(all[i].clone());
+            }
+        }
+        None
+    }
+
     // --- Directive scanners ----------------------------------------------
     //
     // Asked of the document, never of a window: two views of one outline must
@@ -938,6 +1081,78 @@ mod tests {
         o.promote(&a);
         let heads: Vec<&str> = root.children(&o).iter().map(|p| p.h(&o)).collect();
         assert_eq!(heads, vec!["a", "a1", "b"]);
+    }
+
+    fn tree() -> (Outline, Vec<Position>) {
+        // a / a1 / a2, b, c
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "a");
+        let a1 = o.insert_as_last_child(&root);
+        o.set_headline(&a1, "a1");
+        let a2 = o.insert_as_last_child(&a1);
+        o.set_headline(&a2, "a2");
+        let b = o.insert_after(&root);
+        o.set_headline(&b, "b");
+        let c = o.insert_after(&b);
+        o.set_headline(&c, "c");
+        o.expand_all();
+        let all = o.all_positions();
+        (o, all)
+    }
+
+    #[test]
+    fn expand_to_level_unfolds_exactly_that_deep() {
+        let (mut o, all) = tree();
+        let max = o.expand_to_level(&all[0], 2);
+        assert_eq!(max, 1);
+        assert!(o.is_expanded(&all[0]));
+        assert!(!o.is_expanded(&all[1]));
+    }
+
+    #[test]
+    fn contract_all_other_nodes_leaves_the_path_to_the_node() {
+        let (mut o, all) = tree();
+        let a2 = all[2].clone();
+        o.contract_all_other_nodes(&a2);
+        assert!(o.is_expanded(&all[0]));
+        assert!(o.is_expanded(&all[1]));
+        // A sibling that is not an ancestor is folded away.
+        assert!(!o.is_expanded(&all[3]));
+    }
+
+    #[test]
+    fn marks_are_walked_in_outline_order_and_wrap() {
+        let (mut o, all) = tree();
+        o.node_mut(all[1].v).set_bit(node::status::MARKED);
+        o.node_mut(all[4].v).set_bit(node::status::MARKED);
+        let first = o.next_marked(&all[0]).unwrap();
+        assert_eq!(first.h(&o), "a1");
+        let second = o.next_marked(&first).unwrap();
+        assert_eq!(second.h(&o), "c");
+        // Wraps back to the first.
+        assert_eq!(o.next_marked(&second).unwrap().h(&o), "a1");
+        assert_eq!(o.prev_marked(&first).unwrap().h(&o), "c");
+    }
+
+    #[test]
+    fn next_clone_walks_the_places_one_vnode_appears() {
+        let (mut o, all) = tree();
+        let clone = o.clone_node(&all[3]);
+        let from_first = o.next_clone(&all[3]).unwrap();
+        assert_eq!(from_first.v, clone.v);
+        assert_ne!(from_first, all[3]);
+    }
+
+    #[test]
+    fn the_last_visible_position_respects_folds() {
+        let (mut o, all) = tree();
+        assert_eq!(o.last_visible_position().unwrap().h(&o), "c");
+        o.contract_all();
+        // Everything is folded, but the roots are still siblings.
+        assert_eq!(o.last_visible_position().unwrap().h(&o), "c");
+        o.contract(&all[0]);
+        assert_eq!(o.last_position().unwrap().h(&o), "c");
     }
 
     #[test]

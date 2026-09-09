@@ -145,6 +145,121 @@ impl Document {
         new
     }
 
+    /// Insert a node as p's first child, as Leo's `insert-child`.
+    pub fn insert_child(&mut self, p: &Position) -> Position {
+        let new = self.outline.insert_as_nth_child(p, 0);
+        let parent = new.parent_vnode(&self.outline);
+        self.undoer.push(
+            "insert-child",
+            Bead::Insert {
+                parent,
+                index: new.child_index,
+                v: new.v,
+            },
+        );
+        self.outline.expand(p);
+        self.outline.changed = true;
+        new
+    }
+
+    /// Insert a node before p, as Leo's `insert-node-before`.
+    pub fn insert_node_before(&mut self, p: &Position) -> Position {
+        let new = self.outline.insert_before(p);
+        let parent = new.parent_vnode(&self.outline);
+        self.undoer.push(
+            "insert-node-before",
+            Bead::Insert {
+                parent,
+                index: new.child_index,
+                v: new.v,
+            },
+        );
+        self.outline.changed = true;
+        new
+    }
+
+    /// Make all of p's following siblings its children.
+    ///
+    /// The mirror of `promote`. Leo expands p afterwards, because the nodes
+    /// would otherwise appear to have been deleted.
+    pub fn demote(&mut self, p: &Position) -> bool {
+        let parent_v = p.parent_vnode(&self.outline);
+        let following: Vec<VnodeId> =
+            self.outline.node(parent_v).children[p.child_index + 1..].to_vec();
+        if following.is_empty() {
+            return false;
+        }
+        self.undoer.begin_group("demote");
+        // Record each move so undo puts the siblings back in order.
+        let base = self.outline.node(p.v).children.len();
+        for (i, v) in following.iter().enumerate() {
+            self.undoer.push(
+                "demote",
+                Bead::Move {
+                    v: *v,
+                    from: (parent_v, p.child_index + 1),
+                    to: (p.v, base + i),
+                },
+            );
+        }
+        self.undoer.end_group();
+        self.outline
+            .node_mut(parent_v)
+            .children
+            .truncate(p.child_index + 1);
+        for v in &following {
+            self.outline.node_mut(p.v).children.push(*v);
+            if let Some(i) = self
+                .outline
+                .node(*v)
+                .parents
+                .iter()
+                .position(|x| *x == parent_v)
+            {
+                self.outline.node_mut(*v).parents.remove(i);
+            }
+            self.outline.node_mut(*v).parents.push(p.v);
+        }
+        self.outline.expand(p);
+        self.outline.set_dirty(p);
+        self.outline.changed = true;
+        self.outline.generation += 1;
+        true
+    }
+
+    /// Copy p to the clipboard, then delete it.
+    pub fn cut_node(&mut self, p: &Position) -> Option<Position> {
+        self.copy_node(p);
+        self.delete_node(p)
+    }
+
+    /// Clear every mark in the outline. Returns how many were cleared.
+    pub fn unmark_all(&mut self) -> usize {
+        let marked: Vec<Position> = self
+            .outline
+            .all_unique_positions()
+            .into_iter()
+            .filter(|p| p.is_marked(&self.outline))
+            .collect();
+        if marked.is_empty() {
+            return 0;
+        }
+        self.undoer.begin_group("unmark-all");
+        for p in &marked {
+            self.undoer.push(
+                "unmark",
+                Bead::Mark {
+                    v: p.v,
+                    was_marked: true,
+                },
+            );
+            self.outline.node_mut(p.v).clear_bit(status::MARKED);
+        }
+        self.undoer.end_group();
+        self.outline.changed = true;
+        marked.len()
+    }
+
     /// Copy p's tree with fresh gnxs, ready to paste.
     pub fn copy_node(&mut self, p: &Position) {
         self.clipboard = Some(self.outline.copy_tree(p));
@@ -342,6 +457,51 @@ mod tests {
         assert_ne!(pasted.gnx(&d.outline), all[0].gnx(&d.outline));
         d.set_headline(&pasted, "copy");
         assert_eq!(all[0].h(&d.outline), "a");
+    }
+
+    #[test]
+    fn demote_makes_following_siblings_children() {
+        let (mut d, all) = abc();
+        assert!(d.demote(&all[0]));
+        assert_eq!(heads(&d), vec!["a", "  b", "  c"]);
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn demote_with_no_following_siblings_does_nothing() {
+        let (mut d, all) = abc();
+        assert!(!d.demote(&all[2]));
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn promote_is_the_inverse_of_demote() {
+        let (mut d, all) = abc();
+        d.demote(&all[0]);
+        d.outline.promote(&all[0]);
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn insert_child_goes_first_and_unfolds_the_parent() {
+        let (mut d, all) = abc();
+        let child = d.insert_child(&all[0]);
+        d.set_headline(&child, "child");
+        assert_eq!(heads(&d), vec!["a", "  child", "b", "c"]);
+        assert!(d.outline.is_expanded(&all[0]));
+    }
+
+    #[test]
+    fn unmark_all_clears_every_mark_as_one_undo() {
+        let (mut d, all) = abc();
+        d.toggle_marked(&all[0]);
+        d.toggle_marked(&all[2]);
+        assert_eq!(d.unmark_all(), 2);
+        assert!(!all[0].is_marked(&d.outline));
+        d.undo();
+        assert!(all[0].is_marked(&d.outline));
+        assert!(all[2].is_marked(&d.outline));
     }
 
     #[test]

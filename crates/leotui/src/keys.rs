@@ -1,257 +1,283 @@
-//! Key handling for each mode.
+//! Key specifications, and the pending-key buffer that matches them.
+//!
+//! A binding is written the way `docs/dev/tui-design.md` writes it -- `"gg"`,
+//! `"Shift-Down"`, `"Ctrl-r"`, `"Alt--"` -- and parsed here. That keeps the
+//! table readable, which matters because the same table is the help screen.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, Mode};
+/// One keypress, normalized so a table entry and a terminal event compare equal.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Key {
+    pub code: KeyCode,
+    pub mods: KeyModifiers,
+}
 
-pub fn handle(app: &mut App, key: KeyEvent) {
-    app.message.clear();
-    match &mut app.mode {
-        Mode::Normal => normal(app, key),
-        Mode::Prompt(_) => prompt(app, key),
-        Mode::EditBody(_) => body(app, key),
+impl Key {
+    pub fn new(code: KeyCode, mods: KeyModifiers) -> Self {
+        let (code, mods) = normalize(code, mods);
+        Self { code, mods }
+    }
+
+    pub fn from_event(event: KeyEvent) -> Self {
+        Self::new(event.code, event.modifiers)
     }
 }
 
-fn normal(app: &mut App, key: KeyEvent) {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Char('q') => app.request_quit(),
-        KeyCode::Char('c') if ctrl => app.request_quit(),
-        KeyCode::Char('j') | KeyCode::Down => app.move_by(1),
-        KeyCode::Char('k') | KeyCode::Up => app.move_by(-1),
-        KeyCode::PageDown => app.move_by(10),
-        KeyCode::PageUp => app.move_by(-10),
-        KeyCode::Home => app.move_to_row(0),
-        KeyCode::End => app.move_to_row(usize::MAX),
-        KeyCode::Char(' ') | KeyCode::Enter => app.toggle_fold(),
-        KeyCode::Right => app.expand_or_descend(),
-        KeyCode::Left => app.collapse_or_ascend(),
-        KeyCode::Char('e') => app.begin_headline_prompt(),
-        KeyCode::Char('i') => app.begin_body_edit(),
-        KeyCode::Char('o') => app.insert_node(),
-        KeyCode::Char('D') => app.delete_node(),
-        KeyCode::Char('u') => app.undo(),
-        KeyCode::Char('r') => app.redo(),
-        KeyCode::Char('K') => app.move_node('u'),
-        KeyCode::Char('J') => app.move_node('d'),
-        KeyCode::Char('<') => app.move_node('l'),
-        KeyCode::Char('>') => app.move_node('r'),
-        KeyCode::Char('m') => app.toggle_mark(),
-        KeyCode::Char('c') => app.clone_node(),
-        KeyCode::Char('y') => app.copy_node(),
-        KeyCode::Char('P') => app.paste_node(),
-        KeyCode::Char('s') => app.save(),
-        KeyCode::Char('w') => app.write_external(),
-        KeyCode::Char('n') => app.body_scroll += 1,
-        KeyCode::Char('p') => app.body_scroll = app.body_scroll.saturating_sub(1),
-        _ => {}
+/// One identity per physical chord, whatever the terminal reports.
+///
+/// Two disagreements have to be settled, and the second only shows up once
+/// the keyboard enhancement protocol is on:
+///
+/// - An uppercase character already encodes shift, and terminals disagree
+///   about whether to also set the bit. `J` is `J`, with no SHIFT.
+/// - A control chord is named by its *lowercase* letter plus its modifiers:
+///   Ctrl-Shift-Z arrives as `Char('z')+SHIFT|CONTROL` from some terminals and
+///   `Char('Z')+SHIFT|CONTROL` from others. Both mean the same chord.
+fn normalize(code: KeyCode, mods: KeyModifiers) -> (KeyCode, KeyModifiers) {
+    let mut mods = mods;
+    let mut code = code;
+    if let KeyCode::Char(c) = code {
+        if mods.contains(KeyModifiers::CONTROL) {
+            code = KeyCode::Char(c.to_ascii_lowercase());
+        } else if c.is_uppercase() || !c.is_alphabetic() {
+            mods.remove(KeyModifiers::SHIFT);
+        }
     }
+    (code, mods)
 }
 
-fn prompt(app: &mut App, key: KeyEvent) {
-    let Mode::Prompt(prompt) = &mut app.mode else {
-        return;
+/// Parse a binding string into the sequence of keys it names.
+///
+/// A token that names a key (`Enter`, `F1`, `Ctrl-r`) is one key; anything
+/// else is one key per character, so `"gg"` and `"[m"` are two.
+pub fn parse(spec: &str) -> Vec<Key> {
+    if let Some(key) = parse_one(spec) {
+        return vec![key];
+    }
+    spec.chars()
+        .map(|c| Key::new(KeyCode::Char(c), KeyModifiers::NONE))
+        .collect()
+}
+
+/// One key, or None if `spec` is not a single key's name.
+fn parse_one(spec: &str) -> Option<Key> {
+    let mut mods = KeyModifiers::NONE;
+    let mut rest = spec;
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        if let Some(tail) = lower.strip_prefix("ctrl-") {
+            mods |= KeyModifiers::CONTROL;
+            rest = &rest[rest.len() - tail.len()..];
+        } else if let Some(tail) = lower.strip_prefix("alt-") {
+            mods |= KeyModifiers::ALT;
+            rest = &rest[rest.len() - tail.len()..];
+        } else if let Some(tail) = lower.strip_prefix("shift-") {
+            mods |= KeyModifiers::SHIFT;
+            rest = &rest[rest.len() - tail.len()..];
+        } else {
+            break;
+        }
+    }
+    let code = named(rest).or_else(|| {
+        let mut chars = rest.chars();
+        match (chars.next(), chars.next()) {
+            // Control folds case -- a terminal reports Ctrl-H as Ctrl-h -- but
+            // a plain letter does not: `G` and `g` are different bindings.
+            (Some(c), None) if mods.contains(KeyModifiers::CONTROL) => {
+                Some(KeyCode::Char(c.to_ascii_lowercase()))
+            }
+            (Some(c), None) => Some(KeyCode::Char(c)),
+            _ => None,
+        }
+    })?;
+    Some(Key::new(code, mods))
+}
+
+fn named(name: &str) -> Option<KeyCode> {
+    let code = match name.to_ascii_lowercase().as_str() {
+        "space" => KeyCode::Char(' '),
+        "enter" | "return" => KeyCode::Enter,
+        "tab" => KeyCode::Tab,
+        "esc" | "escape" => KeyCode::Esc,
+        "backspace" => KeyCode::Backspace,
+        "delete" | "del" => KeyCode::Delete,
+        "insert" | "ins" => KeyCode::Insert,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pageup" | "prior" => KeyCode::PageUp,
+        "pagedown" | "next" => KeyCode::PageDown,
+        "up" | "uparrow" => KeyCode::Up,
+        "down" | "dnarrow" | "downarrow" => KeyCode::Down,
+        "left" | "ltarrow" | "leftarrow" => KeyCode::Left,
+        "right" | "rtarrow" | "rightarrow" => KeyCode::Right,
+        other => {
+            let n: u8 = other.strip_prefix('f')?.parse().ok()?;
+            if (1..=12).contains(&n) {
+                return Some(KeyCode::F(n));
+            }
+            return None;
+        }
     };
-    match key.code {
-        KeyCode::Esc => app.finish_prompt(false),
-        KeyCode::Enter => app.finish_prompt(true),
-        KeyCode::Backspace => {
-            if prompt.cursor > 0 {
-                let i = char_index(&prompt.buffer, prompt.cursor - 1);
-                prompt.buffer.remove(i);
-                prompt.cursor -= 1;
-            }
+    Some(code)
+}
+
+/// The keys typed so far towards a binding, and any count before them.
+#[derive(Default)]
+pub struct Pending {
+    pub keys: Vec<Key>,
+    pub count: Option<usize>,
+}
+
+impl Pending {
+    pub fn clear(&mut self) {
+        self.keys.clear();
+        self.count = None;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.count.is_none()
+    }
+
+    /// The count to apply, defaulting to 1.
+    pub fn count(&self) -> usize {
+        self.count.unwrap_or(1).max(1)
+    }
+
+    /// Add a digit to the count. `0` only continues a count already started.
+    pub fn push_digit(&mut self, d: usize) -> bool {
+        if d == 0 && self.count.is_none() {
+            return false;
         }
-        KeyCode::Delete => {
-            if prompt.cursor < prompt.buffer.chars().count() {
-                let i = char_index(&prompt.buffer, prompt.cursor);
-                prompt.buffer.remove(i);
-            }
-        }
-        KeyCode::Left => prompt.cursor = prompt.cursor.saturating_sub(1),
-        KeyCode::Right => prompt.cursor = (prompt.cursor + 1).min(prompt.buffer.chars().count()),
-        KeyCode::Home => prompt.cursor = 0,
-        KeyCode::End => prompt.cursor = prompt.buffer.chars().count(),
-        KeyCode::Char(ch) => {
-            let i = char_index(&prompt.buffer, prompt.cursor);
-            prompt.buffer.insert(i, ch);
-            prompt.cursor += 1;
-        }
-        _ => {}
+        self.count = Some(self.count.unwrap_or(0) * 10 + d);
+        true
+    }
+
+    /// How the pending keys relate to a binding's keys.
+    pub fn describe(&self) -> String {
+        let count = self.count.map(|n| n.to_string()).unwrap_or_default();
+        let keys: String = self.keys.iter().map(display).collect();
+        format!("{count}{keys}")
     }
 }
 
-fn body(app: &mut App, key: KeyEvent) {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    if key.code == KeyCode::Esc {
-        app.finish_body_edit(false);
-        return;
+/// A key as the help screen and the status line spell it.
+pub fn display(key: &Key) -> String {
+    let mut out = String::new();
+    if key.mods.contains(KeyModifiers::CONTROL) {
+        out.push_str("Ctrl-");
     }
-    if ctrl && key.code == KeyCode::Char('s') {
-        app.finish_body_edit(true);
-        return;
+    if key.mods.contains(KeyModifiers::ALT) {
+        out.push_str("Alt-");
     }
-    let Mode::EditBody(ed) = &mut app.mode else {
-        return;
+    if key.mods.contains(KeyModifiers::SHIFT) {
+        out.push_str("Shift-");
+    }
+    let name = match key.code {
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::F(n) => format!("F{n}"),
+        other => format!("{other:?}"),
     };
-    match key.code {
-        KeyCode::Enter => {
-            let i = char_index(&ed.lines[ed.row], ed.col);
-            let rest = ed.lines[ed.row].split_off(i);
-            ed.lines.insert(ed.row + 1, rest);
-            ed.row += 1;
-            ed.col = 0;
-        }
-        KeyCode::Backspace => {
-            if ed.col > 0 {
-                let i = char_index(&ed.lines[ed.row], ed.col - 1);
-                ed.lines[ed.row].remove(i);
-                ed.col -= 1;
-            } else if ed.row > 0 {
-                let line = ed.lines.remove(ed.row);
-                ed.row -= 1;
-                ed.col = ed.lines[ed.row].chars().count();
-                ed.lines[ed.row].push_str(&line);
-            }
-        }
-        KeyCode::Delete => {
-            let len = ed.lines[ed.row].chars().count();
-            if ed.col < len {
-                let i = char_index(&ed.lines[ed.row], ed.col);
-                ed.lines[ed.row].remove(i);
-            } else if ed.row + 1 < ed.lines.len() {
-                let next = ed.lines.remove(ed.row + 1);
-                ed.lines[ed.row].push_str(&next);
-            }
-        }
-        KeyCode::Up => {
-            ed.row = ed.row.saturating_sub(1);
-            ed.col = ed.col.min(ed.lines[ed.row].chars().count());
-        }
-        KeyCode::Down => {
-            ed.row = (ed.row + 1).min(ed.lines.len() - 1);
-            ed.col = ed.col.min(ed.lines[ed.row].chars().count());
-        }
-        KeyCode::Left => ed.col = ed.col.saturating_sub(1),
-        KeyCode::Right => ed.col = (ed.col + 1).min(ed.lines[ed.row].chars().count()),
-        KeyCode::Home => ed.col = 0,
-        KeyCode::End => ed.col = ed.lines[ed.row].chars().count(),
-        KeyCode::Tab => {
-            let i = char_index(&ed.lines[ed.row], ed.col);
-            ed.lines[ed.row].insert_str(i, "    ");
-            ed.col += 4;
-        }
-        KeyCode::Char(ch) => {
-            let i = char_index(&ed.lines[ed.row], ed.col);
-            ed.lines[ed.row].insert(i, ch);
-            ed.col += 1;
-        }
-        _ => {}
-    }
-}
-
-/// The byte offset of character `n`, so editing works on non-ASCII text.
-fn char_index(s: &str, n: usize) -> usize {
-    s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len())
+    out.push_str(&name);
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::App;
-    use leolib::Document;
 
-    fn press(app: &mut App, code: KeyCode) {
-        handle(app, KeyEvent::new(code, KeyModifiers::NONE));
-    }
-
-    fn type_text(app: &mut App, text: &str) {
-        for ch in text.chars() {
-            press(app, KeyCode::Char(ch));
-        }
-    }
-
-    fn app() -> App {
-        let mut doc = Document::new_empty("");
-        let root = doc.outline.root_position().unwrap();
-        doc.set_headline(&root, "root");
-        doc.undoer.clear();
-        App::new(doc)
+    fn keys(spec: &str) -> Vec<(KeyCode, KeyModifiers)> {
+        parse(spec).into_iter().map(|k| (k.code, k.mods)).collect()
     }
 
     #[test]
-    fn typing_a_headline_lands_in_the_model() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('e'));
-        for _ in 0..4 {
-            press(&mut app, KeyCode::Backspace);
-        }
-        type_text(&mut app, "renamed");
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(app.current.h(app.outline()), "renamed");
-        assert!(app.doc.undoer.can_undo());
-    }
-
-    #[test]
-    fn escaping_a_prompt_changes_nothing() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('e'));
-        type_text(&mut app, "xyz");
-        press(&mut app, KeyCode::Esc);
-        assert_eq!(app.current.h(app.outline()), "root");
-        assert!(!app.doc.undoer.can_undo());
-    }
-
-    #[test]
-    fn the_body_editor_commits_only_on_ctrl_s() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('i'));
-        type_text(&mut app, "line one");
-        press(&mut app, KeyCode::Enter);
-        type_text(&mut app, "line two");
-        assert_eq!(app.current.b(app.outline()), "");
-        handle(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    fn a_bare_word_is_one_key_per_character() {
+        assert_eq!(
+            keys("gg"),
+            vec![
+                (KeyCode::Char('g'), KeyModifiers::NONE),
+                (KeyCode::Char('g'), KeyModifiers::NONE)
+            ]
         );
-        assert_eq!(app.current.b(app.outline()), "line one\nline two");
+        assert_eq!(keys("[m").len(), 2);
+        assert_eq!(keys("<<").len(), 2);
+        assert_eq!(keys("z1").len(), 2);
     }
 
     #[test]
-    fn the_body_editor_edits_non_ascii_text_by_character() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('i'));
-        type_text(&mut app, "na\u{ef}ve");
-        press(&mut app, KeyCode::Backspace);
-        handle(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    fn a_named_key_is_one_key() {
+        assert_eq!(
+            keys("Space"),
+            vec![(KeyCode::Char(' '), KeyModifiers::NONE)]
         );
-        assert_eq!(app.current.b(app.outline()), "na\u{ef}v");
+        assert_eq!(keys("Enter"), vec![(KeyCode::Enter, KeyModifiers::NONE)]);
+        assert_eq!(keys("F1"), vec![(KeyCode::F(1), KeyModifiers::NONE)]);
     }
 
     #[test]
-    fn quitting_with_unsaved_changes_asks_first() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('q'));
-        assert!(!app.quit);
-        press(&mut app, KeyCode::Char('n'));
-        press(&mut app, KeyCode::Enter);
-        assert!(!app.quit);
-        press(&mut app, KeyCode::Char('q'));
-        press(&mut app, KeyCode::Char('y'));
-        press(&mut app, KeyCode::Enter);
-        assert!(app.quit);
+    fn modifiers_bind_to_the_rest_of_the_token() {
+        assert_eq!(
+            keys("Ctrl-r"),
+            vec![(KeyCode::Char('r'), KeyModifiers::CONTROL)]
+        );
+        assert_eq!(
+            keys("Shift-Down"),
+            vec![(KeyCode::Down, KeyModifiers::SHIFT)]
+        );
+        assert_eq!(keys("Alt-Home"), vec![(KeyCode::Home, KeyModifiers::ALT)]);
     }
 
     #[test]
-    fn inserting_a_node_opens_the_headline_prompt() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('o'));
-        type_text(&mut app, "new node");
-        press(&mut app, KeyCode::Enter);
-        let heads: Vec<String> = app.rows().iter().map(|r| r.headline.clone()).collect();
-        assert_eq!(heads, vec!["root", "new node"]);
+    fn a_modifier_can_be_followed_by_a_hyphen() {
+        // Leo binds contract-all to Alt-minus.
+        assert_eq!(keys("Alt--"), vec![(KeyCode::Char('-'), KeyModifiers::ALT)]);
+    }
+
+    #[test]
+    fn an_uppercase_character_does_not_need_the_shift_bit() {
+        // Terminals disagree about whether to set it; the table must not care.
+        let from_table = parse("J")[0];
+        let from_terminal = Key::new(KeyCode::Char('J'), KeyModifiers::SHIFT);
+        assert_eq!(from_table, from_terminal);
+    }
+
+    #[test]
+    fn a_count_needs_a_nonzero_digit_first() {
+        let mut p = Pending::default();
+        assert!(!p.push_digit(0));
+        assert!(p.push_digit(3));
+        assert!(p.push_digit(0));
+        assert_eq!(p.count(), 30);
+    }
+
+    #[test]
+    fn a_control_chord_has_one_identity_whatever_the_terminal_sends() {
+        // Under the keyboard enhancement protocol some terminals report the
+        // shifted codepoint and some the unshifted one.
+        let lower = Key::new(
+            KeyCode::Char('z'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        let upper = Key::new(
+            KeyCode::Char('Z'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        assert_eq!(lower, upper);
+        assert_eq!(parse("Ctrl-Shift-Z")[0], lower);
+        assert_eq!(parse("Ctrl-Shift-z")[0], lower);
+    }
+
+    #[test]
+    fn control_folds_case_but_a_plain_letter_does_not() {
+        assert_eq!(parse("Ctrl-H")[0], parse("Ctrl-h")[0]);
+        assert_ne!(parse("G")[0], parse("g")[0]);
+    }
+
+    #[test]
+    fn display_round_trips_a_spec() {
+        for spec in ["Ctrl-r", "Shift-Down", "Alt-Home", "F1", "Space"] {
+            assert_eq!(display(&parse(spec)[0]), spec);
+        }
     }
 }

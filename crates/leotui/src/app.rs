@@ -1,50 +1,116 @@
-//! The terminal view's state and its key bindings.
+//! The view's state, and the dispatcher that turns keys into commands.
 //!
 //! Everything that changes the outline goes through `leolib::Document`, so an
-//! edit lands in the model and its undo history, never in a widget that the
-//! model then has to be told about. That is the whole reason the model was
-//! separated from the view: this file holds no copy of the outline.
+//! edit lands in the model and its undo history, never in a widget the model
+//! then has to be told about. This file holds no copy of the outline.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use leolib::{Document, Outline, Position};
 
-/// A one-line prompt at the bottom of the screen.
-pub struct Prompt {
-    pub label: String,
-    pub buffer: String,
-    pub cursor: usize,
-    pub kind: PromptKind,
+use crate::bindings;
+use crate::commands;
+use crate::editor::change::{Change, InsertAt, Operator, Range};
+use crate::editor::motion::Kind;
+use crate::editor::parse::{Action, Parser};
+use crate::editor::{self, Editor};
+use crate::keys::{self, Key, Pending};
+use crate::minibuffer::{self, MiniKind, Minibuffer};
+use crate::search::{self, Direction, LastSearch, Scope};
+
+/// Which pane a key acts on. Leo spells this `!tree` and `!body`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Focus {
+    Tree,
+    Body,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PromptKind {
-    Headline,
-    SaveAs,
-    ConfirmQuit,
-}
-
-/// A minimal multi-line editor for one node's body.
-pub struct BodyEditor {
-    pub lines: Vec<String>,
-    pub row: usize,
-    pub col: usize,
-    pub position: Position,
-}
-
+/// How keys are interpreted. See `docs/dev/tui-design.md` section 5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mode {
     Normal,
-    Prompt(Prompt),
-    EditBody(BodyEditor),
+    /// A one-line edit of the current headline.
+    Headline,
+    /// Editing the body: keys are text.
+    Insert,
+    /// A charwise or linewise selection in the body.
+    Visual,
+    /// The help overlay, which takes the keyboard while it is up.
+    Help,
+    /// A yes/no question in the status line.
+    Confirm,
+    /// The `:` minibuffer.
+    Command,
+    /// An incremental `/` or `?` search.
+    Search,
+}
+
+impl Mode {
+    /// What the status line shows, vim-style.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Normal => "NORMAL",
+            Mode::Headline => "HEADLINE",
+            Mode::Insert => "INSERT",
+            Mode::Visual => "VISUAL",
+            Mode::Help => "HELP",
+            Mode::Confirm => "CONFIRM",
+            Mode::Command => "COMMAND",
+            Mode::Search => "SEARCH",
+        }
+    }
+}
+
+/// Options `:set` changes.
+pub struct Options {
+    pub search_scope: Scope,
+    pub wrap: bool,
+    pub number: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            search_scope: Scope::Headlines,
+            wrap: false,
+            number: false,
+        }
+    }
 }
 
 pub struct App {
     pub doc: Document,
     pub current: Position,
+    pub focus: Focus,
     pub mode: Mode,
+    pub mini: Option<Minibuffer>,
+    /// The body editor's cursor, registers and last change. The text is in
+    /// the outline; this is everything else.
+    pub editor: Editor,
+    /// The body's working copy, live only while a change is being typed.
+    pub buffer: Option<Vec<String>>,
+    parser: Parser,
+    pub options: Options,
+    /// `:` lines, oldest first.
+    pub command_history: Vec<String>,
+    pub search_history: Vec<String>,
+    pub last_search: Option<LastSearch>,
+    /// Where a search started, so Escape can put the view back.
+    search_origin: Option<(Position, usize)>,
+    pending: Pending,
     /// First visible row of the outline pane.
     pub top: usize,
     pub body_scroll: usize,
+    pub help_scroll: usize,
+    /// Width of the outline pane, as a percentage.
+    pub tree_percent: u16,
+    /// How deep `expand-next-level` has unfolded, and from which node.
+    pub expansion_level: usize,
+    expansion_node: Option<Position>,
     pub message: String,
     pub quit: bool,
+    /// Rows and columns of the outline pane, for paging. Set while drawing.
+    pub tree_height: usize,
+    pub body_height: usize,
     /// Total positions, and the outline generation it was counted at.
     /// Counting is O(outline), and the status line asks on every keystroke.
     position_count: (u64, usize),
@@ -59,6 +125,7 @@ pub struct Row {
     pub marked: bool,
     pub dirty: bool,
     pub cloned: bool,
+    pub is_file: bool,
     pub headline: String,
 }
 
@@ -71,11 +138,28 @@ impl App {
         let mut app = Self {
             doc,
             current,
+            focus: Focus::Tree,
             mode: Mode::Normal,
+            mini: None,
+            editor: Editor::new(),
+            buffer: None,
+            parser: Parser::default(),
+            options: Options::default(),
+            command_history: Vec::new(),
+            search_history: Vec::new(),
+            last_search: None,
+            search_origin: None,
+            pending: Pending::default(),
             top: 0,
             body_scroll: 0,
+            help_scroll: 0,
+            tree_percent: 45,
+            expansion_level: 1,
+            expansion_node: None,
             message: String::new(),
             quit: false,
+            tree_height: 20,
+            body_height: 20,
             position_count: (u64::MAX, 0),
         };
         app.expand_ancestors();
@@ -85,6 +169,88 @@ impl App {
     pub fn outline(&self) -> &Outline {
         &self.doc.outline
     }
+
+    // --- Dispatch ---------------------------------------------------------
+
+    /// Feed one key to the current mode.
+    pub fn handle_key(&mut self, event: KeyEvent) {
+        self.message.clear();
+        match self.mode {
+            Mode::Headline | Mode::Confirm | Mode::Command | Mode::Search => self.mini_key(event),
+            Mode::Insert => self.insert_key(event),
+            Mode::Visual => self.body_key(event),
+            Mode::Normal if self.focus == Focus::Body => self.body_key(event),
+            Mode::Normal | Mode::Help => self.command_key(event),
+        }
+    }
+
+    /// NORMAL and HELP: accumulate a count and keys, then run a binding.
+    fn command_key(&mut self, event: KeyEvent) {
+        let key = Key::from_event(event);
+        // A leading digit is a count, not a binding. `0` only continues one.
+        if self.pending.keys.is_empty() {
+            if let KeyCode::Char(ch) = key.code {
+                if key.mods.is_empty()
+                    && ch.is_ascii_digit()
+                    && self.pending.push_digit(ch as usize - '0' as usize)
+                {
+                    return;
+                }
+            }
+        }
+        if key.code == KeyCode::Esc && !self.pending.is_empty() {
+            self.pending.clear();
+            return;
+        }
+        self.pending.keys.push(key);
+        let (exact, prefix) = self.match_pending();
+        if let Some(command) = exact {
+            let count = self.pending.count();
+            self.pending.clear();
+            self.run(command, count);
+        } else if !prefix {
+            let typed = self.pending.describe();
+            self.pending.clear();
+            self.message = format!("no binding for {typed}");
+        }
+    }
+
+    /// Whether the pending keys are exactly a binding, and whether they are a
+    /// prefix of one.
+    fn match_pending(&self) -> (Option<&'static str>, bool) {
+        let mut exact = None;
+        let mut prefix = false;
+        for binding in bindings::for_context(self.mode, self.focus) {
+            let want = keys::parse(binding.keys);
+            if want == self.pending.keys {
+                exact = Some(binding.command);
+            } else if want.len() > self.pending.keys.len()
+                && want[..self.pending.keys.len()] == self.pending.keys[..]
+            {
+                prefix = true;
+            }
+        }
+        (exact, prefix)
+    }
+
+    /// Run a command by name.
+    pub fn run(&mut self, name: &str, count: usize) {
+        match commands::find(name) {
+            Some(command) => (command.run)(self, count),
+            None => self.message = format!("no such command: {name}"),
+        }
+    }
+
+    /// What has been typed towards a binding, for the status line. The body
+    /// has its own grammar, so it has its own pending keys.
+    pub fn pending_keys(&self) -> String {
+        if self.focus == Focus::Body && matches!(self.mode, Mode::Normal | Mode::Visual) {
+            return self.parser.describe();
+        }
+        self.pending.describe()
+    }
+
+    // --- The outline pane -------------------------------------------------
 
     /// The rows the outline pane shows: the tree with folded subtrees skipped.
     pub fn rows(&self) -> Vec<Row> {
@@ -101,6 +267,7 @@ impl App {
                 marked: cur.is_marked(o),
                 dirty: cur.is_dirty(o),
                 cloned: cur.is_cloned(o),
+                is_file: cur.is_any_at_file_node(o),
                 headline: cur.h(o).to_string(),
                 position: cur.clone(),
             });
@@ -113,10 +280,6 @@ impl App {
         rows
     }
 
-    pub fn current_row(&self) -> usize {
-        row_of(&self.rows(), &self.current)
-    }
-
     /// The visible rows and the index of the selected one, in one walk.
     pub fn rows_and_current(&self) -> (Vec<Row>, usize) {
         let rows = self.rows();
@@ -124,12 +287,8 @@ impl App {
         (rows, current)
     }
 
-    fn position_count(&mut self) -> usize {
-        let generation = self.outline().generation;
-        if self.position_count.0 != generation {
-            self.position_count = (generation, self.outline().all_positions().len());
-        }
-        self.position_count.1
+    pub fn current_row(&self) -> usize {
+        row_of(&self.rows(), &self.current)
     }
 
     pub fn body_lines(&self) -> Vec<String> {
@@ -140,21 +299,87 @@ impl App {
             .collect()
     }
 
-    /// Unfold everything above the current node, so it can be seen.
-    pub fn expand_ancestors(&mut self) {
-        for p in self.current.clone().parents(self.outline()) {
-            self.doc.outline.expand(&p);
+    /// The current node's ancestors, outermost first: the breadcrumb.
+    pub fn breadcrumb(&self) -> String {
+        let o = self.outline();
+        let mut parts: Vec<String> = self
+            .current
+            .self_and_parents(o)
+            .iter()
+            .rev()
+            .map(|p| p.h(o).to_string())
+            .collect();
+        if parts.len() > 4 {
+            let tail = parts.split_off(parts.len() - 3);
+            parts = std::iter::once("...".to_string()).chain(tail).collect();
         }
+        parts.join(" > ")
     }
 
-    fn select(&mut self, p: Position) {
+    fn position_count(&mut self) -> usize {
+        let generation = self.outline().generation;
+        if self.position_count.0 != generation {
+            self.position_count = (generation, self.outline().all_positions().len());
+        }
+        self.position_count.1
+    }
+
+    // --- Selection --------------------------------------------------------
+
+    pub fn select(&mut self, p: Position) {
         self.current = p;
         self.body_scroll = 0;
+        // The body is a different buffer now.
+        self.buffer = None;
+        self.editor.cursor = (0, 0);
+        self.editor.desired_col = 0;
+        self.editor.visual = None;
         self.expand_ancestors();
     }
 
-    /// Move `delta` visible rows.
-    pub fn move_by(&mut self, delta: i32) {
+    /// Unfold everything above the current node, so it can be seen.
+    pub fn expand_ancestors(&mut self) {
+        let p = self.current.clone();
+        self.doc.outline.expand_all_ancestors(&p);
+    }
+
+    /// After an undo the current position may no longer exist.
+    pub fn clamp_current(&mut self) {
+        if !self.outline().position_exists(&self.current) {
+            if let Some(root) = self.outline().root_position() {
+                self.current = root;
+            }
+        }
+    }
+
+    /// Move by a fraction of the visible pane, in whichever pane has focus.
+    pub fn page(&mut self, fraction: f32) {
+        match self.focus {
+            Focus::Tree => {
+                let step = ((self.tree_height as f32) * fraction) as i32;
+                self.move_rows(step);
+            }
+            Focus::Body => {
+                let step = ((self.body_height as f32) * fraction) as i32;
+                if step >= 0 {
+                    self.body_scroll += step as usize;
+                } else {
+                    self.body_scroll = self.body_scroll.saturating_sub((-step) as usize);
+                }
+            }
+        }
+    }
+
+    /// Select the visible row at `index`, clamped to the outline.
+    pub fn move_to_row(&mut self, index: usize) {
+        let rows = self.rows();
+        if let Some(row) = rows.get(index.min(rows.len().saturating_sub(1))) {
+            self.select(row.position.clone());
+        }
+    }
+
+    /// Move `delta` visible rows in the outline.
+    pub fn move_rows(&mut self, delta: i32) {
         let rows = self.rows();
         if rows.is_empty() {
             return;
@@ -164,41 +389,10 @@ impl App {
         self.select(rows[i].position.clone());
     }
 
-    pub fn move_to_row(&mut self, i: usize) {
-        let rows = self.rows();
-        if let Some(row) = rows.get(i.min(rows.len().saturating_sub(1))) {
-            self.select(row.position.clone());
-        }
-    }
+    // --- Folding ----------------------------------------------------------
 
-    pub fn toggle_fold(&mut self) {
-        let p = self.current.clone();
-        if !p.has_children(self.outline()) {
-            return;
-        }
-        if self.outline().is_expanded(&p) {
-            self.doc.outline.contract(&p);
-        } else {
-            self.doc.outline.expand(&p);
-        }
-    }
-
-    /// Right arrow: unfold, or step into the first child.
-    pub fn expand_or_descend(&mut self) {
-        let p = self.current.clone();
-        if p.has_children(self.outline()) {
-            if self.outline().is_expanded(&p) {
-                if let Some(child) = p.first_child(self.outline()) {
-                    self.select(child);
-                }
-            } else {
-                self.doc.outline.expand(&p);
-            }
-        }
-    }
-
-    /// Left arrow: fold, or step out to the parent.
-    pub fn collapse_or_ascend(&mut self) {
+    /// Leo's left arrow: fold this node, or step out to the parent.
+    pub fn contract_or_go_left(&mut self) {
         let p = self.current.clone();
         if p.has_children(self.outline()) && self.outline().is_expanded(&p) {
             self.doc.outline.contract(&p);
@@ -207,104 +401,38 @@ impl App {
         }
     }
 
-    // --- Commands ---------------------------------------------------------
-
-    pub fn insert_node(&mut self) {
+    /// Leo's right arrow: unfold this node and step into it.
+    pub fn expand_and_go_right(&mut self) {
         let p = self.current.clone();
-        let new = self.doc.insert_node(&p);
-        self.select(new);
-        self.begin_headline_prompt();
-    }
-
-    pub fn delete_node(&mut self) {
-        let p = self.current.clone();
-        match self.doc.delete_node(&p) {
-            Some(next) => self.select(next),
-            None => self.message = "cannot delete the last node".to_string(),
+        if !p.has_children(self.outline()) {
+            return;
+        }
+        if !self.outline().is_expanded(&p) {
+            self.doc.outline.expand(&p);
+        } else if let Some(child) = p.first_child(self.outline()) {
+            self.select(child);
         }
     }
 
-    pub fn clone_node(&mut self) {
+    /// Unfold the current subtree to `level`, tracking where the count is from.
+    ///
+    /// Leo keeps the level per node, so moving to another node and pressing
+    /// `zr` starts counting again rather than continuing from elsewhere.
+    pub fn expand_to_level(&mut self, level: usize) {
         let p = self.current.clone();
-        let new = self.doc.clone_node(&p);
-        self.select(new);
-    }
-
-    pub fn copy_node(&mut self) {
-        let p = self.current.clone();
-        self.doc.copy_node(&p);
-        self.message = format!("copied: {}", p.h(self.outline()));
-    }
-
-    pub fn paste_node(&mut self) {
-        let p = self.current.clone();
-        match self.doc.paste_node(&p) {
-            Some(new) => self.select(new),
-            None => self.message = "nothing copied".to_string(),
+        if self.expansion_node.as_ref() != Some(&p) {
+            self.expansion_node = Some(p.clone());
         }
+        let max = self.doc.outline.expand_to_level(&p, level.max(1));
+        self.expansion_level = max + 1;
+        self.message = format!("level: {}", max + 1);
     }
 
-    pub fn toggle_mark(&mut self) {
-        let p = self.current.clone();
-        self.doc.toggle_marked(&p);
-    }
-
-    pub fn move_node(&mut self, direction: char) {
-        let p = self.current.clone();
-        let moved = match direction {
-            'u' => self.doc.move_up(&p),
-            'd' => self.doc.move_down(&p),
-            'l' => self.doc.move_left(&p),
-            'r' => self.doc.move_right(&p),
-            _ => None,
-        };
-        match moved {
-            Some(new) => self.select(new),
-            None => self.message = "cannot move that way".to_string(),
-        }
-    }
-
-    pub fn undo(&mut self) {
-        let name = self.doc.undoer.undo_name().unwrap_or("nothing").to_string();
-        match self.doc.undo() {
-            Some(p) => {
-                self.select(p);
-                self.message = format!("undo: {name}");
-            }
-            None => self.message = "nothing to undo".to_string(),
-        }
-        self.clamp_current();
-    }
-
-    pub fn redo(&mut self) {
-        let name = self.doc.undoer.redo_name().unwrap_or("nothing").to_string();
-        match self.doc.redo() {
-            Some(p) => {
-                self.select(p);
-                self.message = format!("redo: {name}");
-            }
-            None => self.message = "nothing to redo".to_string(),
-        }
-        self.clamp_current();
-    }
-
-    /// After an undo the current position may no longer exist.
-    fn clamp_current(&mut self) {
-        if !self.outline().position_exists(&self.current) {
-            if let Some(root) = self.outline().root_position() {
-                self.current = root;
-            }
-        }
-    }
+    // --- Files ------------------------------------------------------------
 
     pub fn save(&mut self) {
         if self.outline().file_name.is_empty() {
-            self.mode = Mode::Prompt(Prompt {
-                label: "save as: ".to_string(),
-                buffer: String::new(),
-                cursor: 0,
-                kind: PromptKind::SaveAs,
-            });
+            self.open_mini(MiniKind::SaveAs, String::new());
             return;
         }
         match self.doc.save("") {
@@ -330,77 +458,547 @@ impl App {
         self.message = parts.join(", ");
     }
 
-    // --- Prompts ----------------------------------------------------------
-
-    pub fn begin_headline_prompt(&mut self) {
-        let text = self.current.h(self.outline()).to_string();
-        self.mode = Mode::Prompt(Prompt {
-            label: "headline: ".to_string(),
-            cursor: text.chars().count(),
-            buffer: text,
-            kind: PromptKind::Headline,
-        });
-    }
-
-    pub fn begin_body_edit(&mut self) {
-        let mut lines = self.body_lines();
-        if lines.is_empty() {
-            lines.push(String::new());
-        }
-        self.mode = Mode::EditBody(BodyEditor {
-            lines,
-            row: 0,
-            col: 0,
-            position: self.current.clone(),
-        });
-    }
-
-    pub fn finish_prompt(&mut self, accepted: bool) {
-        let Mode::Prompt(prompt) = std::mem::replace(&mut self.mode, Mode::Normal) else {
-            return;
-        };
-        if !accepted {
-            return;
-        }
-        match prompt.kind {
-            PromptKind::Headline => {
-                let p = self.current.clone();
-                self.doc.set_headline(&p, &prompt.buffer);
-            }
-            PromptKind::SaveAs => match self.doc.save(&prompt.buffer) {
-                Ok(path) => self.message = format!("saved: {path}"),
-                Err(e) => self.message = format!("save failed: {e}"),
-            },
-            PromptKind::ConfirmQuit => {
-                if prompt.buffer.trim().eq_ignore_ascii_case("y") {
-                    self.quit = true;
-                }
-            }
-        }
-    }
-
-    pub fn finish_body_edit(&mut self, accepted: bool) {
-        let Mode::EditBody(editor) = std::mem::replace(&mut self.mode, Mode::Normal) else {
-            return;
-        };
-        if !accepted {
-            return;
-        }
-        let text = editor.lines.join("\n");
-        self.doc.set_body(&editor.position, &text);
-    }
-
     pub fn request_quit(&mut self) {
         if !self.outline().changed {
             self.quit = true;
             return;
         }
-        self.mode = Mode::Prompt(Prompt {
-            label: "unsaved changes. quit anyway? (y/n) ".to_string(),
-            buffer: String::new(),
-            cursor: 0,
-            kind: PromptKind::ConfirmQuit,
-        });
+        self.open_mini(MiniKind::ConfirmQuit, String::new());
+    }
+
+    // --- Prompts and the body editor --------------------------------------
+
+    pub fn begin_headline_edit(&mut self) {
+        let text = self.current.h(self.outline()).to_string();
+        self.open_mini(MiniKind::Headline, text);
+    }
+
+    /// Open the line at the bottom of the screen, and enter its mode.
+    pub fn open_mini(&mut self, kind: MiniKind, text: String) {
+        self.mode = match kind {
+            MiniKind::Command => Mode::Command,
+            MiniKind::SearchForward | MiniKind::SearchBackward => Mode::Search,
+            MiniKind::ConfirmQuit => Mode::Confirm,
+            _ => Mode::Headline,
+        };
+        if kind.is_search() {
+            self.search_origin = Some((self.current.clone(), self.body_cursor_row()));
+        }
+        self.mini = Some(Minibuffer::new(kind, text));
+    }
+
+    /// Enter INSERT at the cursor, as `i` does.
+    pub fn begin_body_edit(&mut self) {
+        self.focus = Focus::Body;
+        let mut lines = self.body_buffer();
+        self.editor.clamp(&lines);
+        self.editor.begin_insert(&mut lines, InsertAt::Cursor, 1);
+        self.buffer = Some(lines);
+        self.mode = Mode::Insert;
+    }
+
+    /// Every mode whose keys are text: the headline, `:` and `/`.
+    fn mini_key(&mut self, event: KeyEvent) {
+        let Some(mini) = self.mini.as_mut() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        match event.code {
+            KeyCode::Esc => {
+                if mini.kind == MiniKind::Command {
+                    mini.cancel_completion();
+                }
+                self.finish_mini(false)
+            }
+            KeyCode::Enter => self.finish_mini(true),
+            KeyCode::Tab => mini.complete(false),
+            KeyCode::BackTab => mini.complete(true),
+            KeyCode::Backspace => {
+                mini.backspace();
+                self.preview_search();
+            }
+            KeyCode::Delete => {
+                mini.delete();
+                self.preview_search();
+            }
+            KeyCode::Left => mini.move_cursor(-1),
+            KeyCode::Right => mini.move_cursor(1),
+            KeyCode::Home => mini.home(),
+            KeyCode::End => mini.end(),
+            KeyCode::Up | KeyCode::Down => {
+                let back = event.code == KeyCode::Up;
+                let kind = mini.kind;
+                let entries = match kind {
+                    MiniKind::Command => self.command_history.clone(),
+                    _ if kind.is_search() => self.search_history.clone(),
+                    _ => Vec::new(),
+                };
+                if let Some(mini) = self.mini.as_mut() {
+                    mini.history(&entries, back);
+                }
+            }
+            KeyCode::Char(ch) => {
+                mini.insert(ch);
+                self.preview_search();
+            }
+            _ => {}
+        }
+    }
+
+    /// While typing a search, show where it would land.
+    fn preview_search(&mut self) {
+        let Some(mini) = self.mini.as_ref() else {
+            return;
+        };
+        if !mini.kind.is_search() {
+            return;
+        }
+        let pattern = mini.buffer.clone();
+        let direction = if mini.kind == MiniKind::SearchForward {
+            Direction::Forward
+        } else {
+            Direction::Backward
+        };
+        let Some((origin, row)) = self.search_origin.clone() else {
+            return;
+        };
+        if pattern.is_empty() {
+            self.restore_search_origin(&origin, row);
+            return;
+        }
+        match self.focus {
+            Focus::Tree => {
+                match search::find_node(
+                    self.outline(),
+                    &origin,
+                    &pattern,
+                    direction,
+                    self.options.search_scope,
+                ) {
+                    Some(p) => {
+                        self.select(p);
+                        self.message.clear();
+                    }
+                    None => {
+                        self.restore_search_origin(&origin, row);
+                        self.message = format!("not found: {pattern}");
+                    }
+                }
+            }
+            Focus::Body => {
+                let lines = self.body_lines();
+                match search::find_in_lines(&lines, (row, 0), &pattern, direction) {
+                    Some((r, _)) => {
+                        self.body_scroll = r;
+                        self.message.clear();
+                    }
+                    None => {
+                        self.body_scroll = row;
+                        self.message = format!("not found: {pattern}");
+                    }
+                }
+            }
+        }
+    }
+
+    fn restore_search_origin(&mut self, origin: &Position, row: usize) {
+        match self.focus {
+            Focus::Tree => self.current = origin.clone(),
+            Focus::Body => self.body_scroll = row,
+        }
+    }
+
+    fn body_cursor_row(&self) -> usize {
+        self.body_scroll
+    }
+
+    /// Close the line at the bottom, acting on it if it was accepted.
+    pub fn finish_mini(&mut self, accepted: bool) {
+        let Some(mini) = self.mini.take() else {
+            return;
+        };
+        self.mode = Mode::Normal;
+        let text = mini.buffer;
+        if !accepted {
+            if mini.kind.is_search() {
+                if let Some((origin, row)) = self.search_origin.take() {
+                    self.restore_search_origin(&origin, row);
+                }
+            }
+            return;
+        }
+        match mini.kind {
+            MiniKind::Headline => {
+                let p = self.current.clone();
+                self.doc.set_headline(&p, &text);
+            }
+            MiniKind::SaveAs => match self.doc.save(&text) {
+                Ok(path) => self.message = format!("saved: {path}"),
+                Err(e) => self.message = format!("save failed: {e}"),
+            },
+            MiniKind::ConfirmQuit => {
+                if text.trim().eq_ignore_ascii_case("y") {
+                    self.quit = true;
+                }
+            }
+            MiniKind::Command => {
+                if !text.trim().is_empty() {
+                    remember(&mut self.command_history, &text);
+                }
+                self.run_command_line(&text);
+            }
+            MiniKind::SearchForward | MiniKind::SearchBackward => {
+                self.search_origin = None;
+                if text.is_empty() {
+                    return;
+                }
+                remember(&mut self.search_history, &text);
+                self.last_search = Some(LastSearch {
+                    pattern: text,
+                    direction: if mini.kind == MiniKind::SearchForward {
+                        Direction::Forward
+                    } else {
+                        Direction::Backward
+                    },
+                });
+            }
+        }
+    }
+
+    /// Repeat the last search. `same` is `n`; otherwise `N`.
+    pub fn repeat_search(&mut self, same: bool, count: usize) {
+        let Some(last) = self.last_search.clone() else {
+            self.message = "no previous search".to_string();
+            return;
+        };
+        let direction = if same {
+            last.direction
+        } else {
+            last.direction.reverse()
+        };
+        for _ in 0..count {
+            match self.focus {
+                Focus::Tree => {
+                    match search::find_node(
+                        self.outline(),
+                        &self.current,
+                        &last.pattern,
+                        direction,
+                        self.options.search_scope,
+                    ) {
+                        Some(p) => self.select(p),
+                        None => {
+                            self.message = format!("not found: {}", last.pattern);
+                            return;
+                        }
+                    }
+                }
+                Focus::Body => {
+                    let lines = self.body_lines();
+                    let from = (self.body_scroll, 0);
+                    match search::find_in_lines(&lines, from, &last.pattern, direction) {
+                        Some((r, _)) => self.body_scroll = r,
+                        None => {
+                            self.message = format!("not found: {}", last.pattern);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Run one `:` line.
+    pub fn run_command_line(&mut self, line: &str) {
+        let Some(parsed) = minibuffer::parse_command(line) else {
+            return;
+        };
+        if let Some(row) = parsed.row {
+            self.run("goto-visible-row", row.max(1));
+            return;
+        }
+        match parsed.name.as_str() {
+            "quit" => {
+                if parsed.force {
+                    self.quit = true;
+                } else {
+                    self.request_quit();
+                }
+            }
+            "save-and-quit" => {
+                self.save();
+                if self.mini.is_none() {
+                    self.quit = true;
+                }
+            }
+            "save" if !parsed.arg.is_empty() => match self.doc.save(&parsed.arg) {
+                Ok(path) => self.message = format!("saved: {path}"),
+                Err(e) => self.message = format!("save failed: {e}"),
+            },
+            "open" => self.open_file(&parsed.arg),
+            "set" => self.set_option(&parsed.arg),
+            "help" if !parsed.arg.is_empty() => match commands::find(&parsed.arg) {
+                Some(c) => {
+                    let keys = crate::bindings::keys_for(c.name).join(" ");
+                    self.message = format!("{}: {}  [{keys}]", c.name, c.summary);
+                }
+                None => self.message = format!("no such command: {}", parsed.arg),
+            },
+            name => {
+                if commands::find(name).is_some() {
+                    self.run(name, 1);
+                } else {
+                    self.message = format!("no such command: {name}");
+                }
+            }
+        }
+    }
+
+    /// `:e path` -- open another outline, refusing to lose unsaved work.
+    fn open_file(&mut self, path: &str) {
+        if path.is_empty() {
+            self.message = "open: needs a file name".to_string();
+            return;
+        }
+        if self.outline().changed {
+            self.message = "unsaved changes: save first, or use :q! and reopen".to_string();
+            return;
+        }
+        match Document::open(path, true) {
+            Ok(doc) => {
+                let keep = std::mem::replace(self, App::new(doc));
+                self.options = keep.options;
+                self.command_history = keep.command_history;
+                self.search_history = keep.search_history;
+                self.tree_percent = keep.tree_percent;
+                self.message = format!("opened: {path}");
+            }
+            Err(e) => self.message = format!("open failed: {e}"),
+        }
+    }
+
+    fn set_option(&mut self, arg: &str) {
+        let (name, value) = match arg.split_once('=') {
+            Some((n, v)) => (n.trim(), Some(v.trim())),
+            None => (arg.trim(), None),
+        };
+        match (name, value) {
+            ("search", Some("all")) => self.options.search_scope = Scope::All,
+            ("search", Some("headlines")) => self.options.search_scope = Scope::Headlines,
+            ("split", Some(v)) => match v.parse::<u16>() {
+                Ok(n) => self.tree_percent = n.clamp(15, 85),
+                Err(_) => self.message = format!("set: not a number: {v}"),
+            },
+            ("wrap", None) => self.options.wrap = true,
+            ("nowrap", None) => self.options.wrap = false,
+            ("number", None) | ("nu", None) => self.options.number = true,
+            ("nonumber", None) | ("nonu", None) => self.options.number = false,
+            _ => {
+                self.message = format!(
+                    "set: unknown option: {arg}. try search=all|headlines, split=N, wrap, number"
+                )
+            }
+        }
+    }
+
+    /// The body's own text: the working copy if one is live, else the model.
+    pub fn body_buffer(&self) -> Vec<String> {
+        match &self.buffer {
+            Some(lines) => lines.clone(),
+            None => editor::split(self.current.b(self.outline())),
+        }
+    }
+
+    /// Write the body back as one change, which is one undo bead.
+    fn commit_body(&mut self, lines: &[String]) {
+        let p = self.current.clone();
+        let text = editor::join(lines);
+        self.doc.set_body(&p, &text);
+        self.buffer = None;
+    }
+
+    /// NORMAL and VISUAL with body focus: the vim grammar.
+    fn body_key(&mut self, event: KeyEvent) {
+        let key = Key::from_event(event);
+        self.parser.visual = self.mode == Mode::Visual;
+        let action = self.parser.feed(key);
+        let lines = self.body_buffer();
+        let screen = (self.body_scroll, self.body_height);
+        match action {
+            Action::Pending => {}
+            Action::Unknown => self.message = "no such command".to_string(),
+            Action::Move(motion, count) => {
+                self.editor.move_by(&lines, motion, count, screen);
+                self.scroll_to_cursor();
+            }
+            Action::Operate {
+                operator,
+                range,
+                count,
+            } => self.operate(operator, range, count, screen),
+            Action::Edit(edit, count) => {
+                let change = Change::Simple { count, edit };
+                self.run_change(change, screen);
+            }
+            Action::Insert(at, count) => {
+                let mut lines = lines;
+                self.editor.clamp(&lines);
+                self.editor.begin_insert(&mut lines, at, count);
+                self.buffer = Some(lines);
+                self.mode = Mode::Insert;
+            }
+            Action::Visual { linewise } => {
+                self.editor.start_visual(if linewise {
+                    Kind::Linewise
+                } else {
+                    Kind::Charwise
+                });
+                self.mode = Mode::Visual;
+            }
+            Action::SwapEnds => self.editor.swap_visual_ends(),
+            Action::Repeat(count) => {
+                let Some(change) = self.editor.last_change.clone() else {
+                    self.message = "nothing to repeat".to_string();
+                    return;
+                };
+                for _ in 0..count {
+                    self.run_change(change.clone(), screen);
+                }
+            }
+            Action::Undo(count) => self.run("undo", count),
+            Action::Redo(count) => self.run("redo", count),
+            Action::SearchForward => self.open_mini(MiniKind::SearchForward, String::new()),
+            Action::SearchBackward => self.open_mini(MiniKind::SearchBackward, String::new()),
+            Action::FindNext(count) => self.repeat_search(true, count),
+            Action::FindPrev(count) => self.repeat_search(false, count),
+            Action::RepeatFind { reverse, count } => {
+                let Some(motion) = self.editor.last_find else {
+                    return;
+                };
+                let motion = if reverse {
+                    reverse_find(motion)
+                } else {
+                    motion
+                };
+                self.editor.move_by(&lines, motion, count, screen);
+                self.scroll_to_cursor();
+            }
+            Action::Command => self.open_mini(MiniKind::Command, String::new()),
+            Action::FocusTree => self.focus = Focus::Tree,
+            Action::Escape => {
+                if self.mode == Mode::Visual {
+                    self.editor.visual = None;
+                    self.mode = Mode::Normal;
+                } else {
+                    self.focus = Focus::Tree;
+                }
+            }
+        }
+    }
+
+    /// Apply an operator, either to a selection or to a motion's range.
+    fn operate(&mut self, operator: Operator, range: Range, count: usize, screen: (usize, usize)) {
+        let lines = self.body_buffer();
+        let result = if self.mode == Mode::Visual {
+            let out = self.editor.apply_to_visual(&lines, operator);
+            self.mode = Mode::Normal;
+            out
+        } else {
+            self.editor.apply_change(
+                &lines,
+                &Change::Operator {
+                    count,
+                    operator,
+                    range,
+                },
+                screen,
+            )
+        };
+        let Some(new_lines) = result else {
+            self.message = "nothing to do".to_string();
+            return;
+        };
+        if operator.enters_insert() {
+            // `c` deletes, then leaves the editor in INSERT: one change, made
+            // of the deletion and whatever is typed next, so `.` repeats both.
+            self.editor.begin_change_insert(operator, range, count);
+            self.buffer = Some(new_lines);
+            self.mode = Mode::Insert;
+            return;
+        }
+        self.commit_body(&new_lines);
+        self.scroll_to_cursor();
+    }
+
+    fn run_change(&mut self, change: Change, screen: (usize, usize)) {
+        let lines = self.body_buffer();
+        let Some(new_lines) = self.editor.apply_change(&lines, &change, screen) else {
+            self.message = "nothing to do".to_string();
+            return;
+        };
+        self.commit_body(&new_lines);
+        self.scroll_to_cursor();
+    }
+
+    /// Keep the cursor on screen without recentring on every keypress.
+    fn scroll_to_cursor(&mut self) {
+        let row = self.editor.cursor.0;
+        let height = self.body_height.max(1);
+        if row < self.body_scroll {
+            self.body_scroll = row;
+        } else if row >= self.body_scroll + height {
+            self.body_scroll = row + 1 - height;
+        }
+    }
+
+    /// INSERT. Escape commits the change; Ctrl-c abandons it.
+    fn insert_key(&mut self, event: KeyEvent) {
+        let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
+        let mut lines = self.buffer.clone().unwrap_or_else(|| self.body_buffer());
+        match event.code {
+            KeyCode::Esc => {
+                self.editor.end_insert(&mut lines);
+                self.commit_body(&lines);
+                self.mode = Mode::Normal;
+                self.editor.clamp(&lines);
+                return;
+            }
+            KeyCode::Char('c') if ctrl => {
+                self.editor.cancel_insert();
+                self.buffer = None;
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Enter => self.editor.insert_newline(&mut lines),
+            KeyCode::Backspace => self.editor.insert_backspace(&mut lines),
+            KeyCode::Tab => {
+                for _ in 0..4 {
+                    self.editor.insert_char(&mut lines, ' ');
+                }
+            }
+            KeyCode::Left => {
+                self.editor.cursor.1 = self.editor.cursor.1.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                let max = editor::line_len(&lines, self.editor.cursor.0);
+                self.editor.cursor.1 = (self.editor.cursor.1 + 1).min(max);
+            }
+            KeyCode::Up => {
+                self.editor.cursor.0 = self.editor.cursor.0.saturating_sub(1);
+                self.editor.clamp(&lines);
+            }
+            KeyCode::Down => {
+                let last = lines.len().saturating_sub(1);
+                self.editor.cursor.0 = (self.editor.cursor.0 + 1).min(last);
+                self.editor.clamp(&lines);
+            }
+            KeyCode::Home => self.editor.cursor.1 = 0,
+            KeyCode::End => self.editor.cursor.1 = editor::line_len(&lines, self.editor.cursor.0),
+            KeyCode::Char(ch) => self.editor.insert_char(&mut lines, ch),
+            _ => {}
+        }
+        self.buffer = Some(lines);
+        self.scroll_to_cursor();
     }
 
     /// The status line: what the outline is and what state it is in.
@@ -415,7 +1013,7 @@ impl App {
         };
         let changed = if o.changed { " *" } else { "" };
         format!(
-            " {name}{changed}  row {}/{}  {positions} positions ",
+            "{name}{changed}  {}/{}  {positions} positions",
             current + 1,
             rows.len()
         )
@@ -429,58 +1027,659 @@ fn row_of(rows: &[Row], current: &Position) -> usize {
         .unwrap_or(0)
 }
 
+/// `;` and `,` differ only in direction.
+fn reverse_find(motion: crate::editor::motion::Motion) -> crate::editor::motion::Motion {
+    match motion {
+        crate::editor::motion::Motion::Find { ch, forward, till } => {
+            crate::editor::motion::Motion::Find {
+                ch,
+                forward: !forward,
+                till,
+            }
+        }
+        other => other,
+    }
+}
+
+/// Keep the newest entry once, at the end.
+fn remember(history: &mut Vec<String>, entry: &str) {
+    history.retain(|e| e != entry);
+    history.push(entry.to_string());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys;
 
     fn app() -> App {
+        // a / a1 / a2, b, c
         let mut doc = Document::new_empty("");
         let root = doc.outline.root_position().unwrap();
-        doc.set_headline(&root, "root");
-        let a = doc.outline.insert_as_last_child(&root);
-        doc.set_headline(&a, "a");
-        let a1 = doc.outline.insert_as_last_child(&a);
+        doc.set_headline(&root, "a");
+        let a1 = doc.outline.insert_as_last_child(&root);
         doc.set_headline(&a1, "a1");
+        let a2 = doc.outline.insert_as_last_child(&a1);
+        doc.set_headline(&a2, "a2");
         let b = doc.outline.insert_after(&root);
         doc.set_headline(&b, "b");
+        let c = doc.outline.insert_after(&b);
+        doc.set_headline(&c, "c");
         doc.undoer.clear();
         App::new(doc)
+    }
+
+    /// Type a binding spec, one key at a time, as a terminal would.
+    fn press(app: &mut App, spec: &str) {
+        for key in keys::parse(spec) {
+            app.handle_key(KeyEvent::new(key.code, key.mods));
+        }
+    }
+
+    fn heads(app: &App) -> Vec<String> {
+        app.rows()
+            .iter()
+            .map(|r| format!("{}{}", "  ".repeat(r.depth), r.headline))
+            .collect()
     }
 
     #[test]
     fn a_folded_subtree_is_not_shown() {
         let mut app = app();
-        let heads: Vec<String> = app.rows().iter().map(|r| r.headline.clone()).collect();
-        assert_eq!(heads, vec!["root", "b"]);
-        app.expand_or_descend();
-        let heads: Vec<String> = app.rows().iter().map(|r| r.headline.clone()).collect();
-        assert_eq!(heads, vec!["root", "a", "b"]);
+        assert_eq!(heads(&app), vec!["a", "b", "c"]);
+        press(&mut app, "l");
+        assert_eq!(heads(&app), vec!["a", "  a1", "b", "c"]);
     }
 
     #[test]
-    fn navigation_skips_folded_nodes() {
+    fn a_two_key_sequence_waits_for_its_second_key() {
         let mut app = app();
-        app.move_by(1);
+        press(&mut app, "j");
         assert_eq!(app.current.h(app.outline()), "b");
-    }
-
-    #[test]
-    fn selecting_a_node_unfolds_its_ancestors() {
-        let mut app = app();
-        let a1 = app.outline().all_positions()[2].clone();
-        app.select(a1);
-        let heads: Vec<String> = app.rows().iter().map(|r| r.headline.clone()).collect();
-        assert_eq!(heads, vec!["root", "a", "a1", "b"]);
-    }
-
-    #[test]
-    fn undo_after_a_delete_restores_the_selection() {
-        let mut app = app();
-        app.move_by(1);
-        app.delete_node();
-        assert_eq!(app.rows().len(), 1);
-        app.undo();
-        assert_eq!(app.rows().len(), 2);
+        // `g` alone does nothing and waits.
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
         assert_eq!(app.current.h(app.outline()), "b");
+        assert_eq!(app.pending_keys(), "g");
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "a");
+        assert_eq!(app.pending_keys(), "");
+    }
+
+    #[test]
+    fn a_count_repeats_a_command() {
+        let mut app = app();
+        press(&mut app, "2j");
+        assert_eq!(app.current.h(app.outline()), "c");
+    }
+
+    #[test]
+    fn escape_abandons_a_half_typed_sequence() {
+        let mut app = app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.pending_keys(), "");
+        // The next `g` starts a fresh sequence rather than completing `gg`.
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert_eq!(app.pending_keys(), "g");
+    }
+
+    #[test]
+    fn an_unbound_key_says_so_and_clears() {
+        let mut app = app();
+        press(&mut app, "Q");
+        assert!(app.message.contains("no binding"), "{}", app.message);
+        assert_eq!(app.pending_keys(), "");
+    }
+
+    #[test]
+    fn the_same_key_means_different_things_in_each_pane() {
+        let mut app = app();
+        // `j` in the tree moves the selection.
+        press(&mut app, "j");
+        assert_eq!(app.current.h(app.outline()), "b");
+        let p = app.current.clone();
+        app.doc.set_body(&p, "one\ntwo\nthree\n");
+        press(&mut app, "Tab");
+        assert_eq!(app.focus, Focus::Body);
+        // `j` in the body moves the text cursor, and leaves the outline alone.
+        press(&mut app, "j");
+        assert_eq!(app.current.h(app.outline()), "b");
+        assert_eq!(app.editor.cursor.0, 1);
+    }
+
+    #[test]
+    fn escape_in_the_body_returns_to_the_tree() {
+        let mut app = app();
+        press(&mut app, "Tab");
+        assert_eq!(app.focus, Focus::Body);
+        press(&mut app, "Escape");
+        assert_eq!(app.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn leos_literal_chords_act_when_the_terminal_can_send_them() {
+        // `examples/keyprobe.rs` shows crossterm decodes `ESC[109;5u` as
+        // Char('m')+CONTROL once the enhancement flags are pushed. This is the
+        // other half: that such a key reaches Leo's command.
+        let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+
+        let mut marked = app();
+        marked.handle_key(ctrl('m'));
+        assert!(
+            marked.current.is_marked(marked.outline()),
+            "Ctrl-M did not mark"
+        );
+
+        let mut cloned = app();
+        cloned.handle_key(ctrl('`'));
+        assert_eq!(
+            heads(&cloned),
+            vec!["a", "a", "b", "c"],
+            "Ctrl-` did not clone"
+        );
+
+        let mut inserted = app();
+        inserted.handle_key(ctrl('i'));
+        assert_eq!(
+            inserted.mode,
+            Mode::Headline,
+            "Ctrl-I did not insert a node"
+        );
+
+        // Ctrl-] demotes the following siblings, Ctrl-[ promotes the
+        // children back out. `a` already has one child, which comes with them.
+        let mut moved = app();
+        moved.handle_key(ctrl(']'));
+        assert_eq!(heads(&moved), vec!["a", "  a1", "  b", "  c"]);
+        moved.handle_key(ctrl('['));
+        assert_eq!(heads(&moved), vec!["a", "a1", "b", "c"]);
+    }
+
+    #[test]
+    fn leos_shift_ctrl_z_redoes_in_both_panes() {
+        let redo = KeyEvent::new(
+            KeyCode::Char('z'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        let mut app = app();
+        press(&mut app, "J");
+        assert_eq!(heads(&app), vec!["b", "a", "c"]);
+        press(&mut app, "u");
+        assert_eq!(heads(&app), vec!["a", "b", "c"]);
+        app.handle_key(redo);
+        assert_eq!(heads(&app), vec!["b", "a", "c"]);
+
+        // The body has its own grammar, and must agree.
+        let mut app = body_app("one\ntwo\n");
+        press(&mut app, "dd");
+        assert_eq!(body(&app), "two\n");
+        press(&mut app, "u");
+        assert_eq!(body(&app), "one\ntwo\n");
+        app.handle_key(redo);
+        assert_eq!(body(&app), "two\n");
+    }
+
+    #[test]
+    fn leos_shift_arrows_move_the_node() {
+        let mut app = app();
+        press(&mut app, "Shift-Down");
+        assert_eq!(heads(&app), vec!["b", "a", "c"]);
+        press(&mut app, "Shift-Up");
+        assert_eq!(heads(&app), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn typing_a_headline_lands_in_the_model() {
+        let mut app = app();
+        press(&mut app, "e");
+        assert_eq!(app.mode, Mode::Headline);
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        for ch in "xyz".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "xyz");
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn escape_commits_a_body_edit() {
+        // Design Q2: Escape commits, and undo is what takes it back.
+        let mut app = app();
+        press(&mut app, "Tab");
+        press(&mut app, "i");
+        assert_eq!(app.mode, Mode::Insert);
+        for ch in "hello".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.current.b(app.outline()), "hello\n");
+        assert_eq!(app.mode, Mode::Normal);
+        press(&mut app, "u");
+        assert_eq!(app.current.b(app.outline()), "");
+    }
+
+    #[test]
+    fn ctrl_c_abandons_a_body_edit() {
+        let mut app = app();
+        press(&mut app, "Tab");
+        press(&mut app, "i");
+        for ch in "hello".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(app.current.b(app.outline()), "");
+        assert!(!app.doc.undoer.can_undo());
+    }
+
+    #[test]
+    fn the_z_family_folds() {
+        let mut app = app();
+        press(&mut app, "zR");
+        assert_eq!(heads(&app), vec!["a", "  a1", "    a2", "b", "c"]);
+        press(&mut app, "zM");
+        assert_eq!(heads(&app), vec!["a", "b", "c"]);
+        press(&mut app, "z2");
+        assert_eq!(heads(&app), vec!["a", "  a1", "b", "c"]);
+    }
+
+    #[test]
+    fn marks_can_be_walked_and_cleared() {
+        let mut app = app();
+        press(&mut app, "m");
+        press(&mut app, "2j");
+        press(&mut app, "m");
+        press(&mut app, "]m");
+        assert_eq!(app.current.h(app.outline()), "a");
+        press(&mut app, "M");
+        assert!(app.message.contains("unmarked 2"), "{}", app.message);
+    }
+
+    #[test]
+    fn the_help_overlay_takes_the_keyboard_and_gives_it_back() {
+        let mut app = app();
+        press(&mut app, "F1");
+        assert_eq!(app.mode, Mode::Help);
+        // `j` scrolls the help, not the outline.
+        press(&mut app, "j");
+        assert_eq!(app.help_scroll, 1);
+        assert_eq!(app.current.h(app.outline()), "a");
+        press(&mut app, "q");
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn quitting_with_unsaved_changes_asks_first() {
+        let mut app = app();
+        let p = app.current.clone();
+        app.doc.set_headline(&p, "changed");
+        press(&mut app, "q");
+        assert_eq!(app.mode, Mode::Confirm);
+        assert!(!app.quit);
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.quit);
+        press(&mut app, "q");
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn the_breadcrumb_names_the_path_to_the_node() {
+        let mut app = app();
+        press(&mut app, "l");
+        press(&mut app, "l");
+        assert_eq!(app.current.h(app.outline()), "a1");
+        assert_eq!(app.breadcrumb(), "a > a1");
+    }
+
+    /// Type a literal string into the minibuffer.
+    fn type_text(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+    }
+
+    #[test]
+    fn the_command_line_runs_a_leo_command_by_name() {
+        let mut app = app();
+        press(&mut app, ":");
+        assert_eq!(app.mode, Mode::Command);
+        type_text(&mut app, "move-outline-down");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(heads(&app), vec!["b", "a", "c"]);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn the_command_line_takes_vim_spellings() {
+        let mut app = app();
+        let p = app.current.clone();
+        app.doc.set_headline(&p, "changed");
+        press(&mut app, ":");
+        type_text(&mut app, "q");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        // `:q` refuses while there are unsaved changes.
+        assert!(!app.quit);
+        assert_eq!(app.mode, Mode::Confirm);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, ":");
+        type_text(&mut app, "q!");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn an_unknown_command_says_so() {
+        let mut app = app();
+        press(&mut app, ":");
+        type_text(&mut app, "not-a-command");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.message.contains("no such command"), "{}", app.message);
+    }
+
+    #[test]
+    fn tab_completes_a_command_name() {
+        let mut app = app();
+        press(&mut app, ":");
+        type_text(&mut app, "unmark");
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "unmark-all");
+    }
+
+    #[test]
+    fn the_command_line_remembers_what_was_typed() {
+        let mut app = app();
+        press(&mut app, ":");
+        type_text(&mut app, "undo");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        press(&mut app, ":");
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "undo");
+    }
+
+    #[test]
+    fn a_number_selects_that_visible_row() {
+        let mut app = app();
+        press(&mut app, ":");
+        type_text(&mut app, "3");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "c");
+    }
+
+    #[test]
+    fn search_moves_as_it_is_typed_and_escape_puts_it_back() {
+        let mut app = app();
+        press(&mut app, "/");
+        assert_eq!(app.mode, Mode::Search);
+        type_text(&mut app, "c");
+        assert_eq!(app.current.h(app.outline()), "c");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "a");
+    }
+
+    #[test]
+    fn enter_keeps_the_match_and_n_repeats_it() {
+        let mut app = app();
+        // Two nodes match "a": the root and a1.
+        press(&mut app, "zR");
+        press(&mut app, "/");
+        type_text(&mut app, "a1");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "a1");
+        press(&mut app, "n");
+        // Only one node matches, so `n` wraps back to it.
+        assert_eq!(app.current.h(app.outline()), "a1");
+    }
+
+    #[test]
+    fn search_is_case_insensitive_until_a_capital_is_typed() {
+        let mut app = app();
+        let p = app.current.clone();
+        app.doc.set_headline(&p, "Alpha");
+        press(&mut app, "/");
+        type_text(&mut app, "alpha");
+        assert_eq!(app.current.h(app.outline()), "Alpha");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        press(&mut app, "/");
+        type_text(&mut app, "ALPHA");
+        assert!(app.message.contains("not found"), "{}", app.message);
+    }
+
+    #[test]
+    fn set_widens_the_search_to_body_text() {
+        let mut app = app();
+        let p = app.rows()[2].position.clone();
+        app.doc.set_body(
+            &p,
+            "a needle
+",
+        );
+        press(&mut app, "/");
+        type_text(&mut app, "needle");
+        assert!(app.message.contains("not found"), "{}", app.message);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.run_command_line("set search=all");
+        press(&mut app, "/");
+        type_text(&mut app, "needle");
+        assert_eq!(app.current.h(app.outline()), "c");
+    }
+
+    #[test]
+    fn set_changes_the_split_and_refuses_nonsense() {
+        let mut app = app();
+        app.run_command_line("set split=30");
+        assert_eq!(app.tree_percent, 30);
+        app.run_command_line("set split=nope");
+        assert!(app.message.contains("not a number"), "{}", app.message);
+        app.run_command_line("set frobnicate");
+        assert!(app.message.contains("unknown option"), "{}", app.message);
+    }
+
+    #[test]
+    fn help_for_one_command_names_its_keys() {
+        let mut app = app();
+        app.run_command_line("help move-outline-down");
+        assert!(app.message.contains("move-outline-down"), "{}", app.message);
+        assert!(app.message.contains("Shift-Down"), "{}", app.message);
+    }
+
+    /// An app whose current node has the given body, focused on it.
+    fn body_app(text: &str) -> App {
+        let mut app = app();
+        let p = app.current.clone();
+        app.doc.set_body(&p, text);
+        app.doc.undoer.clear();
+        press(&mut app, "Tab");
+        app
+    }
+
+    fn body(app: &App) -> String {
+        app.current.b(app.outline()).to_string()
+    }
+
+    #[test]
+    fn an_operator_and_a_motion_delete_a_word() {
+        let mut app = body_app("one two three\n");
+        press(&mut app, "dw");
+        assert_eq!(body(&app), "two three\n");
+        assert_eq!(app.editor.register.text, "one ");
+    }
+
+    #[test]
+    fn a_count_applies_to_the_operator() {
+        let mut app = body_app("one two three four\n");
+        press(&mut app, "d2w");
+        assert_eq!(body(&app), "three four\n");
+    }
+
+    #[test]
+    fn a_doubled_operator_takes_whole_lines() {
+        let mut app = body_app("one\ntwo\nthree\n");
+        press(&mut app, "dd");
+        assert_eq!(body(&app), "two\nthree\n");
+        press(&mut app, "2dd");
+        assert_eq!(body(&app), "");
+    }
+
+    #[test]
+    fn a_text_object_changes_the_word_under_the_cursor() {
+        let mut app = body_app("alpha beta gamma\n");
+        press(&mut app, "w");
+        press(&mut app, "ciw");
+        assert_eq!(app.mode, Mode::Insert);
+        type_text(&mut app, "BETA");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(body(&app), "alpha BETA gamma\n");
+    }
+
+    #[test]
+    fn a_quoted_object_takes_what_is_inside() {
+        let mut app = body_app("say \"hello there\" now\n");
+        press(&mut app, "fh");
+        press(&mut app, "di\"");
+        assert_eq!(body(&app), "say \"\" now\n");
+    }
+
+    #[test]
+    fn yank_and_put_move_text() {
+        let mut app = body_app("one\ntwo\n");
+        press(&mut app, "yy");
+        press(&mut app, "p");
+        assert_eq!(body(&app), "one\none\ntwo\n");
+    }
+
+    #[test]
+    fn visual_selects_and_an_operator_takes_it() {
+        let mut app = body_app("one\ntwo\nthree\n");
+        press(&mut app, "V");
+        assert_eq!(app.mode, Mode::Visual);
+        press(&mut app, "j");
+        press(&mut app, "d");
+        assert_eq!(body(&app), "three\n");
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn escape_leaves_visual_before_it_leaves_the_pane() {
+        let mut app = body_app("one\ntwo\n");
+        press(&mut app, "v");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.focus, Focus::Body);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn dot_repeats_the_last_change() {
+        let mut app = body_app("one two three four\n");
+        press(&mut app, "dw");
+        assert_eq!(body(&app), "two three four\n");
+        press(&mut app, ".");
+        assert_eq!(body(&app), "three four\n");
+    }
+
+    #[test]
+    fn dot_repeats_a_change_operator_and_its_text() {
+        let mut app = body_app("aa bb\ncc dd\n");
+        press(&mut app, "cw");
+        type_text(&mut app, "xx");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(body(&app), "xx bb\ncc dd\n");
+        press(&mut app, "j0");
+        press(&mut app, ".");
+        assert_eq!(body(&app), "xx bb\nxx dd\n");
+    }
+
+    #[test]
+    fn one_insert_session_is_one_undo() {
+        let mut app = body_app("x\n");
+        press(&mut app, "A");
+        type_text(&mut app, "yz");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(body(&app), "xyz\n");
+        press(&mut app, "u");
+        assert_eq!(body(&app), "x\n");
+    }
+
+    #[test]
+    fn a_count_repeats_an_insert() {
+        let mut app = body_app("\n");
+        press(&mut app, "3i");
+        type_text(&mut app, "ab");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(body(&app), "ababab\n");
+    }
+
+    #[test]
+    fn simple_edits_work_and_undo() {
+        let mut app = body_app("abc\n");
+        press(&mut app, "x");
+        assert_eq!(body(&app), "bc\n");
+        press(&mut app, "rZ");
+        assert_eq!(body(&app), "Zc\n");
+        press(&mut app, "~");
+        assert_eq!(body(&app), "zc\n");
+        press(&mut app, "u");
+        press(&mut app, "u");
+        press(&mut app, "u");
+        assert_eq!(body(&app), "abc\n");
+    }
+
+    #[test]
+    fn join_puts_one_space_between_the_lines() {
+        let mut app = body_app("one\n   two\n");
+        press(&mut app, "J");
+        assert_eq!(body(&app), "one two\n");
+    }
+
+    #[test]
+    fn indent_operators_shift_whole_lines() {
+        let mut app = body_app("a\nb\n");
+        press(&mut app, ">>");
+        assert_eq!(body(&app), "    a\nb\n");
+        press(&mut app, "<<");
+        assert_eq!(body(&app), "a\nb\n");
+    }
+
+    #[test]
+    fn case_operators_take_a_motion() {
+        let mut app = body_app("hello world\n");
+        press(&mut app, "gUw");
+        assert_eq!(body(&app), "HELLO world\n");
+    }
+
+    #[test]
+    fn the_body_has_its_own_search() {
+        let mut app = body_app("alpha\nbeta\ngamma\n");
+        press(&mut app, "/");
+        type_text(&mut app, "gam");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.body_scroll, 2);
+        // The outline did not move.
+        assert_eq!(app.current.h(app.outline()), "a");
+    }
+
+    #[test]
+    fn moving_to_another_node_resets_the_cursor() {
+        let mut app = body_app("one\ntwo\n");
+        press(&mut app, "j");
+        assert_eq!(app.editor.cursor.0, 1);
+        press(&mut app, "Tab");
+        press(&mut app, "j");
+        press(&mut app, "Tab");
+        assert_eq!(app.editor.cursor, (0, 0));
+    }
+
+    #[test]
+    fn the_pane_split_can_be_resized() {
+        let mut app = app();
+        let before = app.tree_percent;
+        press(&mut app, "Ctrl-Right");
+        assert!(app.tree_percent > before);
+        press(&mut app, "Ctrl-Left");
+        assert_eq!(app.tree_percent, before);
     }
 }

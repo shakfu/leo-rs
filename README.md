@@ -55,24 +55,150 @@ leolib::write_external_files(&mut outline, true);
 
 ```
 cargo run -p leotui -- FILE.leo
-cargo run -p leotui -- FILE.leo --dump      # one frame to stdout, no terminal
+cargo run -p leotui -- FILE.leo --dump              # one frame, no terminal
+cargo run -p leotui -- FILE.leo --dump --press F1   # press keys, then dump
+cargo run -p leotui -- --keys                       # the binding table
 ```
 
-| key | |
+leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body`
+rule -- and `:` reaches every command by name, as Leo's minibuffer does. `F1`
+shows the bindings in the app; `leotui --keys` prints the same table.
+
+| mode | how you get there | how you leave |
+|---|---|---|
+| `NORMAL` | the default | |
+| `INSERT` | `i` `a` `I` `A` `o` `O` `s` `S` `c` `C` in the body | `Escape` commits, `Ctrl-c` abandons |
+| `VISUAL` | `v` `V` in the body | an operator, or `Escape` |
+| `HEADLINE` | `e` in the outline | `Enter` commits, `Escape` abandons |
+| `COMMAND` | `:` | `Enter` runs it, `Escape` abandons |
+| `SEARCH` | `/` `?` | `Enter` keeps the match, `Escape` goes back |
+| `HELP` | `F1` | `q` |
+
+### Cheatsheet
+
+<!-- keys:begin -->
+
+**Outline: moving**
+
+| | |
 |---|---|
-| `j` `k` arrows | move |
-| `space` | fold or unfold |
-| `right` `left` | unfold and descend, fold and ascend |
+| `j` `k` `Down` `Up` | next, previous visible node |
+| `h` `Left` | fold this node, or step out to the parent |
+| `l` `Right` `Enter` | unfold this node, or step in to the first child |
+| `gg` `Alt-Home` | first node |
+| `G` `Alt-End` | last visible node |
+| `gp` | parent |
+| `{` `}` | previous, next sibling |
+| `[m` `]m` | previous, next marked node |
+| `]c` `Alt-n` | next clone of this node |
+
+**Outline: folding**
+
+| | |
+|---|---|
+| `Space` `za` | fold or unfold this node |
+| `zo` `Alt-]` | unfold this node |
+| `zc` `Alt-[` | fold this node |
+| `zR` | unfold every node |
+| `zM` `Alt--` | fold every node |
+| `zr` `zm` | unfold one level further, fold one level back |
+| `zx` | fold everything except the path to this node |
+| `z1` `z2` `z3` `z4` `z5` `z6` `z7` `z8` `z9` | unfold to that level |
+
+**Outline: moving a node**
+
+| | |
+|---|---|
+| `>>` `Shift-Right` | **indent**: make this node a child of the one above |
+| `<<` `Shift-Left` | **deindent**: move this node out one level |
+| `J` `Shift-Down` | move this node down |
+| `K` `Shift-Up` | move this node up |
+| `g>` | demote: make the *following siblings* children of this node |
+| `g<` | promote: make this node's *children* its siblings |
+
+`>>` moves the node you are on. `g>` and `g<` move other nodes around it.
+
+**Outline: creating and removing**
+
+| | |
+|---|---|
+| `o` `Insert` | insert a node after this one |
+| `O` | insert a node before this one |
+| `a` `Ctrl-Insert` | insert a node as the first child |
 | `e` | edit the headline |
-| `i` | edit the body (`^S` commits, `ESC` cancels) |
-| `o` `D` | insert a node, delete a node |
-| `u` `r` | undo, redo |
-| `K` `J` `<` `>` | move the node up, down, left, right |
-| `m` `c` `y` `P` | mark, clone, copy, paste |
-| `s` `w` | write the `.leo` file, write the external files |
+| `i` | edit the body |
+| `dd` | cut this node to the clipboard |
+| `Delete` `Backspace` | delete this node |
+| `yy` `p` | copy, paste after this node |
+| `` ` `` | clone this node |
+| `m` `M` | mark or unmark this node, clear every mark |
+
+**Body: a vim buffer**
+
+| | |
+|---|---|
+| `h j k l` | left, down, up, right |
+| `w W b B e E ge` | by word: forwards, back, to the end |
+| `0 ^ $ gg G { } %` | line start and end, file, paragraph, matching bracket |
+| `f F t T ; ,` | to a character on the line, and repeat |
+| `H M L` | top, middle, bottom of the pane |
+| `d c y > < gu gU g~` | delete, change, yank, indent, unindent, case |
+| `iw aw i" a( ip` | word, quoted, bracketed, paragraph |
+| `x X r s S D C Y J ~` | delete, replace, substitute, join, case |
+| `i a I A o O` | enter INSERT at the usual vim place |
+| `v V` | select charwise, linewise |
+| `p P` | put the text register after, before |
+| `.` | repeat the last change |
+
+Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`.
+One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
+
+**Both panes**
+
+| | |
+|---|---|
+| `Tab` | move between the outline and the body |
+| `Escape` | in the body, go back to the outline |
+| `:` | the command line |
+| `/` `?` | search forwards, backwards |
+| `n` `N` | repeat the search, and the other way |
+| `u` `Ctrl-z` | undo |
+| `Ctrl-r` | redo |
+| `Ctrl-s` | write the `.leo` file |
+| `w` | write the changed external files |
+| `Ctrl-f` `Ctrl-b` `PageDown` `PageUp` | a screen down, up |
+| `Ctrl-d` `Ctrl-u` | half a screen down, up |
+| `Ctrl-Left` `Ctrl-Right` | give the body, the outline more room |
+| `F1` | help |
 | `q` | quit |
 
+**The `:` command line**
+
+Every Leo command name, with Tab completion and Up/Down history, plus the vim
+spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
+the Nth visible row. `:set search=all|headlines split=N wrap number`.
+
+**Leo's own chords**
+
+These need a terminal speaking the kitty keyboard protocol (kitty, foot,
+wezterm, ghostty, alacritty, iTerm2). A legacy terminal cannot send them --
+`Ctrl-I` *is* Tab -- so each has a portable binding above. `--no-kitty-keys`
+turns the protocol off.
+
+| | |
+|---|---|
+| `Ctrl-i` | insert a node |
+| `Ctrl-m` | mark |
+| `Ctrl-[` `Ctrl-]` | promote, demote |
+| ``Ctrl-` `` | clone |
+| `Ctrl-Shift-z` | redo |
+| `Ctrl-h` | edit the headline |
+
+<!-- keys:end -->
+
 Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty.
+`@<file>` nodes are green. The design, and what is still to come, is in
+`docs/dev/tui-design.md`.
 
 ## `@auto`
 
