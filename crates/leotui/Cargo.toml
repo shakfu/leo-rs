@@ -1,0 +1,16 @@
+[package]
+name = "leotui"
+description = "A terminal front end for leolib."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "leotui"
+path = "src/main.rs"
+
+[dependencies]
+leolib = { path = "../leolib" }
+crossterm = "0.28"
+ratatui = "0.29"
