@@ -4,6 +4,8 @@ A Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model
 
 Leo's outline model was separated from its Qt front end in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. `leotui` is one front end over that crate. Nothing in `leolib` depends on it.
 
+![Screenshot the tui.](docs/media/tui.png)
+
 ## Status
 
 Verified against `leo/core/LeoPyRef.leo` from the Leo repository:
