@@ -1,12 +1,8 @@
 # leo-rs
 
-A Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s
-model layer (`leolib`) and a terminal front end that consumes it (`leotui`).
+A Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`) and a terminal front end that consumes it (`leotui`).
 
-Leo's outline model was separated from its Qt front end in `leo/leolib`; this
-port keeps that boundary. `leolib` reads and writes `.leo` files and the
-external files they refer to, and knows nothing about how any of it is shown.
-`leotui` is one front end over that crate. Nothing in `leolib` depends on it.
+Leo's outline model was separated from its Qt front end in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. `leotui` is one front end over that crate. Nothing in `leolib` depends on it.
 
 ## Status
 
@@ -21,8 +17,7 @@ Verified against `leo/core/LeoPyRef.leo` from the Leo repository:
 | `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
 | `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
 
-Run those checks with `make test-corpus`. The `@auto` tree comparison needs a
-Python Leo: see `docs/dev/compare-importers.py`.
+Run those checks with `make test-corpus`. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
 
 ## Layout
 
@@ -31,9 +26,7 @@ crates/leolib     the model. No view, ever.
 crates/leotui     the terminal front end.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for
-regular expressions (`regex`), and `once_cell`. `leotui` adds `ratatui` and
-`crossterm`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leotui` adds `ratatui` and `crossterm`.
 
 ## Using leolib
 
@@ -48,21 +41,27 @@ leolib::save(&mut outline, "")?;
 leolib::write_external_files(&mut outline, true);
 ```
 
-`leolib::Document` adds an undo history and the structural commands
-(insert, delete, clone, copy, paste, move, mark) on top of an `Outline`.
+`leolib::Document` adds an undo history and the structural commands (insert, delete, clone, copy, paste, move, mark) on top of an `Outline`.
 
 ## Using leotui
 
+```sh
+leotui FILE.leo
+leotui FILE.leo --dump              # one frame, no terminal
+leotui FILE.leo --dump --press F1   # press keys, then dump
+leotui --keys                       # the binding table
 ```
+
+or during development
+
+```sh
 cargo run -p leotui -- FILE.leo
 cargo run -p leotui -- FILE.leo --dump              # one frame, no terminal
 cargo run -p leotui -- FILE.leo --dump --press F1   # press keys, then dump
 cargo run -p leotui -- --keys                       # the binding table
 ```
 
-leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body`
-rule -- and `:` reaches every command by name, as Leo's minibuffer does. `F1`
-shows the bindings in the app; `leotui --keys` prints the same table.
+leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` rule -- and `:` reaches every command by name, as Leo's minibuffer does. `F1` shows the bindings in the app; `leotui --keys` prints the same table.
 
 | mode | how you get there | how you leave |
 |---|---|---|
@@ -150,8 +149,7 @@ shows the bindings in the app; `leotui --keys` prints the same table.
 | `p P` | put the text register after, before |
 | `.` | repeat the last change |
 
-Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`.
-One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
+Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 
 **Both panes**
 
@@ -175,16 +173,12 @@ One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 
 **The `:` command line**
 
-Every Leo command name, with Tab completion and Up/Down history, plus the vim
-spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
+Every Leo command name, with Tab completion and Up/Down history, plus the vim spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
 the Nth visible row. `:set search=all|headlines split=N wrap number syntax`.
 
 **Leo's own chords**
 
-These need a terminal speaking the kitty keyboard protocol (kitty, foot,
-wezterm, ghostty, alacritty, iTerm2). A legacy terminal cannot send them --
-`Ctrl-I` *is* Tab -- so each has a portable binding above. `--no-kitty-keys`
-turns the protocol off.
+These need a terminal speaking the kitty keyboard protocol (kitty, foot, wezterm, ghostty, alacritty, iTerm2). A legacy terminal cannot send them -- `Ctrl-I` *is* Tab -- so each has a portable binding above. `--no-kitty-keys` turns the protocol off.
 
 | | |
 |---|---|
@@ -197,23 +191,13 @@ turns the protocol off.
 
 <!-- keys:end -->
 
-The body is coloured by the language declared at the node: an `@language`
-directive in the node or an ancestor, or the nearest `@<file>` node's
-extension. A node with neither is left plain, so prose is never coloured as
-code. `@language` lines inside a body move it from that line on, so one node
-can hold Python and then C; `@nocolor`, `@color` and `@killcolor` work as they
-do in Leo. Comment and string delimiters come from Leo's own tables, so every
-language it knows gets comments and strings; keywords come from Leo's colorizer
-modes for 36 of them. `:set nosyntax` turns it off.
+The body is coloured by the language declared at the node: an `@language` directive in the node or an ancestor, or the nearest `@<file>` node's extension. A node with neither is left plain, so prose is never coloured as code. `@language` lines inside a body move it from that line on, so one node can hold Python and then C; `@nocolor`, `@color` and `@killcolor` work as they do in Leo. Comment and string delimiters come from Leo's own tables, so every language it knows gets comments and strings; keywords come from Leo's colorizer modes for 36 of them. `:set nosyntax` turns it off.
 
-Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty.
-`@<file>` nodes are green. The design, and what is still to come, is in
-`docs/dev/tui-design.md`.
+Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
 ## `@auto`
 
-An `@auto` file is the user's own source, with no sentinels in it. Its
-structure comes from the language, through a port of Leo's importers.
+An `@auto` file is the user's own source, with no sentinels in it. Its structure comes from the language, through a port of Leo's importers.
 
 | | |
 |---|---|
@@ -221,29 +205,21 @@ structure comes from the language, through a port of Leo's importers.
 | section languages | ini, xml, html |
 | line-oriented | org, otl, markdown, treepad |
 
-The file is regenerated from the tree alone, so an importer that dropped a
-line would overwrite the user's source. Every import is therefore checked: the
-tree is written back and compared with the file before it is kept, and a tree
-that fails leaves the whole file in the node's body with an error. Leo does
-not check this.
+The file is regenerated from the tree alone, so an importer that dropped a line would overwrite the user's source. Every import is therefore checked: the tree is written back and compared with the file before it is kept, and a tree that fails leaves the whole file in the node's body with an error. Leo does not check this.
 
-Two things an import can change even when it succeeds, both as in Leo:
-leading tabs become blanks to match `@tabwidth`, and an XML or HTML file gets
-adjacent tags split onto separate lines. `ReadResult::warnings` names the
-files it happened to, because the next write changes them on disk.
+Two things an import can change even when it succeeds, both as in Leo: leading tabs become blanks to match `@tabwidth`, and an XML or HTML file gets adjacent tags split onto separate lines. `ReadResult::warnings` names the files it happened to, because the next write changes them on disk.
 
-`@auto-rst` is not ported: its reader and writer are a separate mechanism in
-Leo, not an importer.
+`@auto-rst` is not ported: its reader and writer are a separate mechanism in Leo, not an importer.
 
 ## What else is not ported
 
 - **`@shadow`.** Deprecated in Leo.
-- **Unknown attributes are opaque.** Leo pickles them. They round-trip as the
-  hex strings the file spells, and are written back unchanged.
+
+- **Unknown attributes are opaque.** Leo pickles them. They round-trip as the hex strings the file spells, and are written back unchanged.
+
 - **`.leojs`** (the JSON outline format).
 
-See `docs/dev/porting-notes.md` for the places this port deliberately differs
-from Leo, and why.
+See `docs/dev/porting-notes.md` for the places this port deliberately differs from Leo, and why.
 
 ## Building
 
