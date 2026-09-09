@@ -26,6 +26,63 @@ pub fn split_lines(s: &str) -> Vec<String> {
     out
 }
 
+/// Split at '\n' only, keeping the newline.
+///
+/// Unlike [`split_lines`], which follows Python's `str.splitlines` and also
+/// breaks at form feeds and other line separators. The importers need every
+/// such character preserved inside a line, or the text they hand back would
+/// differ from the file they read.
+pub fn split_lines_at_newline(s: &str) -> Vec<String> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let mut parts: Vec<&str> = s.split('\n').collect();
+    if parts.last() == Some(&"") {
+        parts.pop();
+    }
+    let mut lines: Vec<String> = parts.iter().map(|z| format!("{z}\n")).collect();
+    if !s.ends_with('\n') {
+        if let Some(last) = lines.last_mut() {
+            last.pop();
+        }
+    }
+    lines
+}
+
+/// Split at '\n', dropping the line endings, as Python's `splitlines(False)`.
+///
+/// A trailing newline does not produce a final empty line.
+pub fn split_lines_no_ends(s: &str) -> Vec<&str> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let mut parts: Vec<&str> = s.split('\n').collect();
+    if parts.last() == Some(&"") {
+        parts.pop();
+    }
+    parts
+}
+
+/// The leading blanks and tabs of s.
+pub fn get_leading_ws(s: &str) -> &str {
+    let i = s
+        .as_bytes()
+        .iter()
+        .position(|c| *c != b' ' && *c != b'\t')
+        .unwrap_or(s.len());
+    &s[..i]
+}
+
+/// Rewrite s's leading whitespace to `tab_width`'s preferred character.
+pub fn optimize_leading_whitespace(line: &str, tab_width: i32) -> String {
+    let (i, width) = skip_leading_ws_with_indent(line, 0, tab_width);
+    format!(
+        "{}{}",
+        compute_leading_whitespace(width, tab_width),
+        &line[i..]
+    )
+}
+
 pub fn is_ws(ch: u8) -> bool {
     ch == b'\t' || ch == b' '
 }

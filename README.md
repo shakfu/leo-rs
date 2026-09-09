@@ -18,8 +18,11 @@ Verified against `leo/core/LeoPyRef.leo` from the Leo repository:
 | nodes read with all external files | 11,581, identical to Python `leolib` |
 | `.leo` file rewritten | byte-identical to the file read |
 | external files tangled | 381 of 381 byte-identical to the files on disk |
+| `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
+| `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
 
-Run those checks with `make test-corpus`.
+Run those checks with `make test-corpus`. The `@auto` tree comparison needs a
+Python Leo: see `docs/dev/compare-importers.py`.
 
 ## Layout
 
@@ -71,11 +74,33 @@ cargo run -p leotui -- FILE.leo --dump      # one frame to stdout, no terminal
 
 Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty.
 
-## What is not ported
+## `@auto`
 
-- **`@auto`.** Its files carry no sentinels, so their structure comes from one
-  of Leo's 34 language importers. Reading one is refused rather than guessed:
-  a wrong guess would silently rewrite the tree.
+An `@auto` file is the user's own source, with no sentinels in it. Its
+structure comes from the language, through a port of Leo's importers.
+
+| | |
+|---|---|
+| block languages | c, c++, c#, coffeescript, cython, dart, java, javascript, lua, pascal, perl, php, pug, python, rust, scheme, lisp/clojure, tcl, typescript |
+| section languages | ini, xml, html |
+| line-oriented | org, otl, markdown, treepad |
+
+The file is regenerated from the tree alone, so an importer that dropped a
+line would overwrite the user's source. Every import is therefore checked: the
+tree is written back and compared with the file before it is kept, and a tree
+that fails leaves the whole file in the node's body with an error. Leo does
+not check this.
+
+Two things an import can change even when it succeeds, both as in Leo:
+leading tabs become blanks to match `@tabwidth`, and an XML or HTML file gets
+adjacent tags split onto separate lines. `ReadResult::warnings` names the
+files it happened to, because the next write changes them on disk.
+
+`@auto-rst` is not ported: its reader and writer are a separate mechanism in
+Leo, not an importer.
+
+## What else is not ported
+
 - **`@shadow`.** Deprecated in Leo.
 - **Unknown attributes are opaque.** Leo pickles them. They round-trip as the
   hex strings the file spells, and are written back unchanged.

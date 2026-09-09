@@ -60,3 +60,67 @@ fn the_leo_writer_reproduces_the_file_it_read() {
     let original = std::fs::read_to_string(&path).unwrap();
     assert_eq!(written, original);
 }
+
+/// Every file under `LEO_CORPUS_DIR` that has an importer must import and
+/// write back unchanged. This is the only guard an `@auto` node has: its file
+/// is regenerated from the tree alone.
+#[test]
+fn every_importable_file_survives_an_at_auto_round_trip() {
+    let Ok(dir) = std::env::var("LEO_CORPUS_DIR") else {
+        eprintln!("skipped: set LEO_CORPUS_DIR to a directory of source files");
+        return;
+    };
+    let mut files = Vec::new();
+    collect(std::path::Path::new(&dir), &mut files);
+    let mut checked = 0usize;
+    let mut failures = Vec::new();
+    for path in &files {
+        let path = path.to_string_lossy().to_string();
+        if leolib::importers::spec_for("", &path).is_none() {
+            continue;
+        }
+        let mut o = leolib::Outline::new_empty();
+        o.file_name = format!("{}/x.leo", leolib::util::os_path_dirname(&path));
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, &format!("@auto {path}"));
+        match external::read_file_at_position(&mut o, &root) {
+            Ok(_) => checked += 1,
+            Err(e) => failures.push(format!("{path}: {e}")),
+        }
+    }
+    assert!(checked > 0, "no importable files under {dir}");
+    // Two files in leo-editor cannot round-trip, and fail in Leo too: one
+    // contains the literal text `@others`, which the writer reads as a
+    // directive; the other loses the trailing blanks of a whitespace-only
+    // line when `move_blank_lines` runs. Anything else is a regression.
+    let known = ["jquery.color.js", "slide-008.html"];
+    let unexpected: Vec<&String> = failures
+        .iter()
+        .filter(|f| !known.iter().any(|k| f.contains(k)))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "{} of {checked} files failed unexpectedly: {:?}",
+        unexpected.len(),
+        &unexpected[..unexpected.len().min(5)]
+    );
+}
+
+fn collect(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    if path.is_file() {
+        out.push(path.to_path_buf());
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = p.file_name().map(|s| s.to_string_lossy().to_string());
+        let skip = name.as_deref() == Some("__pycache__")
+            || name.as_deref().map(|s| s.starts_with('.')) == Some(true);
+        if !skip {
+            collect(&p, out);
+        }
+    }
+}

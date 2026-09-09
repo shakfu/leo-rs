@@ -17,6 +17,7 @@ pub mod atfile_write;
 pub mod document;
 pub mod external;
 pub mod gnx;
+pub mod importers;
 pub mod langdata;
 pub mod leofile;
 pub mod node;

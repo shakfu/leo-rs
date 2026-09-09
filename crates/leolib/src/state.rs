@@ -23,7 +23,7 @@ fn state_path(file_name: &str) -> Option<PathBuf> {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in file_name.as_bytes() {
         hash ^= *b as u64;
-        hash = hash.wrapping_mul(0x1000_0000_01b3);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     let name = util::os_path_basename(file_name);
     let dir = PathBuf::from(util::home_dir()).join(".leo").join("leo-rs");

@@ -45,12 +45,51 @@ refuses. `@nosent` and `@clean` are exempt, as in
 **Writes are atomic.** `external::replace_file` writes a sibling temporary
 file and renames it over the target. Leo writes in place after a backup.
 
-## Not ported
+## The `@auto` importers
 
-**`@auto`.** Its structure comes from one of the 34 importers under
-`leo/plugins/importers`, dispatched through tables `LoadManager` builds. None
-is ported. `read_file_at_position` returns an error for an `@auto` node rather
-than guessing a structure, which would rewrite the user's tree.
+`importers/block.rs` is Leo's `base_importer.py`: comments and strings are
+blanked out to make **guide lines**, blocks are found in those, and the real
+lines are edited to insert `@others`. Each language is a `LanguageSpec` -- a
+table of patterns plus a choice of end-of-block rule -- which is how Leo's 34
+importer modules reduce to one algorithm and a table.
+
+Verified against Leo, file by file: 1,000 files across 8 languages produce
+identical trees, headline for headline and body for body. Two do not, both by
+choice; see the TypeScript entry below. `docs/dev/compare-importers.py`
+reproduces the comparison.
+
+Four deliberate departures:
+
+**Every import is checked before it is kept.** An `@auto` file is regenerated
+from its tree, so an importer that lost a line would overwrite the user's
+source with something shorter. `read_one_at_auto_node` writes the tree back
+and compares it with what the importer read; on a mismatch the whole file goes
+into the node's body and the read reports an error. Leo does not check, and
+two files in leo-editor itself fail this test -- one contains the literal text
+`@others`, the other loses the trailing blanks of a whitespace-only line
+through `move_blank_lines`. Both produce a wrong file in Leo.
+
+**The `@verbatim` indent no longer leaks.** `at.putCodeLine` writes the
+indentation of an `@verbatim` sentinel before writing the sentinel itself,
+which `putSentinel` then suppresses when sentinels are off. Every line
+resembling a sentinel in an `@auto` or `@nosent` file therefore gained its
+indentation twice. Leo guards the case for `@clean` only (#2996); the guard
+here is on `at.sentinels`, which covers all three.
+
+**TypeScript headlines.** Leo's TypeScript table is `(group_number, pattern)`
+pairs, but `find_blocks` reads the first element as the block's *kind*, so its
+headlines come out as `1 class Config` and `2 async`. The name is taken from
+the pattern's last group here, giving `class Config` and the function's own
+name. Bodies are unaffected, so an `@auto` TypeScript file still round-trips.
+
+**An empty file imports.** `ic.createOutline` returns `None` for an empty
+file and `readOneAtAutoNode` then raises `AttributeError`. Here an empty file
+is an empty node.
+
+`@auto-rst` is not ported. Unlike the others it is not an importer: Leo falls
+back to `c.rstCommands.writeAtAutoFile`, a separate mechanism.
+
+## Not ported
 
 **`@shadow`.** Deprecated in Leo.
 
@@ -68,6 +107,18 @@ unchanged. A round trip is lossless. Two consequences:
   should expect Leo to rebuild the blob on its next save.
 
 **`.leojs`.** The JSON outline format.
+
+## `@auto` writers
+
+Leo has six writers under `leo/plugins/writers` and falls back to a
+sentinel-free tangle for every other language. Only the four line-oriented
+formats need one, because their readers consume the structure lines they see;
+`importers/lines.rs` holds those four and the fallback is
+`atfile_write::write_to_string` with `allow_undefined_refs`.
+
+Leo's writers cannot run without a window at all: `BaseWriter.__init__` reads
+`c.atFileCommands`, and `c` is `None` when leolib drives. So an `@auto-org`
+node cannot be written by headless Leo, and can be here.
 
 ## Fold and mark state
 

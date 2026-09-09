@@ -171,3 +171,83 @@ fn writing_refuses_to_overwrite_a_file_the_outline_never_read() {
         result.errors
     );
 }
+
+#[test]
+fn an_at_auto_tree_round_trips_through_disk() {
+    // An @auto file has no sentinels: the tree is the only record of its
+    // structure, so the write must reproduce the file exactly.
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("sample.py");
+    let text = "\
+\"\"\"A module.\"\"\"
+import os
+
+
+class C:
+
+    def a(self):
+        return os
+
+
+def top():
+    pass
+";
+    fs::write(&source, text).unwrap();
+
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@auto sample.py");
+
+    let result = external::read_external_files(&mut o);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.read, 1);
+
+    let heads: Vec<String> = o
+        .all_positions()
+        .iter()
+        .map(|p| format!("{}{}", "  ".repeat(p.level()), p.h(&o)))
+        .collect();
+    assert_eq!(
+        heads,
+        vec!["@auto sample.py", "  class C", "    C.a", "  function: top"]
+    );
+
+    // Writing an untouched @auto node must not change the file.
+    let written = external::write_external_files(&mut o, false);
+    assert!(written.written.is_empty(), "{:?}", written.written);
+    assert_eq!(written.unchanged, 1);
+    assert_eq!(fs::read_to_string(&source).unwrap(), text);
+
+    // An edit lands in the file, in the right place.
+    let node = o.all_positions()[2].clone();
+    let body = node.b(&o).replace("return os", "return None");
+    o.set_body(&node, &body);
+    let written = external::write_external_files(&mut o, true);
+    assert_eq!(written.written.len(), 1, "{:?}", written.errors);
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        text.replace("return os", "return None")
+    );
+}
+
+#[test]
+fn an_at_auto_node_whose_importer_loses_text_keeps_the_whole_file() {
+    // The file's own text contains @others, which the writer would read as a
+    // directive. Rather than write a different file, the reader keeps the
+    // file in the node's body and says so.
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("sample.py");
+    let text = "x = 1\n@others\ny = 2\n";
+    fs::write(&source, text).unwrap();
+
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@auto sample.py");
+
+    let result = external::read_external_files(&mut o);
+    assert_eq!(result.errors.len(), 1);
+    assert!(result.errors[0].message.contains("did not reproduce"));
+    assert_eq!(o.root_position().unwrap().b(&o), text);
+}

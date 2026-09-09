@@ -28,6 +28,9 @@ pub struct ReadResult {
     pub read: usize,
     pub errors: Vec<FileReport>,
     pub ignored: Vec<String>,
+    /// Files the reader normalized. Writing the node back changes the file on
+    /// disk even if nobody edits it, so a front end should say so.
+    pub warnings: Vec<FileReport>,
 }
 
 #[derive(Debug, Default)]
@@ -108,6 +111,14 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
                 message,
             }),
         }
+        let gnx = p.gnx(o).to_string();
+        if let Some(message) = o.import_warnings.remove(&gnx) {
+            result.warnings.push(FileReport {
+                headline: p.h(o).to_string(),
+                path: o.full_path(&p),
+                message,
+            });
+        }
     }
     for p in o.all_positions() {
         o.node_mut(p.v).clear_bit(crate::node::status::DIRTY);
@@ -118,11 +129,7 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
 /// Read the `@<file>` node at p, dispatching on its kind.
 pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool, String> {
     if p.is_at_auto_node(o) {
-        // An @auto file has no sentinels, so its structure comes from one of
-        // Leo's 34 language importers. None is ported, and guessing a
-        // structure would silently rewrite the user's tree, so the node is
-        // left exactly as the .leo file describes it.
-        return Err("@auto is not supported: no language importers".to_string());
+        return read_one_at_auto_node(o, p);
     }
     if p.is_at_clean_node(o) {
         return atclean::read_one_at_clean_node(o, p);
@@ -145,6 +152,53 @@ fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
     o.remember_read_path(p, &path);
     if !atfile_read::read_into_root(o, &contents, &path, p) {
         return Err(format!("not a valid external file: {path}"));
+    }
+    o.clear_dirty_in_tree(p);
+    Ok(true)
+}
+
+/// Read an `@auto` file, building a tree from the language's own structure.
+///
+/// The tree is checked before it is kept: an `@auto` file has no sentinels, so
+/// the next write of the node reproduces the file from the tree alone. An
+/// importer that dropped or reordered a line would therefore overwrite the
+/// user's source. On failure the whole file goes into the node's body, which
+/// is what Leo does when an importer raises.
+fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
+    let path = o.full_path(p);
+    let contents = read_file_to_string(&path)?;
+    o.remember_read_path(p, &path);
+    let report = crate::importers::import_string(o, p, &contents, &path)?;
+    // An importer may normalize what it read. Say so: the file changes on the
+    // next write even if nobody edits the outline.
+    let mut notes: Vec<&str> = Vec::new();
+    if report.regularized_whitespace {
+        notes.push("leading whitespace was converted to match @tabwidth");
+    }
+    if report.text != contents.replace('\r', "") {
+        notes.push("the text was reformatted by the importer");
+    }
+    if !notes.is_empty() {
+        let gnx = p.gnx(o).to_string();
+        o.import_warnings.insert(gnx, notes.join("; "));
+    }
+    if report.round_trips {
+        let written = crate::importers::write_string(o, p, &path);
+        let ok = match &written {
+            Ok(text) => *text == report.text || *text == format!("{}\n", report.text),
+            Err(_) => false,
+        };
+        if !ok {
+            o.detach_subtree(p.v);
+            o.node_mut(p.v).b = contents;
+            let detail = written.err().unwrap_or_else(|| "text differs".to_string());
+            return Err(format!(
+                "the {} importer did not reproduce {}: {detail}. \
+                 The whole file is in the node's body.",
+                report.language,
+                util::short_file_name(&path)
+            ));
+        }
     }
     o.clear_dirty_in_tree(p);
     Ok(true)
@@ -195,9 +249,15 @@ pub fn language_for_extension(ext: &str) -> String {
 }
 
 /// Read a file as text. Bytes that are not UTF-8 are replaced, never rejected.
+///
+/// A leading byte-order mark is removed, as `g.stripBOM` does: it is an
+/// encoding marker, not text, and leaving it in would put it in a node's body.
 pub fn read_file_to_string(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    let bytes = bytes
+        .strip_prefix(&[0xEF, 0xBB, 0xBF][..])
+        .unwrap_or(&bytes);
+    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
 // --- Writing ------------------------------------------------------------
@@ -303,15 +363,20 @@ pub fn write_external_files(o: &mut Outline, dirty_only: bool) -> WriteResult {
 /// directives removed, `@asis` is the tree's text verbatim, and only the rest
 /// go through the sentinel writer.
 pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, String), String> {
-    if p.is_at_auto_node(o) {
-        return Err("@auto is not supported: no language writers".to_string());
-    }
     if p.is_at_shadow_file_node(o) {
         return Err("@shadow is deprecated and not supported".to_string());
     }
     let at = atfile_write::AtWrite::new(o, p);
     let newline = at.output_newline.clone();
     let encoding = at.encoding().to_string();
+    if p.is_at_auto_node(o) {
+        let path = o.full_path(p);
+        return Ok((
+            crate::importers::write_string(o, p, &path)?,
+            newline,
+            encoding,
+        ));
+    }
     if p.is_at_asis_node(o) {
         return Ok((write_asis(o, p), newline, encoding));
     }

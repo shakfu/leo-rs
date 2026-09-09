@@ -4,6 +4,7 @@
 # they are the only tests that need anything outside this repo.
 
 CORPUS ?= $(HOME)/projects/personal/leo-editor/leo/core/LeoPyRef.leo
+CORPUS_DIR ?= $(HOME)/projects/personal/leo-editor/leo
 
 .PHONY: test test-corpus build release fmt lint check run dump clean
 
@@ -11,7 +12,7 @@ test:
 	cargo test --workspace
 
 test-corpus:
-	LEO_CORPUS=$(CORPUS) cargo test --workspace
+	LEO_CORPUS=$(CORPUS) LEO_CORPUS_DIR=$(CORPUS_DIR) cargo test --workspace
 
 build:
 	cargo build --workspace

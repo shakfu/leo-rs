@@ -28,7 +28,7 @@ enum Kind {
 }
 
 /// Directives Leo recognizes in body text, without their `@`.
-const GLOBAL_DIRECTIVES: &[&str] = &[
+pub const GLOBAL_DIRECTIVES: &[&str] = &[
     "all",
     "beautify",
     "c",
@@ -80,6 +80,10 @@ pub struct AtWrite<'a> {
     start_comment: String,
     end_comment: String,
     pub sentinels: bool,
+    /// True: a section reference with no definition is written as a plain
+    /// line. `@auto` files set it, because their trees are built by an
+    /// importer that never creates section definition nodes.
+    pub allow_undefined_refs: bool,
     section_delim1: String,
     section_delim2: String,
     encoding: String,
@@ -131,6 +135,7 @@ impl<'a> AtWrite<'a> {
             start_comment,
             end_comment,
             sentinels: true,
+            allow_undefined_refs: false,
             section_delim1: "<<".to_string(),
             section_delim2: ">>".to_string(),
             encoding: o.get_encoding(root),
@@ -470,8 +475,13 @@ impl<'a> AtWrite<'a> {
         } else {
             matches_at(s, k, &format!("{}@", self.start_comment))
         };
-        if looks_like_sentinel && !self.root.is_at_clean_node(self.o) {
-            // #2996: an @verbatim sentinel would break the @clean algorithm.
+        // #2996: an @verbatim sentinel would break the @clean algorithm.
+        //
+        // The `self.sentinels` test is not in Leo, and fixes a bug: without
+        // it the indent is written even when the sentinel that follows it is
+        // suppressed, so every such line in an @auto or @nosent file gains
+        // its own indentation twice.
+        if self.sentinels && looks_like_sentinel && !self.root.is_at_clean_node(self.o) {
             let ws_len = k - i;
             self.put_indent(ws_len as i32);
             self.put_sentinel("@verbatim");
@@ -534,6 +544,11 @@ impl<'a> AtWrite<'a> {
             self.put_body(&reference, None);
             self.put_sentinel(&format!("@-{name}"));
             self.indent -= delta;
+            return;
+        }
+        if self.allow_undefined_refs {
+            // An @auto file: nothing here promises the line is a reference.
+            self.put_code_line(s, i);
             return;
         }
         // No definition. Leo refuses rather than guessing, and so does this:
@@ -858,8 +873,20 @@ pub fn tangle(o: &Outline, p: &Position) -> Result<String, String> {
 
 /// Write p's file to a string. `sentinels` is false for @clean and @nosent.
 pub fn at_file_to_string(o: &Outline, p: &Position, sentinels: bool) -> Result<String, String> {
+    write_to_string(o, p, sentinels, false)
+}
+
+/// Write p's file to a string, saying whether undefined section references
+/// are an error. Only an `@auto` file allows them.
+pub fn write_to_string(
+    o: &Outline,
+    p: &Position,
+    sentinels: bool,
+    allow_undefined_refs: bool,
+) -> Result<String, String> {
     let mut at = AtWrite::new(o, p);
     at.sentinels = sentinels;
+    at.allow_undefined_refs = allow_undefined_refs;
     let contents = at.put_file(p);
     if at.errors.is_empty() {
         Ok(contents)

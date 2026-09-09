@@ -80,6 +80,8 @@ pub struct Outline {
     /// `(gnx, path, headline)` for every external file this outline has read
     /// or written. See [`Outline::may_overwrite`].
     pub read_paths: HashSet<(String, String, String)>,
+    /// Per-gnx note from the last `@auto` import that normalized its file.
+    pub import_warnings: HashMap<String, String>,
 }
 
 pub const HIDDEN_ROOT_GNX: &str = "hidden-root-vnode-gnx";
@@ -100,6 +102,7 @@ impl Outline {
             window_geometry: WindowGeometry::default(),
             mod_time_cache: HashMap::new(),
             read_paths: HashSet::new(),
+            import_warnings: HashMap::new(),
         };
         let hidden = o.new_vnode(Some(HIDDEN_ROOT_GNX));
         o.node_mut(hidden).h = "<hidden root vnode>".to_string();
@@ -296,6 +299,17 @@ impl Outline {
     }
 
     // --- Editing the tree -------------------------------------------------
+
+    /// Append a new vnode as `parent_v`'s last child, addressed by id.
+    ///
+    /// The importers build a tree of vnodes before any position names it, so
+    /// they cannot use the position-based methods.
+    pub fn new_child_vnode(&mut self, parent_v: VnodeId) -> VnodeId {
+        let v = self.new_vnode(None);
+        let n = self.node(parent_v).children.len();
+        self.link_child(parent_v, n, v);
+        v
+    }
 
     pub fn insert_as_nth_child(&mut self, parent: &Position, n: usize) -> Position {
         let v = self.new_vnode(None);
