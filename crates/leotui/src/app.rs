@@ -134,6 +134,18 @@ pub struct App {
     position_count: (u64, usize),
 }
 
+/// The status line's account of external files that could not be read.
+///
+/// A failed read leaves an `@file` node empty. Saying nothing would present
+/// that empty node as the file's contents.
+pub fn read_report_message(report: &leolib::external::ReadResult) -> Option<String> {
+    let first = report.errors.first()?;
+    Some(match report.errors.len() {
+        1 => format!("external file not read: {}", first.message),
+        n => format!("{n} external files not read; first: {}", first.message),
+    })
+}
+
 /// The theme a `:theme NAME` line names, if it names one.
 fn theme_argument(line: &str) -> Option<String> {
     let parsed = minibuffer::parse_command(line)?;
@@ -894,7 +906,8 @@ impl App {
                 self.command_history = keep.command_history;
                 self.search_history = keep.search_history;
                 self.tree_percent = keep.tree_percent;
-                self.message = format!("opened: {path}");
+                self.message = read_report_message(&self.doc.read_report)
+                    .unwrap_or_else(|| format!("opened: {path}"));
             }
             Err(e) => self.message = format!("open failed: {e}"),
         }
@@ -1673,6 +1686,33 @@ mod tests {
         app.run_command_line("theme no-such-theme-anywhere");
         assert!(app.message.contains("not found"), "{}", app.message);
         assert!(!path.exists(), "a failed :theme wrote the settings file");
+    }
+
+    #[test]
+    fn a_file_that_was_not_read_is_reported() {
+        use leolib::external::{FileReport, ReadResult};
+        let failure = |path: &str| FileReport {
+            headline: format!("@file {path}"),
+            path: path.to_string(),
+            message: format!("not a valid external file: {path}"),
+        };
+        assert_eq!(read_report_message(&ReadResult::default()), None);
+        let one = ReadResult {
+            errors: vec![failure("a.py")],
+            ..Default::default()
+        };
+        assert_eq!(
+            read_report_message(&one).as_deref(),
+            Some("external file not read: not a valid external file: a.py")
+        );
+        let two = ReadResult {
+            errors: vec![failure("a.py"), failure("b.py")],
+            ..Default::default()
+        };
+        assert_eq!(
+            read_report_message(&two).as_deref(),
+            Some("2 external files not read; first: not a valid external file: a.py")
+        );
     }
 
     #[test]

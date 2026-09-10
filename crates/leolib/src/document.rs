@@ -14,6 +14,8 @@ use crate::{external, leofile};
 pub struct Document {
     pub outline: Outline,
     pub undoer: Undoer,
+    /// What reading the external files reported when this was opened.
+    pub read_report: ReadResult,
     /// An unlinked tree waiting to be pasted, and whether it was cut.
     clipboard: Option<VnodeId>,
 }
@@ -23,6 +25,7 @@ impl Document {
         Self {
             outline,
             undoer: Undoer::new(),
+            read_report: ReadResult::default(),
             clipboard: None,
         }
     }
@@ -32,9 +35,11 @@ impl Document {
     /// Folds and marks come from the sidecar state file, since the `.leo`
     /// format does not carry them.
     pub fn open(path: &str, read_external: bool) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut outline = crate::open_outline(path, read_external)?;
+        let (mut outline, report) = crate::open_outline_with_report(path, read_external)?;
         crate::state::load(&mut outline);
-        Ok(Self::new(outline))
+        let mut doc = Self::new(outline);
+        doc.read_report = report;
+        Ok(doc)
     }
 
     pub fn new_empty(file_name: &str) -> Self {

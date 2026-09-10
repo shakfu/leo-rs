@@ -161,14 +161,16 @@ fn writing_refuses_to_overwrite_a_file_the_outline_never_read() {
         "work that is only on disk\n"
     );
 
-    // Reading it first makes the write safe.
-    external::read_external_files(&mut o);
+    // A failed read is not a read. The file has no sentinels, so reading it
+    // brings none of its work into the outline, and the write stays refused.
+    // `a_file_that_read_cleanly_can_still_be_written` covers a read that works.
+    let report = external::read_external_files(&mut o);
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
     let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
     assert_eq!(
-        result.written.len() + result.unchanged,
-        1,
-        "{:?}",
-        result.errors
+        fs::read_to_string(&file).unwrap(),
+        "work that is only on disk\n"
     );
 }
 
@@ -250,4 +252,111 @@ fn an_at_auto_node_whose_importer_loses_text_keeps_the_whole_file() {
     assert_eq!(result.errors.len(), 1);
     assert!(result.errors[0].message.contains("did not reproduce"));
     assert_eq!(o.root_position().unwrap().b(&o), text);
+}
+
+/// A `.leo` file in `dir` holding one node, `headline`, over an existing
+/// file `name` with `contents`. Returns the `.leo` path.
+fn outline_over_existing_file(
+    dir: &std::path::Path,
+    headline: &str,
+    name: &str,
+    contents: &str,
+) -> String {
+    fs::write(dir.join(name), contents).unwrap();
+    let leo_path = dir.join("test.leo").to_string_lossy().to_string();
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, headline);
+    o.file_name = leo_path.clone();
+    leolib::save(&mut o, &leo_path).unwrap();
+    leo_path
+}
+
+#[test]
+fn a_file_that_failed_to_read_is_reported_and_never_overwritten() {
+    // An @file node over a file with no sentinels reads as nothing. Writing
+    // it after an edit would replace the file with sentinels around the edit.
+    let dir = tempfile::tempdir().unwrap();
+    let mine = "print('mine')\n";
+    let leo_path = outline_over_existing_file(dir.path(), "@file plain.py", "plain.py", mine);
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(
+        report.errors[0]
+            .message
+            .contains("not a valid external file"),
+        "{:?}",
+        report.errors
+    );
+
+    let root = o.root_position().unwrap();
+    o.set_body(&root, "edited\n");
+    o.set_dirty(&root);
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("refusing to overwrite")),
+        "{:?}",
+        result.errors
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("plain.py")).unwrap(),
+        mine
+    );
+}
+
+#[test]
+fn an_auto_file_with_no_importer_is_reported_and_never_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let mine = "Title\n=====\n";
+    let leo_path = outline_over_existing_file(dir.path(), "@auto notes.rst", "notes.rst", mine);
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.message.contains("no @auto importer")),
+        "{:?}",
+        report.errors
+    );
+
+    let root = o.root_position().unwrap();
+    o.set_body(&root, "edited\n");
+    o.set_dirty(&root);
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("notes.rst")).unwrap(),
+        mine
+    );
+}
+
+#[test]
+fn a_file_that_read_cleanly_can_still_be_written() {
+    // The other side of the guard: moving the record after the read must not
+    // stop an ordinary edit from reaching the file.
+    let dir = tempfile::tempdir().unwrap();
+    let leo_path = dir.path().join("test.leo").to_string_lossy().to_string();
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file sample.py");
+    o.set_body(&root, "x = 1\n");
+    o.file_name = leo_path.clone();
+    external::write_external_files(&mut o, false);
+    leolib::save(&mut o, &leo_path).unwrap();
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let root = o.root_position().unwrap();
+    o.set_body(&root, "x = 2\n");
+    o.set_dirty(&root);
+    let result = external::write_external_files(&mut o, true);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+    let text = fs::read_to_string(dir.path().join("sample.py")).unwrap();
+    assert!(text.contains("x = 2\n"), "{text}");
 }

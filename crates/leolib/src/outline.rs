@@ -526,6 +526,9 @@ impl Outline {
     // --- Overwrite safety -------------------------------------------------
 
     /// Record that p's external file at `path` has been read or written.
+    ///
+    /// Only once the node holds the file: `may_overwrite` trusts this record,
+    /// and a node whose read failed would write back nothing of the file.
     pub fn remember_read_path(&mut self, p: &Position, path: &str) {
         let key = (
             self.gnx(p.v).to_string(),

@@ -155,6 +155,11 @@ fn main() {
             app.message = warning.clone();
         }
     }
+    // A file that could not be read outranks a theme or a settings message:
+    // its node is empty, and would otherwise pass for the file's contents.
+    if let Some(report) = app::read_report_message(&app.doc.read_report) {
+        app.message = report;
+    }
 
     // Unfold the top level, so an outline opens showing something.
     if let Some(root) = app.outline().root_position() {

@@ -44,6 +44,18 @@ pub fn open_outline(
     path: &str,
     read_external: bool,
 ) -> Result<Outline, Box<dyn std::error::Error>> {
+    open_outline_with_report(path, read_external).map(|(o, _)| o)
+}
+
+/// `open_outline`, with what reading the external files reported.
+///
+/// A file that could not be read leaves its node as the `.leo` file described
+/// it, which for an `@file` node is empty. A front end should say so, or the
+/// empty node reads as the file's contents.
+pub fn open_outline_with_report(
+    path: &str,
+    read_external: bool,
+) -> Result<(Outline, external::ReadResult), Box<dyn std::error::Error>> {
     let path = util::finalize(path);
     if !std::path::Path::new(&path).exists() {
         return Err(Box::new(std::io::Error::new(
@@ -52,11 +64,12 @@ pub fn open_outline(
         )));
     }
     let mut o = leofile::read_leo_file(&path)?;
-    if read_external {
-        external::read_external_files(&mut o);
-    }
+    let report = match read_external {
+        true => external::read_external_files(&mut o),
+        false => external::ReadResult::default(),
+    };
     o.changed = false;
-    Ok(o)
+    Ok((o, report))
 }
 
 /// Create an empty outline with a single node, and no view.

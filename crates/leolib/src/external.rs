@@ -149,10 +149,10 @@ pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool, Stri
 fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
-    o.remember_read_path(p, &path);
     if !atfile_read::read_into_root(o, &contents, &path, p) {
         return Err(format!("not a valid external file: {path}"));
     }
+    o.remember_read_path(p, &path);
     o.clear_dirty_in_tree(p);
     Ok(true)
 }
@@ -167,7 +167,6 @@ fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
 fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
-    o.remember_read_path(p, &path);
     let report = crate::importers::import_string(o, p, &contents, &path)?;
     // An importer may normalize what it read. Say so: the file changes on the
     // next write even if nobody edits the outline.
@@ -191,6 +190,8 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
         if !ok {
             o.detach_subtree(p.v);
             o.node_mut(p.v).b = contents;
+            // The body is the whole file, so writing it reproduces the file.
+            o.remember_read_path(p, &path);
             let detail = written.err().unwrap_or_else(|| "text differs".to_string());
             return Err(format!(
                 "the {} importer did not reproduce {}: {detail}. \
@@ -200,6 +201,7 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
             ));
         }
     }
+    o.remember_read_path(p, &path);
     o.clear_dirty_in_tree(p);
     Ok(true)
 }
@@ -208,7 +210,6 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
 fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
-    o.remember_read_path(p, &path);
     let kids = p.children(o);
     for child in kids.iter().rev() {
         o.delete_position(child);
@@ -228,6 +229,7 @@ fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
         }
     };
     o.node_mut(p.v).b = format!("{head}{contents}");
+    o.remember_read_path(p, &path);
     o.clear_dirty_in_tree(p);
     Ok(true)
 }

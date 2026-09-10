@@ -40,7 +40,9 @@ in the same second, and UTC keeps that true across a DST change.
 **Refusing to overwrite is unconditional.** `at.promptForDangerousWrite` asks
 the user; with no view there is nobody to ask, so `Outline::may_overwrite`
 refuses. `@nosent` and `@clean` are exempt, as in
-`at.shouldPromptForDangerousWrite`.
+`at.shouldPromptForDangerousWrite`. A path counts as read only once its node
+holds the file, so a failed read leaves the file refused rather than exposed.
+`open_outline_with_report` returns those failures; `open_outline` drops them.
 
 **Writes are atomic.** `external::replace_file` writes a sibling temporary
 file and renames it over the target. Leo writes in place after a backup.

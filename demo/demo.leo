@@ -8,6 +8,7 @@
 <vnodes>
 <v t="sta.20260909214154.2"><vh>demo</vh>
 <v t="sta.20260909214201.1"><vh>@auto okr.py</vh></v>
+<v t="sta.20260910090127.2"><vh>@file fsm.py</vh></v>
 </v>
 </vnodes>
 <tnodes>
