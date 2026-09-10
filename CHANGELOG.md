@@ -18,7 +18,7 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **`w` asks before overwriting a file this outline has not read.** It used to refuse with no way to approve, so a node renamed from `@auto` to `@file` could never be written. `y` writes the file; any other answer leaves it untouched. `WriteResult::refused` lists the refused nodes for other callers.
 
-- **`:import-at-file PATH`** imports a file as an `@file` tree in one step; Leo's `import-file` makes an `@auto` node, and converting it takes three. A file with sentinels is read as it is. Any other file is split by its `@auto` importer, or kept whole in one body when the tree would not write it back unchanged. A leading `#!` or coding line gets `@first`, so it stays on line 1. The sentinels are written only after the overwrite prompt; `n` keeps the node, and `w` asks again. A file that is not UTF-8 is refused, since sentinels would corrupt a binary.
+- **`:import-at-file PATH`** imports a file as an `@file` tree in one step; Leo's `import-file` makes an `@auto` node, and converting it takes three. A file with sentinels is read as it is. Any other file is split by its `@auto` importer, or kept whole in one body when the tree would not write it back unchanged. A leading `#!` or coding line gets `@first`, so it stays on line 1, and a missing final newline is added, as the `@file` writer adds one anyway. The sentinels are written only after the overwrite prompt; `n` keeps the node, and `w` asks again. A file that is not UTF-8 is refused, since sentinels would corrupt a binary.
 
 - **`leolib::open_outline_with_report`**, which returns the external-file read errors that `open_outline` drops. `Document::open` keeps them in `read_report`.
 
@@ -27,6 +27,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 ### Changed
 
 - `function.builtin`, `type.builtin` and `constant.builtin` are separate classes. Of the 31 installed Helix themes that name both of the first two, 26 give them different colours. tree-sitter-rust tags numeric literals `constant.builtin`; they are tagged again as numbers, so a Rust `1` has the colour of a Python `1`.
+
+- Loading `LeoPyRef.leo` and its external files takes 101ms, down from 779ms; leo-editor takes 484ms, 317ms of it in `openLeoFile`. The `@file` reader compiled its 12 sentinel regexes twice per file, and compiling was 80% of the load. They are now compiled once per delimiter pair. Leo compiles them per file too, but Python's `re` caches compiled patterns and the `regex` crate does not.
 
 - The body's colouring is kept between redraws and recomputed only when the text or the language changes. Parsing a 5,000-line `@edit` body took 23ms per frame.
 

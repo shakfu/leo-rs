@@ -1584,7 +1584,11 @@ mod tests {
 
         app.write_external();
         assert_eq!(app.mode, Mode::Confirm);
-        assert!(app.mini_label().contains("plain.py"), "{}", app.mini_label());
+        assert!(
+            app.mini_label().contains("plain.py"),
+            "{}",
+            app.mini_label()
+        );
         type_text(&mut app, "n");
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
@@ -1617,7 +1621,10 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let written = std::fs::read_to_string(&file).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert!(written.starts_with("#!/bin/sh\n# @+leo-ver=5-thin\n"), "{written}");
+        assert!(
+            written.starts_with("#!/bin/sh\n# @+leo-ver=5-thin\n"),
+            "{written}"
+        );
         assert_eq!(app.message, "wrote 1");
     }
 

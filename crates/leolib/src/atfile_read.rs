@@ -6,6 +6,7 @@
 //! no sentinels; see [`crate::atclean`].
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -31,6 +32,7 @@ fn strip_indent(line: &str, indent: usize) -> String {
 ///
 /// Rebuilt whenever `@comment` or `@delims` changes the delimiters mid-file,
 /// which is why this is a struct and not a set of statics.
+#[derive(Clone)]
 struct Patterns {
     after: Regex,
     all: Regex,
@@ -47,10 +49,29 @@ struct Patterns {
 }
 
 impl Patterns {
+    /// The patterns for these delimiters, compiled once per pair.
+    ///
+    /// Leo compiles them for every file too, but Python's `re` caches what it
+    /// compiles and the `regex` crate does not. Compiling was 80% of loading
+    /// `LeoPyRef.leo`'s external files.
+    fn new(delim1: &str, delim2: &str) -> Self {
+        static CACHE: Lazy<Mutex<HashMap<(String, String), Patterns>>> =
+            Lazy::new(Default::default);
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        // Bounded, as `re._MAXCACHE` is, against a file of distinct @delims.
+        if cache.len() >= 64 {
+            cache.clear();
+        }
+        cache
+            .entry((delim1.to_string(), delim2.to_string()))
+            .or_insert_with(|| Self::compile(delim1, delim2))
+            .clone()
+    }
+
     /// The `@+leo` sentinel determines the form of *all* sentinels in a file.
     /// None of these patterns may accept a space after `delim1`: doing so
     /// makes ordinary commented-out text read as sentinels.
-    fn new(delim1: &str, delim2: &str) -> Self {
+    fn compile(delim1: &str, delim2: &str) -> Self {
         let d1 = regex::escape(delim1);
         let d2 = regex::escape(delim2);
         // Python's `$` also matches before a trailing newline; Rust's does not,

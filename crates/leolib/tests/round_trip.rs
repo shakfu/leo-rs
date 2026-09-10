@@ -335,7 +335,8 @@ fn bodies(o: &Outline, p: &leolib::Position) -> Vec<String> {
 fn import_at_file_splits_a_plain_file_and_keeps_its_shebang_first() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("x.py").to_string_lossy().to_string();
-    let text = "#!/usr/bin/env python3\nimport os\n\ndef f():\n    return 1\n\ndef g():\n    return 2\n";
+    let text =
+        "#!/usr/bin/env python3\nimport os\n\ndef f():\n    return 1\n\ndef g():\n    return 2\n";
     fs::write(&path, text).unwrap();
     let mut doc = outline_in(dir.path());
     let root = doc.outline.root_position().unwrap();
@@ -344,7 +345,8 @@ fn import_at_file_splits_a_plain_file_and_keeps_its_shebang_first() {
     assert!(needs_write);
     assert_eq!(p.h(&doc.outline), "@file x.py");
     assert!(
-        p.b(&doc.outline).starts_with("@first #!/usr/bin/env python3\n"),
+        p.b(&doc.outline)
+            .starts_with("@first #!/usr/bin/env python3\n"),
         "{}",
         p.b(&doc.outline)
     );
@@ -408,6 +410,18 @@ fn import_at_file_keeps_a_file_whole_when_its_tree_would_not_write_it_back() {
         assert_eq!(p.b(&doc.outline), text, "{name}");
         assert!(p.children(&doc.outline).is_empty(), "{name}");
     }
+}
+
+#[test]
+fn import_at_file_ends_the_body_with_the_newline_the_write_adds() {
+    // Without it, the tree read back from the written file has one more byte.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("n.zzz").to_string_lossy().to_string();
+    fs::write(&path, "no final newline").unwrap();
+    let mut doc = outline_in(dir.path());
+    let root = doc.outline.root_position().unwrap();
+    let (p, _) = doc.import_at_file(&root, &path).unwrap();
+    assert_eq!(p.b(&doc.outline), "no final newline\n");
 }
 
 #[test]

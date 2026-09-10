@@ -254,7 +254,11 @@ pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool, String> {
         read_at_file_node(o, p)?;
         return Ok(false);
     }
-    let text = contents.trim_start_matches('\u{feff}').replace('\r', "");
+    let mut text = contents.trim_start_matches('\u{feff}').replace('\r', "");
+    // The writer ends the file with a newline, so the node holds one too.
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
     let split = crate::importers::import_string(o, p, &text, &path).is_ok()
         && mark_first_lines(o, p, &text)
         && reproduces(o, p, &text);
@@ -262,7 +266,9 @@ pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool, String> {
         o.detach_subtree(p.v);
         o.node_mut(p.v).b = text.clone();
         if !(mark_first_lines(o, p, &text) && reproduces(o, p, &text)) {
-            return Err(format!("{name} would not be written back unchanged as @file"));
+            return Err(format!(
+                "{name} would not be written back unchanged as @file"
+            ));
         }
     }
     o.set_dirty(p);
@@ -293,7 +299,7 @@ fn mark_first_lines(o: &mut Outline, p: &Position, text: &str) -> bool {
 /// True if p's tree, written without sentinels, is `text`.
 fn reproduces(o: &Outline, p: &Position, text: &str) -> bool {
     match atfile_write::at_file_to_string(o, p, false) {
-        Ok(w) => w == text || (!text.ends_with('\n') && w == format!("{text}\n")),
+        Ok(w) => w == text,
         Err(_) => false,
     }
 }
