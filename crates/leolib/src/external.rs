@@ -39,6 +39,8 @@ pub struct WriteResult {
     pub unchanged: usize,
     pub errors: Vec<FileReport>,
     pub ignored: Vec<String>,
+    /// Nodes refused by [`Outline::may_overwrite`], also listed in `errors`.
+    pub refused: Vec<Position>,
 }
 
 /// The `@<file>` nodes to read, in outline order.
@@ -234,6 +236,68 @@ fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
     Ok(true)
 }
 
+/// Fill the new `@file` node at p from a file that may have no sentinels.
+///
+/// A file with sentinels is read as it is, as Leo's `importDerivedFiles` does.
+/// Any other file is split by its `@auto` importer, or kept whole in p's body
+/// when the tree would not write the file back unchanged. Returns true when
+/// the node still has to be written to give the file its sentinels.
+pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool, String> {
+    let path = o.full_path(p);
+    let name = util::short_file_name(&path);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    // Sentinels written into a binary file would corrupt it.
+    let Ok(contents) = std::str::from_utf8(&bytes) else {
+        return Err(format!("{name} is not UTF-8 text"));
+    };
+    if contents.contains("@+leo-ver=") {
+        read_at_file_node(o, p)?;
+        return Ok(false);
+    }
+    let text = contents.trim_start_matches('\u{feff}').replace('\r', "");
+    let split = crate::importers::import_string(o, p, &text, &path).is_ok()
+        && mark_first_lines(o, p, &text)
+        && reproduces(o, p, &text);
+    if !split {
+        o.detach_subtree(p.v);
+        o.node_mut(p.v).b = text.clone();
+        if !(mark_first_lines(o, p, &text) && reproduces(o, p, &text)) {
+            return Err(format!("{name} would not be written back unchanged as @file"));
+        }
+    }
+    o.set_dirty(p);
+    Ok(true)
+}
+
+/// Put `@first` on a leading `#!` line and PEP 263 coding line, which must
+/// stay on lines 1 and 2 rather than follow the sentinel header.
+///
+/// False if p's body does not start with them, as `@first` then cannot work.
+fn mark_first_lines(o: &mut Outline, p: &Position, text: &str) -> bool {
+    static CODING: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"^[ \t\f]*#.*?coding[:=]").unwrap());
+    let lines = util::split_lines(text);
+    let mut n = usize::from(lines.first().is_some_and(|l| l.starts_with("#!")));
+    if lines.get(n).is_some_and(|l| CODING.is_match(l)) {
+        n += 1;
+    }
+    let body = o.node(p.v).b.clone();
+    let Some(rest) = body.strip_prefix(lines[..n].concat().as_str()) else {
+        return false;
+    };
+    let marked: String = lines[..n].iter().map(|l| format!("@first {l}")).collect();
+    o.node_mut(p.v).b = format!("{marked}{rest}");
+    true
+}
+
+/// True if p's tree, written without sentinels, is `text`.
+fn reproduces(o: &Outline, p: &Position, text: &str) -> bool {
+    match atfile_write::at_file_to_string(o, p, false) {
+        Ok(w) => w == text || (!text.ends_with('\n') && w == format!("{text}\n")),
+        Err(_) => false,
+    }
+}
+
 /// The language for a file extension, as `ic.languageForExtension`.
 pub fn language_for_extension(ext: &str) -> String {
     let ext = ext.strip_prefix('.').unwrap_or(ext);
@@ -303,9 +367,15 @@ pub fn find_files_to_write(o: &Outline, dirty_only: bool) -> (Vec<Position>, Vec
 /// itself goes to a temporary file and is renamed over the target, so an
 /// interrupted write cannot leave a half-written source file.
 pub fn write_external_files(o: &mut Outline, dirty_only: bool) -> WriteResult {
-    let mut result = WriteResult::default();
     let (files, ignored) = find_files_to_write(o, dirty_only);
+    let mut result = write_files(o, files);
     result.ignored = ignored;
+    result
+}
+
+/// Write the given `@<file>` nodes, refusing any `may_overwrite` rejects.
+pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
+    let mut result = WriteResult::default();
     for p in files {
         let path = o.full_path(&p);
         if !o.may_overwrite(&p) {
@@ -314,6 +384,7 @@ pub fn write_external_files(o: &mut Outline, dirty_only: bool) -> WriteResult {
                 path,
                 message: "refusing to overwrite a file this outline has not read".to_string(),
             });
+            result.refused.push(p);
             continue;
         }
         match file_contents(o, &p) {

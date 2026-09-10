@@ -303,10 +303,143 @@ fn a_file_that_failed_to_read_is_reported_and_never_overwritten() {
         "{:?}",
         result.errors
     );
+    assert_eq!(result.refused, vec![root.clone()]);
     assert_eq!(
         fs::read_to_string(dir.path().join("plain.py")).unwrap(),
         mine
     );
+
+    // Approval is the caller's to record; the next write then goes through.
+    let path = o.full_path(&root);
+    o.remember_read_path(&root, &path);
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.written, vec![path]);
+    assert!(result.refused.is_empty());
+}
+
+/// An empty outline that would be saved in `dir`, so imports go relative to it.
+fn outline_in(dir: &std::path::Path) -> leolib::Document {
+    leolib::Document::new_empty(&dir.join("test.leo").to_string_lossy())
+}
+
+/// Each body in p's tree, p first.
+fn bodies(o: &Outline, p: &leolib::Position) -> Vec<String> {
+    let mut out = vec![p.b(o).to_string()];
+    for child in p.children(o) {
+        out.extend(bodies(o, &child));
+    }
+    out
+}
+
+#[test]
+fn import_at_file_splits_a_plain_file_and_keeps_its_shebang_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x.py").to_string_lossy().to_string();
+    let text = "#!/usr/bin/env python3\nimport os\n\ndef f():\n    return 1\n\ndef g():\n    return 2\n";
+    fs::write(&path, text).unwrap();
+    let mut doc = outline_in(dir.path());
+    let root = doc.outline.root_position().unwrap();
+
+    let (p, needs_write) = doc.import_at_file(&root, &path).unwrap();
+    assert!(needs_write);
+    assert_eq!(p.h(&doc.outline), "@file x.py");
+    assert!(
+        p.b(&doc.outline).starts_with("@first #!/usr/bin/env python3\n"),
+        "{}",
+        p.b(&doc.outline)
+    );
+    assert_eq!(p.children(&doc.outline).len(), 2);
+
+    // The sentinels wait for the caller's approval.
+    let result = doc.write_external_files(true);
+    assert_eq!(result.refused, vec![p.clone()]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+
+    doc.outline.remember_read_path(&p, &path);
+    assert_eq!(doc.write_files(vec![p.clone()]).written, vec![path.clone()]);
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(
+        written.starts_with("#!/usr/bin/env python3\n# @+leo-ver=5-thin\n"),
+        "{written}"
+    );
+
+    // Reading the written file gives back the imported tree.
+    let before = bodies(&doc.outline, &p);
+    external::read_file_at_position(&mut doc.outline, &p).unwrap();
+    assert_eq!(bodies(&doc.outline, &p), before);
+}
+
+#[test]
+fn import_at_file_reads_a_file_that_has_sentinels() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("y.py").to_string_lossy().to_string();
+    let mut src = outline_in(dir.path());
+    let root = src.outline.root_position().unwrap();
+    src.outline.set_headline(&root, "@file y.py");
+    src.outline.set_body(&root, "@others\n");
+    let child = src.outline.insert_as_last_child(&root);
+    src.outline.set_headline(&child, "f");
+    src.outline.set_body(&child, "def f():\n    return 1\n");
+    assert_eq!(src.write_external_files(false).written, vec![path.clone()]);
+
+    let mut doc = outline_in(dir.path());
+    let at = doc.outline.root_position().unwrap();
+    let (p, needs_write) = doc.import_at_file(&at, &path).unwrap();
+    assert!(!needs_write);
+    let kids = p.children(&doc.outline);
+    assert_eq!(kids.len(), 1);
+    assert_eq!(kids[0].h(&doc.outline), "f");
+}
+
+#[test]
+fn import_at_file_keeps_a_file_whole_when_its_tree_would_not_write_it_back() {
+    // The markdown importer turns `#` lines into headlines, which @file does
+    // not write as text.
+    let dir = tempfile::tempdir().unwrap();
+    for (name, text) in [
+        ("notes.md", "# Title\n\ntext\n\n## Sub\n\nmore\n"),
+        ("data.zzz", "no importer\n"),
+    ] {
+        let path = dir.path().join(name).to_string_lossy().to_string();
+        fs::write(&path, text).unwrap();
+        let mut doc = outline_in(dir.path());
+        let root = doc.outline.root_position().unwrap();
+        let (p, _) = doc.import_at_file(&root, &path).unwrap();
+        assert_eq!(p.b(&doc.outline), text, "{name}");
+        assert!(p.children(&doc.outline).is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn import_at_file_refusals_leave_no_trace_and_an_import_undoes() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("b.py").to_string_lossy().to_string();
+    fs::write(&binary, [0xff, 0xfe, 0x00]).unwrap();
+    let plain = dir.path().join("p.py").to_string_lossy().to_string();
+    fs::write(&plain, "x = 1\n").unwrap();
+    let mut doc = outline_in(dir.path());
+    let root = doc.outline.root_position().unwrap();
+    let count = doc.outline.all_positions().len();
+
+    let err = doc.import_at_file(&root, &binary).unwrap_err();
+    assert!(err.contains("not UTF-8"), "{err}");
+    assert_eq!(doc.outline.all_positions().len(), count);
+    assert!(!doc.outline.changed);
+    assert!(!doc.undoer.can_undo());
+
+    let (p, _) = doc.import_at_file(&root, &plain).unwrap();
+    let err = doc.import_at_file(&root, &plain).unwrap_err();
+    assert!(err.contains("already in the outline"), "{err}");
+
+    // Importing from inside an @file tree puts the new node beside it.
+    let child = doc.outline.insert_as_last_child(&p);
+    let other = dir.path().join("q.py").to_string_lossy().to_string();
+    fs::write(&other, "y = 2\n").unwrap();
+    let (q, _) = doc.import_at_file(&child, &other).unwrap();
+    assert_eq!(q.parent(&doc.outline), p.parent(&doc.outline));
+
+    doc.undo();
+    assert!(!doc.outline.position_exists(&q));
 }
 
 #[test]

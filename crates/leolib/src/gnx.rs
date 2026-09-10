@@ -1,6 +1,6 @@
 //! The gnx allocator.
 //!
-//! A gnx is `<user id>.<local timestamp>.<n>`. The format is load-bearing:
+//! A gnx is `<user id>.<local timestamp>.<n>`. The format is structural:
 //! every .leo file and every external file on disk names nodes this way, so
 //! `NodeIndices` reproduces Leo's `leoNodes.NodeIndices` exactly, including
 //! the rule that `n` restarts at 1 whenever the second changes.

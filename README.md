@@ -23,7 +23,7 @@ Run those checks with `make test-corpus`. The `@auto` tree comparison needs a Py
 
 ## Layout
 
-```
+```text
 crates/leolib     the model. No view, ever.
 crates/leotui     the terminal front end.
 ```
@@ -177,6 +177,7 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 
 Every Leo command name, with Tab completion and Up/Down history, plus the vim spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
 the Nth visible row. `:set search=all|headlines split=N wrap number syntax`.
+`:import-at-file path` imports a file as an `@file` tree, and asks before writing sentinels into it.
 
 **Leo's own chords**
 
@@ -233,7 +234,7 @@ See `docs/dev/porting-notes.md` for the places this port deliberately differs fr
 
 ## Building
 
-```
+```text
 make build      # cargo build --workspace
 make test       # cargo test --workspace
 make test-corpus CORPUS=/path/to/LeoPyRef.leo

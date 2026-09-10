@@ -527,8 +527,9 @@ impl Outline {
 
     /// Record that p's external file at `path` has been read or written.
     ///
-    /// Only once the node holds the file: `may_overwrite` trusts this record,
-    /// and a node whose read failed would write back nothing of the file.
+    /// Only once the node holds the file, or the user has approved overwriting
+    /// it: `may_overwrite` trusts this record, and a node whose read failed
+    /// would write back nothing of the file.
     pub fn remember_read_path(&mut self, p: &Position, path: &str) {
         let key = (
             self.gnx(p.v).to_string(),
@@ -542,9 +543,10 @@ impl Outline {
     ///
     /// An `@<file>` node whose file exists but was never read is the case Leo
     /// warns about (issue #50): the outline holds no copy of what is in that
-    /// file, so writing it discards the file. With no one to ask, refusing is
-    /// the only safe answer. `@nosent` is exempt because its file is never
-    /// read, and `@clean` because its reader runs on every open.
+    /// file, so writing it discards the file. The writer refuses and lists the
+    /// node in `WriteResult::refused`; a caller that can ask the user records
+    /// approval with `remember_read_path`. `@nosent` is exempt because its
+    /// file is never read, and `@clean` because its reader runs on every open.
     pub fn may_overwrite(&self, p: &Position) -> bool {
         if p.is_at_nosent_node(self) || p.is_at_clean_node(self) {
             return true;

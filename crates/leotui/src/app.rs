@@ -132,6 +132,8 @@ pub struct App {
     /// Total positions, and the outline generation it was counted at.
     /// Counting is O(outline), and the status line asks on every keystroke.
     position_count: (u64, usize),
+    /// Files `w` refused to overwrite, waiting on the y/n prompt.
+    pending_overwrite: Vec<Position>,
 }
 
 /// The status line's account of external files that could not be read.
@@ -208,6 +210,7 @@ impl App {
             theme_origin: None,
             config_path: None,
             position_count: (u64::MAX, 0),
+            pending_overwrite: Vec::new(),
         };
         app.expand_ancestors();
         app
@@ -489,8 +492,16 @@ impl App {
     }
 
     /// Write the outline's external files. Only dirty trees, as Leo does.
+    ///
+    /// A file that exists but was never read is refused, then offered on a
+    /// y/n prompt, as Leo asks before overwriting it (issue #50).
     pub fn write_external(&mut self) {
         let result = self.doc.write_external_files(true);
+        self.report_write(result);
+    }
+
+    /// Say what a write did, and ask about any file it refused.
+    fn report_write(&mut self, result: leolib::external::WriteResult) {
         let mut parts = vec![format!("wrote {}", result.written.len())];
         if result.unchanged > 0 {
             parts.push(format!("{} unchanged", result.unchanged));
@@ -503,6 +514,31 @@ impl App {
             ));
         }
         self.message = parts.join(", ");
+        if !result.refused.is_empty() {
+            self.pending_overwrite = result.refused;
+            self.open_mini(MiniKind::ConfirmOverwrite, String::new());
+        }
+    }
+
+    /// The prompt drawn before the minibuffer's text.
+    pub fn mini_label(&self) -> String {
+        let Some(mini) = &self.mini else {
+            return String::new();
+        };
+        match (mini.kind, self.pending_overwrite.as_slice()) {
+            (MiniKind::ConfirmOverwrite, [p]) => {
+                let path = self.outline().full_path(p);
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map_or(path.clone(), |n| n.to_string_lossy().to_string());
+                format!("overwrite {name}, which this outline has not read? (y/n) ")
+            }
+            (MiniKind::ConfirmOverwrite, files) => format!(
+                "overwrite {} files this outline has not read? (y/n) ",
+                files.len()
+            ),
+            (kind, _) => kind.label().to_string(),
+        }
     }
 
     pub fn request_quit(&mut self) {
@@ -525,7 +561,7 @@ impl App {
         self.mode = match kind {
             MiniKind::Command => Mode::Command,
             MiniKind::SearchForward | MiniKind::SearchBackward => Mode::Search,
-            MiniKind::ConfirmQuit => Mode::Confirm,
+            MiniKind::ConfirmQuit | MiniKind::ConfirmOverwrite => Mode::Confirm,
             _ => Mode::Headline,
         };
         if kind.is_search() {
@@ -746,6 +782,11 @@ impl App {
         };
         self.mode = Mode::Normal;
         let text = mini.buffer;
+        let refused = std::mem::take(&mut self.pending_overwrite);
+        let approved = accepted && text.trim().eq_ignore_ascii_case("y");
+        if mini.kind == MiniKind::ConfirmOverwrite && !approved {
+            self.message = format!("not overwritten: {} unread file(s)", refused.len());
+        }
         if !accepted {
             if mini.kind.is_search() {
                 if let Some((origin, row)) = self.search_origin.take() {
@@ -766,6 +807,16 @@ impl App {
             MiniKind::ConfirmQuit => {
                 if text.trim().eq_ignore_ascii_case("y") {
                     self.quit = true;
+                }
+            }
+            MiniKind::ConfirmOverwrite => {
+                if approved {
+                    for p in &refused {
+                        let path = self.outline().full_path(p);
+                        self.doc.outline.remember_read_path(p, &path);
+                    }
+                    let result = self.doc.write_files(refused);
+                    self.report_write(result);
                 }
             }
             MiniKind::Command => {
@@ -863,6 +914,7 @@ impl App {
                 Err(e) => self.message = format!("save failed: {e}"),
             },
             "open" => self.open_file(&parsed.arg),
+            "import-at-file" => self.import_at_file(&parsed.arg),
             "set" => self.set_option(&parsed.arg),
             "theme" if parsed.arg.is_empty() => {
                 self.message = format!("theme: {}", self.theme.name())
@@ -910,6 +962,27 @@ impl App {
                     .unwrap_or_else(|| format!("opened: {path}"));
             }
             Err(e) => self.message = format!("open failed: {e}"),
+        }
+    }
+
+    /// `:import-at-file path` -- import a file as an `@file` tree, then ask
+    /// before writing the sentinels into it.
+    fn import_at_file(&mut self, path: &str) {
+        if path.is_empty() {
+            self.message = "import-at-file: needs a file name".to_string();
+            return;
+        }
+        let p = self.current.clone();
+        match self.doc.import_at_file(&p, path) {
+            Ok((new, needs_write)) => {
+                self.select(new.clone());
+                self.message = format!("imported: {path}");
+                if needs_write {
+                    self.pending_overwrite = vec![new];
+                    self.open_mini(MiniKind::ConfirmOverwrite, String::new());
+                }
+            }
+            Err(e) => self.message = format!("import failed: {e}"),
         }
     }
 
@@ -1494,6 +1567,58 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.quit);
+    }
+
+    #[test]
+    fn writing_over_an_unread_file_asks_first() {
+        let dir = std::env::temp_dir().join(format!("leotui-overwrite-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("plain.py");
+        let mine = "print('mine')\n";
+        std::fs::write(&file, mine).unwrap();
+        let mut doc = Document::new_empty("");
+        let root = doc.outline.root_position().unwrap();
+        doc.set_headline(&root, &format!("@file {}", file.display()));
+        doc.set_body(&root, "print('ours')\n");
+        let mut app = App::new(doc);
+
+        app.write_external();
+        assert_eq!(app.mode, Mode::Confirm);
+        assert!(app.mini_label().contains("plain.py"), "{}", app.mini_label());
+        type_text(&mut app, "n");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
+        assert_eq!(app.message, "not overwritten: 1 unread file(s)");
+
+        app.write_external();
+        type_text(&mut app, "y");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let written = std::fs::read_to_string(&file).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(written.contains("print('ours')"), "{written}");
+        assert!(written.contains("@+leo"), "{written}");
+        assert_eq!(app.message, "wrote 1");
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn import_at_file_asks_before_adding_sentinels() {
+        let dir = std::env::temp_dir().join(format!("leotui-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("x.py");
+        std::fs::write(&file, "#!/bin/sh\nx = 1\n").unwrap();
+        let mut app = app();
+        press(&mut app, ":");
+        type_text(&mut app, &format!("import-at-file {}", file.display()));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.mode, Mode::Confirm, "{}", app.message);
+        assert!(app.current.h(app.outline()).starts_with("@file "));
+        type_text(&mut app, "y");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let written = std::fs::read_to_string(&file).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(written.starts_with("#!/bin/sh\n# @+leo-ver=5-thin\n"), "{written}");
+        assert_eq!(app.message, "wrote 1");
     }
 
     #[test]

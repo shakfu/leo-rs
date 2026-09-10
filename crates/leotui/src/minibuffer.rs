@@ -15,6 +15,8 @@ pub enum MiniKind {
     Headline,
     SaveAs,
     ConfirmQuit,
+    /// The label names the files, so `App::mini_label` draws it.
+    ConfirmOverwrite,
 }
 
 impl MiniKind {
@@ -26,6 +28,7 @@ impl MiniKind {
             MiniKind::Headline => "headline: ",
             MiniKind::SaveAs => "save as: ",
             MiniKind::ConfirmQuit => "unsaved changes. quit anyway? (y/n) ",
+            MiniKind::ConfirmOverwrite => "overwrite files this outline has not read? (y/n) ",
         }
     }
 

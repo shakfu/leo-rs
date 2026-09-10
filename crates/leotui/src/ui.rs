@@ -246,7 +246,7 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
     // not a status bar, and the status bar's colours make an input look like a
     // readout. vim draws its command line the same way.
     if let Some(mini) = &app.mini {
-        let label = mini.kind.label();
+        let label = app.mini_label();
         let text = truncate(&format!("{label}{}", mini.buffer), area.width as usize);
         f.render_widget(Paragraph::new(Line::from(Span::raw(text))), area);
         let x = area.x + (label.chars().count() + mini.cursor) as u16;

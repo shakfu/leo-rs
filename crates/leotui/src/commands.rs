@@ -428,6 +428,8 @@ pub static COMMANDS: &[Command] = &[
     // The command line runs this one: it takes an argument, and Tab completes
     // over the themes on disk. The entry is here so `:the` completes to it.
     c("theme", "change the theme, or name the current one", noop),
+    // The command line runs this one too: it takes a file name.
+    c("import-at-file", "import a file as an @file tree", noop),
     c("help", "show the key bindings", |app, _| {
         app.mode = Mode::Help;
         app.help_scroll = 0;

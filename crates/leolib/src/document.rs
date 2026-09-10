@@ -9,7 +9,7 @@ use crate::node::{status, VnodeId};
 use crate::outline::Outline;
 use crate::position::Position;
 use crate::undo::{Bead, Undoer};
-use crate::{external, leofile};
+use crate::{external, leofile, util};
 
 pub struct Document {
     pub outline: Outline,
@@ -381,8 +381,65 @@ impl Document {
         external::write_external_files(&mut self.outline, dirty_only)
     }
 
+    pub fn write_files(&mut self, files: Vec<Position>) -> WriteResult {
+        external::write_files(&mut self.outline, files)
+    }
+
     pub fn read_external_files(&mut self) -> ReadResult {
         external::read_external_files(&mut self.outline)
+    }
+
+    /// Import the file at `path` as an `@file` tree, as one undoable step.
+    ///
+    /// The node goes after the outermost `@<file>` node at or above p, since
+    /// `@<file>` nodes do not nest. Returns the node, and whether it still
+    /// needs writing (see [`external::import_at_file`]).
+    pub fn import_at_file(&mut self, p: &Position, path: &str) -> Result<(Position, bool), String> {
+        let abs = util::finalize_join(&[path]);
+        let o = &self.outline;
+        let existing = o
+            .all_positions()
+            .into_iter()
+            .find(|q| q.is_any_at_file_node(o) && o.full_path(q) == abs);
+        if let Some(q) = existing {
+            return Err(format!("{abs} is already in the outline as {}", q.h(o)));
+        }
+        let after = p
+            .self_and_parents(o)
+            .into_iter()
+            .rev()
+            .find(|q| q.is_any_at_file_node(o))
+            .unwrap_or_else(|| p.clone());
+
+        let o = &mut self.outline;
+        let was_changed = o.changed;
+        let new = o.insert_after(&after);
+        let dir = o.get_path(&new);
+        let name = match std::path::Path::new(&abs).strip_prefix(&dir) {
+            // An unsaved outline has no directory of its own to be relative to.
+            Ok(rel) if !o.file_name.is_empty() => rel.to_string_lossy().to_string(),
+            _ => abs.clone(),
+        };
+        o.set_headline(&new, &format!("@file {name}"));
+        match external::import_at_file(o, &new) {
+            Err(e) => {
+                o.delete_position(&new);
+                o.changed = was_changed;
+                Err(e)
+            }
+            Ok(needs_write) => {
+                let parent = new.parent_vnode(o);
+                self.undoer.push(
+                    "import-at-file",
+                    Bead::Insert {
+                        parent,
+                        index: new.child_index,
+                        v: new.v,
+                    },
+                );
+                Ok((new, needs_write))
+            }
+        }
     }
 }
 
