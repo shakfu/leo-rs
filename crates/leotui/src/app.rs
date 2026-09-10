@@ -81,6 +81,14 @@ impl Default for Options {
     }
 }
 
+/// `n word`, with an `s` unless `n` is 1.
+fn plural(n: usize, word: &str) -> String {
+    match n {
+        1 => format!("1 {word}"),
+        n => format!("{n} {word}s"),
+    }
+}
+
 /// Where a search started. Escape puts all of it back.
 #[derive(Clone)]
 struct SearchOrigin {
@@ -954,7 +962,13 @@ impl App {
     /// Run one `:` line.
     pub fn run_command_line(&mut self, line: &str) {
         // Trimmed at the start only: a replacement may end in spaces.
-        match crate::substitute::parse(line.trim_start().trim_start_matches(':').trim_start()) {
+        let bare = line.trim_start().trim_start_matches(':').trim_start();
+        if let Some(rest) = bare.strip_prefix("bufdo") {
+            if rest.starts_with(char::is_whitespace) {
+                return self.bufdo(rest);
+            }
+        }
+        match crate::substitute::parse(bare) {
             Some(Ok(sub)) => return self.substitute(sub),
             Some(Err(e)) => {
                 self.message = e;
@@ -991,6 +1005,7 @@ impl App {
             "import-at-file" => self.import_at_file(&parsed.arg),
             "set" => self.set_options(&parsed.arg),
             "nohlsearch" | "noh" => self.hlsearch = None,
+            "bufdo" => self.message = "usage: :bufdo %s/pattern/replacement/[flags]".to_string(),
             "substitute" | "s" => {
                 self.message = "usage: :[range]s/pattern/replacement/[flags]".to_string()
             }
@@ -1174,10 +1189,6 @@ impl App {
         match crate::substitute::apply(&sub, &mut lines, cursor, last.as_deref()) {
             Err(e) => self.message = e,
             Ok(o) => {
-                let plural = |n: usize, word: &str| match n {
-                    1 => format!("1 {word}"),
-                    n => format!("{n} {word}s"),
-                };
                 let what = if sub.count_only {
                     "match"
                 } else {
@@ -1192,6 +1203,84 @@ impl App {
                 self.editor.clamp(&lines);
             }
         }
+    }
+
+    /// `:bufdo [range]s/...`, vim's `:bufdo` with each node's body a buffer.
+    ///
+    /// One undo step for the whole outline. A clone's body is changed once:
+    /// a second pass would apply a replacement such as `s/a/aa/` twice.
+    fn bufdo(&mut self, arg: &str) {
+        let sub = match crate::substitute::parse(arg.trim_start()) {
+            Some(Ok(sub)) => sub,
+            Some(Err(e)) => {
+                self.message = e;
+                return;
+            }
+            None => {
+                self.message = "bufdo: only :s is supported, as in :bufdo %s/a/b/g".to_string();
+                return;
+            }
+        };
+        // Without a range, :s takes the cursor's line, which other nodes lack.
+        if sub.range.is_none() {
+            self.message = "bufdo: give :s a range, as in :bufdo %s/a/b/g".to_string();
+            return;
+        }
+        let last = self.last_search.as_ref().map(|s| s.pattern.clone());
+        let re = match crate::substitute::compile(&sub, last.as_deref()) {
+            Ok(re) => re,
+            Err(e) => {
+                self.message = e;
+                return;
+            }
+        };
+        let mut seen = std::collections::HashSet::new();
+        let (mut count, mut lines_changed, mut nodes) = (0, 0, 0);
+        self.doc.undoer.begin_group("substitute");
+        for p in self.outline().all_positions() {
+            if !seen.insert(p.v) || !re.is_match(p.b(self.outline())) {
+                continue;
+            }
+            let mut lines = editor::split(p.b(self.outline()));
+            // A body too short for the range, or with no match in it, stays.
+            let Ok(o) = crate::substitute::apply_with(&sub, &re, &mut lines, 0) else {
+                continue;
+            };
+            count += o.count;
+            lines_changed += o.lines;
+            nodes += 1;
+            if !sub.count_only {
+                self.doc.set_body(&p, &editor::join(&lines));
+            }
+        }
+        self.doc.undoer.end_group();
+        if count == 0 {
+            self.message = format!("pattern not found: {}", re.as_str());
+            return;
+        }
+        let what = if sub.count_only {
+            "match"
+        } else {
+            "substitution"
+        };
+        self.message = format!(
+            "{} on {} in {}",
+            plural(count, what),
+            plural(lines_changed, "line"),
+            plural(nodes, "node")
+        );
+        let lines = self.body_buffer();
+        self.editor.clamp(&lines);
+    }
+
+    /// Widen the pane that has focus by `steps` of 5%, or narrow it.
+    pub fn resize_pane(&mut self, steps: i32) {
+        let outline = if self.focus == Focus::Tree {
+            steps
+        } else {
+            -steps
+        };
+        self.tree_percent = (self.tree_percent as i32 + 5 * outline).clamp(15, 85) as u16;
     }
 
     /// Load a theme by name, keeping the current one if there is no such file.
@@ -1281,6 +1370,9 @@ impl App {
             Action::SearchBackward => self.open_mini(MiniKind::SearchBackward, String::new()),
             Action::FindNext(count) => self.repeat_search(true, count),
             Action::FindPrev(count) => self.repeat_search(false, count),
+            Action::Pane { widen, count } => {
+                self.run(if widen { "grow-pane" } else { "shrink-pane" }, count)
+            }
             Action::RepeatFind { reverse, count } => {
                 let Some(motion) = self.editor.last_find else {
                     return;
@@ -2174,6 +2266,55 @@ mod tests {
         assert!(app.message.contains("pattern not found"), "{}", app.message);
         app.run_command_line("substitute");
         assert!(app.message.starts_with("usage:"), "{}", app.message);
+    }
+
+    #[test]
+    fn bufdo_substitutes_in_every_body_as_one_undo_step() {
+        let mut app = app();
+        let rows = app.rows();
+        let (a, b) = (rows[0].position.clone(), rows[1].position.clone());
+        app.doc.set_body(&a, "old one\n");
+        app.doc.set_body(&b, "old two old\n");
+        app.doc.undoer.clear();
+        app.run_command_line("bufdo %s/old/new/g");
+        assert_eq!(a.b(app.outline()), "new one\n");
+        assert_eq!(b.b(app.outline()), "new two new\n");
+        assert_eq!(app.message, "3 substitutions on 2 lines in 2 nodes");
+        app.run_command_line("undo");
+        assert_eq!(a.b(app.outline()), "old one\n");
+        assert_eq!(b.b(app.outline()), "old two old\n");
+        app.run_command_line("bufdo s/old/new/");
+        assert!(app.message.contains("range"), "{}", app.message);
+        app.run_command_line("bufdo set wrap");
+        assert!(app.message.contains("only :s"), "{}", app.message);
+        app.run_command_line("bufdo %s/absent/x/");
+        assert!(app.message.contains("pattern not found"), "{}", app.message);
+    }
+
+    #[test]
+    fn bufdo_changes_a_cloned_body_once() {
+        let mut app = app();
+        let p = app.current.clone();
+        app.doc.set_body(&p, "a\n");
+        app.doc.clone_node(&p);
+        app.run_command_line("bufdo %s/a/aa/");
+        assert_eq!(p.b(app.outline()), "aa\n");
+        assert_eq!(app.message, "1 substitution on 1 line in 1 node");
+    }
+
+    #[test]
+    fn ctrl_w_resizes_the_pane_that_has_focus() {
+        let mut app = app();
+        // Relative to the default, which is a matter of taste.
+        let start = app.tree_percent;
+        press(&mut app, "Ctrl-w <");
+        assert_eq!(app.tree_percent, start - 5, "the outline narrows");
+        press(&mut app, "Tab");
+        assert_eq!(app.focus, Focus::Body);
+        press(&mut app, "Ctrl-w >");
+        assert_eq!(app.tree_percent, start - 10, "the body widens");
+        press(&mut app, "Ctrl-w <");
+        assert_eq!(app.tree_percent, start - 5, "the body narrows");
     }
 
     #[test]

@@ -2,6 +2,20 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
+## Unreleased
+
+### Added
+
+- **`Ctrl-w <` and `Ctrl-w >`**, vim's window-width keys, narrow and widen the pane that has focus. macOS takes `Ctrl-Left` and `Ctrl-Right` for Mission Control, so those never reached leotui there.
+
+- **`:bufdo %s/pattern/replacement/[flags]`**, vim's `:bufdo` with each node's body a buffer: `:s` in every body, as one undo step. A clone's body is changed once. Headlines are left alone, as a buffer's name is in vim.
+
+### Fixed
+
+- The 0.2.0 entry gives the outline pane's default width as 30%; 0.2.0 shipped with 35%.
+
+- `demo/fsm.py`'s shebang is on line 1, through `@first`. It sat on line 3, below the sentinel header, so the file could not run as `./fsm.py`.
+
 ## 0.2.0
 
 ### Added

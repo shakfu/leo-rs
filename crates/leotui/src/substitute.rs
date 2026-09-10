@@ -143,6 +143,16 @@ pub fn apply(
     last_search: Option<&str>,
 ) -> Result<Outcome, String> {
     let re = compile(sub, last_search)?;
+    apply_with(sub, &re, lines, cursor)
+}
+
+/// `apply`, with the pattern compiled once for many bodies.
+pub fn apply_with(
+    sub: &Substitute,
+    re: &Regex,
+    lines: &mut Vec<String>,
+    cursor: usize,
+) -> Result<Outcome, String> {
     let (a, b) = match sub.range {
         None => (cursor, cursor),
         Some((x, y)) => (
@@ -187,7 +197,9 @@ pub fn apply(
     })
 }
 
-fn compile(sub: &Substitute, last_search: Option<&str>) -> Result<Regex, String> {
+/// The pattern as a regex: the last search if it is empty, with smartcase
+/// unless a flag decides.
+pub fn compile(sub: &Substitute, last_search: Option<&str>) -> Result<Regex, String> {
     let pattern = match sub.pattern.is_empty() {
         true => last_search
             .ok_or("substitute: no previous search")?

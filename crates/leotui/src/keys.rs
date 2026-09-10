@@ -60,8 +60,12 @@ fn normalize(code: KeyCode, mods: KeyModifiers) -> (KeyCode, KeyModifiers) {
 /// Parse a binding string into the sequence of keys it names.
 ///
 /// A token that names a key (`Enter`, `F1`, `Ctrl-r`) is one key; anything
-/// else is one key per character, so `"gg"` and `"[m"` are two.
+/// else is one key per character, so `"gg"` and `"[m"` are two. A space
+/// separates keys, so a sequence can start with a named one: `"Ctrl-w <"`.
 pub fn parse(spec: &str) -> Vec<Key> {
+    if spec.contains(' ') {
+        return spec.split_whitespace().flat_map(parse).collect();
+    }
     if let Some(key) = parse_one(spec) {
         return vec![key];
     }

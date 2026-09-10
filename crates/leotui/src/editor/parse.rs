@@ -34,6 +34,11 @@ pub enum Action {
     SearchBackward,
     FindNext(usize),
     FindPrev(usize),
+    /// `Ctrl-w >` widens the body's pane, `Ctrl-w <` narrows it.
+    Pane {
+        widen: bool,
+        count: usize,
+    },
     RepeatFind {
         reverse: bool,
         count: usize,
@@ -57,6 +62,10 @@ pub struct Parser {
     /// True while a VISUAL selection is live: `i`/`a` then mean text objects.
     pub visual: bool,
 }
+
+/// The pending prefix after `Ctrl-w`: Ctrl-W's own control code, which no
+/// typed key produces.
+const WINDOW: char = '\u{17}';
 
 impl Parser {
     pub fn reset(&mut self) {
@@ -82,8 +91,10 @@ impl Parser {
         if let Some(n) = self.operator_count {
             out.push_str(&n.to_string());
         }
-        if let Some(c) = self.prefix {
-            out.push(c);
+        match self.prefix {
+            Some(WINDOW) => out.push_str("^W"),
+            Some(c) => out.push(c),
+            None => {}
         }
         out
     }
@@ -125,6 +136,25 @@ impl Parser {
                     }
                 };
             }
+        }
+
+        // vim's Ctrl-w: the next key says what to do to the window.
+        if self.prefix == Some(WINDOW) {
+            let count = self.total_count();
+            self.reset();
+            return match ch {
+                Some('<') => Action::Pane {
+                    widen: false,
+                    count,
+                },
+                Some('>') => Action::Pane { widen: true, count },
+                _ => Action::Unknown,
+            };
+        }
+        // Before the reset below, so a count survives: `3 Ctrl-w >`.
+        if ctrl && ch == Some('w') {
+            self.prefix = Some(WINDOW);
+            return Action::Pending;
         }
 
         if ctrl {

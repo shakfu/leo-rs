@@ -304,6 +304,7 @@ Files and history:
 | `w` | `write-at-file-nodes` |
 | `Tab` | `focus-to-body`, as Leo's `focus-to-body !tree = Tab` |
 | `Ctrl-Left` `Ctrl-Right` | resize the split. leotui's own: Leo has no panes |
+| `Ctrl-w <` `Ctrl-w >` | narrow, widen the focused pane, as vim's window keys; macOS takes the Ctrl-arrows |
 | `F1` | the help overlay, also `:help` |
 | `q` | quit |
 

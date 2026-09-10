@@ -393,6 +393,12 @@ pub static COMMANDS: &[Command] = &[
         "give the outline more room",
         |app, n| app.tree_percent = (app.tree_percent + 5 * n as u16).min(85),
     ),
+    c("shrink-pane", "narrow the pane that has focus", |app, n| {
+        app.resize_pane(-(n as i32))
+    }),
+    c("grow-pane", "widen the pane that has focus", |app, n| {
+        app.resize_pane(n as i32)
+    }),
     c("undo", "undo the last change", |app, n| {
         repeat(app, n, |app| {
             let name = app.doc.undoer.undo_name().unwrap_or("nothing").to_string();
@@ -436,6 +442,11 @@ pub static COMMANDS: &[Command] = &[
         noop,
     ),
     c("nohlsearch", "stop highlighting the search's matches", noop),
+    c(
+        "bufdo",
+        "vim's :bufdo %s/pattern/replacement/[flags], over every body",
+        noop,
+    ),
     c("help", "show the key bindings", |app, _| {
         app.mode = Mode::Help;
         app.help_scroll = 0;

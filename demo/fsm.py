@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
 # @+leo-ver=5-thin
 # @+node:sta.20260910090127.2: * @file fsm.py
-#!/usr/bin/env python3
+# @@first
 
 """ Generic finite state machine class
     Initialise the class with a list of tuples - or by adding transitions

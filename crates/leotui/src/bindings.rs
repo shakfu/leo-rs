@@ -159,6 +159,10 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BOTH, "Ctrl-s", "save"),
     b(Mode::Normal, BOTH, "Ctrl-Left", "shrink-outline-pane"),
     b(Mode::Normal, BOTH, "Ctrl-Right", "grow-outline-pane"),
+    // vim's window-width keys. Unlike Ctrl-arrows, which macOS takes for
+    // Mission Control, every terminal passes Ctrl-w through.
+    b(Mode::Normal, BOTH, "Ctrl-w <", "shrink-pane"),
+    b(Mode::Normal, BOTH, "Ctrl-w >", "grow-pane"),
     b(Mode::Normal, BOTH, "F1", "help"),
     b(Mode::Normal, BOTH, ":", "full-command"),
     b(Mode::Normal, BOTH, "/", "search-forward"),
@@ -252,6 +256,7 @@ mod tests {
         "import-at-file",
         "substitute",
         "nohlsearch",
+        "bufdo",
     ];
 
     #[test]

@@ -168,6 +168,7 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 | `w` | write the changed external files |
 | `Ctrl-f` `Ctrl-b` `PageDown` `PageUp` | a screen down, up |
 | `Ctrl-d` `Ctrl-u` | half a screen down, up |
+| `Ctrl-w <` `Ctrl-w >` | narrow, widen the pane that has focus |
 | `Ctrl-Left` `Ctrl-Right` | give the body, the outline more room |
 | `:set syntax` `:set nosyntax` | colour the body, or leave it plain |
 | `F1` | help |
@@ -179,7 +180,7 @@ Every Leo command name, with Tab completion and Up/Down history, plus the vim sp
 the Nth visible row. `:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values.
 `/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
 `:import-at-file path` imports a file as an `@file` tree, and asks before writing sentinels into it.
-`:[range]s/pattern/replacement/[flags]` substitutes in the current node's body, as one undo step. The pattern is a Rust `regex`, with smartcase as in `/`; an empty pattern reuses the last search. The replacement takes `&`, `\1`-`\9` and `\r`. Ranges are `%`, `.`, `$`, `N` and `N,M`; flags are `g`, `i`, `I` and `n`.
+`:[range]s/pattern/replacement/[flags]` substitutes in the current node's body, as one undo step. The pattern is a Rust `regex`, with smartcase as in `/`; an empty pattern reuses the last search. The replacement takes `&`, `\1`-`\9` and `\r`. Ranges are `%`, `.`, `$`, `N` and `N,M`; flags are `g`, `i`, `I` and `n`. `:bufdo %s/pattern/replacement/[flags]` does the same in every node's body, as one undo step.
 `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
 
 **Leo's own chords**
