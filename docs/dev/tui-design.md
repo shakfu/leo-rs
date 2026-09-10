@@ -510,7 +510,15 @@ not change the control code for Z.
 
 ## 10. Configuration
 
-v1 ships one built-in table. v2 reads an override file.
+Settings live in `~/.config/leotui/config.toml`, read at startup. It is TOML,
+in the subset `theme.rs` already parses, and holds one setting so far:
+`theme`. An accepted `:theme` rewrites that line and leaves the rest of the
+file alone (section 19.7.3). A line the reader does not understand is reported
+on the status line and skipped.
+
+Key bindings still ship as one built-in table. The override file proposed
+below predates `config.toml`; whether it keeps Leo's `@shortcuts` syntax or
+becomes a `[keys]` table there is open.
 
 Proposed format, deliberately Leo's `@shortcuts` syntax so the file can be
 lifted from a Leo settings node:
@@ -1008,9 +1016,10 @@ hundred themes exist that nobody here had to write.
 
 Nothing is vendored. `theme.rs` reads `~/.config/leotui/themes`, then
 `~/.config/helix/themes`, then `$HELIX_RUNTIME/themes`, so leotui carries no
-other project's files or licence. `--theme NAME` and `:set theme=NAME` choose
-one; the default is `sonokai`, and when no file of that name exists the
-built-in sixteen colours stand, unannounced.
+other project's files or licence. The theme comes from `--theme NAME`, then
+the `theme` line of `~/.config/leotui/config.toml`, then the default,
+`sonokai`. A missing default leaves the built-in sixteen colours, unannounced;
+a theme asked for by name reports that it is missing.
 
 The parser is by hand. A theme file uses three shapes -- `key = "value"`,
 `key = { fg = "value", modifiers = [..] }`, and a `[palette]` of names to hex
@@ -1078,6 +1087,30 @@ is safe to type.
 
 `theme::names` is read when the `:` line opens, not per redraw. It is a
 `readdir` over 110 files, and a frame must not touch the disk.
+
+#### 19.7.3 Keeping one
+
+An accepted `:theme NAME` writes `theme = "NAME"` to
+`~/.config/leotui/config.toml`, and startup reads it back. `--theme` wins for
+one launch and never writes. A preview and Escape never write.
+
+Only that line changes. `parse` obeys the last top-level `theme` line, so that
+is the one rewritten, keeping any comment after it. With none, the line goes in
+before the first `[table]`, where TOML still reads it as top-level. Every other
+line is kept byte for byte.
+
+The file is the user's, so the write is careful:
+
+- A name holding a quote, backslash or newline is refused, not escaped. A
+  theme name is a file stem, and none of those belongs in one.
+- A file that exists but cannot be read is an error, not a thing to overwrite.
+- A symlink is followed. A dotfiles manager links the file from elsewhere, and
+  renaming onto the link would replace it with a copy.
+- The text goes to a temporary file, then a rename puts it in place. A crash
+  mid-write leaves the old file intact.
+
+`App::config_path` is None in `App::new` and set by `main`, like the theme
+itself. A test that builds an `App` cannot write the user's settings.
 
 ### 19.8 What is not done
 

@@ -126,6 +126,9 @@ pub struct App {
     /// The theme in force before `:theme` began previewing, so Escape can put
     /// it back. `search_origin` does the same for `/`.
     theme_origin: Option<String>,
+    /// Where an accepted `:theme` records its choice. `main` sets it; it is
+    /// None in a test, so a test never writes the user's settings file.
+    pub config_path: Option<std::path::PathBuf>,
     /// Total positions, and the outline generation it was counted at.
     /// Counting is O(outline), and the status line asks on every keystroke.
     position_count: (u64, usize),
@@ -191,6 +194,7 @@ impl App {
             depth: crate::theme::Depth::detect(),
             theme_names: Rc::new(Vec::new()),
             theme_origin: None,
+            config_path: None,
             position_count: (u64::MAX, 0),
         };
         app.expand_ancestors();
@@ -622,6 +626,20 @@ impl App {
         self.set_theme(&name);
     }
 
+    /// Record the current theme in the settings file, when there is one.
+    ///
+    /// Only an accepted `:theme` gets here: a preview and Escape never write.
+    fn save_theme(&mut self) {
+        let Some(path) = self.config_path.clone() else {
+            return;
+        };
+        let name = self.theme.name().to_string();
+        self.message = match crate::config::save_theme(&path, &name) {
+            Ok(()) => format!("theme: {name} (saved)"),
+            Err(e) => format!("theme: {name} (not saved: {e})"),
+        };
+    }
+
     /// Put back the theme a preview replaced.
     fn restore_theme(&mut self) {
         if let Some(name) = self.theme_origin.take() {
@@ -838,7 +856,9 @@ impl App {
                 self.message = format!("theme: {}", self.theme.name())
             }
             "theme" => {
-                self.set_theme(&parsed.arg);
+                if self.set_theme(&parsed.arg) {
+                    self.save_theme();
+                }
             }
             "help" if !parsed.arg.is_empty() => match commands::find(&parsed.arg) {
                 Some(c) => {
@@ -914,7 +934,7 @@ impl App {
     /// Load a theme by name, keeping the current one if there is no such file.
     ///
     /// Returns false when nothing was found, which `main` uses to fall back
-    /// without a message and `:set theme=` uses to report one.
+    /// without a message and `:theme` uses to report one.
     pub fn set_theme(&mut self, name: &str) -> bool {
         match crate::theme::Theme::load(name) {
             Some(theme) => {
@@ -1639,6 +1659,20 @@ mod tests {
         assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onelight");
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onedark");
+    }
+
+    #[test]
+    fn a_theme_that_does_not_load_is_not_saved() {
+        // `main` sets the path; an `App` a test builds has none.
+        assert!(app().config_path.is_none());
+        let path = std::env::temp_dir()
+            .join(format!("leotui-app-{}", std::process::id()))
+            .join("config.toml");
+        let mut app = app();
+        app.config_path = Some(path.clone());
+        app.run_command_line("theme no-such-theme-anywhere");
+        assert!(app.message.contains("not found"), "{}", app.message);
+        assert!(!path.exists(), "a failed :theme wrote the settings file");
     }
 
     #[test]

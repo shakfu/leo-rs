@@ -14,6 +14,7 @@
 mod app;
 mod bindings;
 mod commands;
+mod config;
 mod editor;
 mod highlight;
 mod keys;
@@ -53,7 +54,7 @@ struct Args {
     theme: Option<String>,
 }
 
-/// The theme loaded when `--theme` says nothing.
+/// The theme loaded when neither `--theme` nor the config file names one.
 ///
 /// A Helix theme name: leotui reads their files and vendors none, so this is
 /// only a default and holds whatever the user has on disk under that name.
@@ -140,11 +141,19 @@ fn main() {
         None => Document::new_empty(""),
     };
     let mut app = App::new(doc);
-    // The default theme, from the user's own Helix or leotui directory. When
-    // there is no such file the built-in sixteen colours stand, and saying so
-    // on every start would be noise.
-    if !app.set_theme(args.theme.as_deref().unwrap_or(DEFAULT_THEME)) && args.theme.is_none() {
+    app.config_path = config::path();
+    // A theme asked for by name, on the command line or in the config file,
+    // reports when it is missing. The default does not: the built-in sixteen
+    // colours stand, and saying so on every start would be noise.
+    let settings = config::load();
+    let (theme, asked) = config::chosen_theme(args.theme.as_deref(), &settings, DEFAULT_THEME);
+    if !app.set_theme(theme) && !asked {
         app.message.clear();
+    }
+    if app.message.is_empty() {
+        if let Some(warning) = settings.warnings.first() {
+            app.message = warning.clone();
+        }
     }
 
     // Unfold the top level, so an outline opens showing something.

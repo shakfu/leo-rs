@@ -309,10 +309,7 @@ pub fn names() -> Vec<String> {
 /// Helix installed and Helix's hundred can be used when it is.
 fn theme_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    if let Some(config) = config {
+    if let Some(config) = crate::config::config_home() {
         out.push(config.join("leotui/themes"));
         out.push(config.join("helix/themes"));
     }
@@ -381,7 +378,7 @@ fn parse(text: &str) -> (HashMap<String, Face>, Option<String>) {
 }
 
 /// Everything before an unquoted `#`.
-fn strip_comment(line: &str) -> &str {
+pub(crate) fn strip_comment(line: &str) -> &str {
     let bytes = line.as_bytes();
     let mut quoted = None::<u8>;
     for (i, &c) in bytes.iter().enumerate() {
@@ -398,7 +395,7 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
-fn unquote(s: &str) -> &str {
+pub(crate) fn unquote(s: &str) -> &str {
     let s = s.trim();
     for q in ['"', '\''] {
         if let Some(inner) = s.strip_prefix(q).and_then(|r| r.strip_suffix(q)) {
