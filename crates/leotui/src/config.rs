@@ -1,7 +1,7 @@
 //! The user's settings file, `~/.config/leotui/config.toml`.
 //!
 //! TOML, in the subset `theme` already reads: `key = "value"` lines and `#`
-//! comments. One key so far, `theme`. A line it does not understand is kept
+//! comments. Two keys: `theme` and `split-ratio`. A line it does not understand is kept
 //! as a warning for the status line rather than refused: a typo in a settings
 //! file should cost that setting, not the session.
 
@@ -26,6 +26,8 @@ pub fn path() -> Option<PathBuf> {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Config {
     pub theme: Option<String>,
+    /// The outline pane's share of the width, in percent, as `:set split=N`.
+    pub split_ratio: Option<u16>,
     /// Lines that were read but meant nothing, first one first.
     pub warnings: Vec<String>,
 }
@@ -57,6 +59,12 @@ fn parse(text: &str) -> Config {
                 .warnings
                 .push(format!("config line {n}: theme is empty")),
             ("theme", name) => config.theme = Some(name.to_string()),
+            ("split-ratio", v) => match v.parse::<u16>() {
+                Ok(pct) => config.split_ratio = Some(pct.clamp(15, 85)),
+                Err(_) => config
+                    .warnings
+                    .push(format!("config line {n}: split-ratio is not a number: {v}")),
+            },
             (other, _) => config
                 .warnings
                 .push(format!("config line {n}: unknown setting {other}")),
@@ -81,11 +89,6 @@ pub fn chosen_theme<'a>(
 }
 
 /// Record `name` as the theme in the settings file at `path`.
-///
-/// Only the `theme` line changes: comments, blank lines and settings this
-/// version does not know survive byte for byte. The new file replaces the old
-/// by a rename, so a crash mid-write leaves the old one whole. A file that
-/// exists but cannot be read is an error rather than something to overwrite.
 pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
     if name.is_empty() || name.contains(['"', '\\', '\n', '\r']) {
         return Err(io::Error::new(
@@ -93,6 +96,21 @@ pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
             format!("not a theme name: {name:?}"),
         ));
     }
+    save(path, "theme", &format!("\"{name}\""))
+}
+
+/// Record `percent` as the outline pane's width in the settings file at `path`.
+pub fn save_split_ratio(path: &Path, percent: u16) -> io::Result<()> {
+    save(path, "split-ratio", &percent.to_string())
+}
+
+/// Set `key` to `value`, already written as TOML, in the settings file at `path`.
+///
+/// Only that line changes: comments, blank lines and settings this version
+/// does not know survive byte for byte. The new file replaces the old by a
+/// rename, so a crash mid-write leaves the old one whole. A file that exists
+/// but cannot be read is an error rather than something to overwrite.
+fn save(path: &Path, key: &str, value: &str) -> io::Result<()> {
     // A dotfiles manager links the settings file from elsewhere. Renaming
     // onto the link would swap it for a copy and cut it off, so write to
     // what it points at.
@@ -106,7 +124,7 @@ pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, with_theme(&text, name))?;
+    std::fs::write(&tmp, with_setting(&text, key, value))?;
     if let Ok(meta) = std::fs::metadata(&path) {
         let _ = std::fs::set_permissions(&tmp, meta.permissions());
     }
@@ -119,13 +137,13 @@ pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
     }
 }
 
-/// `text` with its top-level `theme` set to `name`.
+/// `text` with its top-level `key` set to `value`.
 ///
-/// `parse` obeys the last top-level `theme` line, so that is the one
+/// `parse` obeys the last top-level line for a key, so that is the one
 /// rewritten, keeping any comment after it. With none, a line goes in before
 /// the first `[table]`, where TOML still reads it as top-level.
-fn with_theme(text: &str, name: &str) -> String {
-    let setting = format!("theme = \"{name}\"");
+fn with_setting(text: &str, key: &str, value: &str) -> String {
+    let setting = format!("{key} = {value}");
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let top = lines
         .iter()
@@ -134,7 +152,7 @@ fn with_theme(text: &str, name: &str) -> String {
     let existing = lines[..top].iter().rposition(|l| {
         strip_comment(l)
             .split_once('=')
-            .is_some_and(|(k, _)| unquote(k.trim()) == "theme")
+            .is_some_and(|(k, _)| unquote(k.trim()) == key)
     });
     match existing {
         Some(i) => {
@@ -202,6 +220,11 @@ mod tests {
         assert_eq!(chosen_theme(None, &none, "sonokai"), ("sonokai", false));
     }
 
+    /// `text` with its theme set to `name`, as `save_theme` writes it.
+    fn with_theme(text: &str, name: &str) -> String {
+        with_setting(text, "theme", &format!("\"{name}\""))
+    }
+
     #[test]
     fn saving_rewrites_only_the_theme_line() {
         let text = "# mine\ntheme = \"onedark\"  # dark, for now\n\nother = 1\n";
@@ -220,6 +243,22 @@ mod tests {
             with_theme("# mine\n[keys]\nx = 1\n", "nord"),
             "# mine\ntheme = \"nord\"\n[keys]\nx = 1\n"
         );
+    }
+
+    #[test]
+    fn the_split_ratio_is_read_clamped_and_saved_beside_the_theme() {
+        assert_eq!(parse("split-ratio = 25").split_ratio, Some(25));
+        assert_eq!(parse("split-ratio = 5").split_ratio, Some(15));
+        let bad = parse("split-ratio = wide");
+        assert_eq!(bad.split_ratio, None);
+        assert_eq!(
+            bad.warnings,
+            ["config line 1: split-ratio is not a number: wide"]
+        );
+        let text = "theme = \"nord\"\nsplit-ratio = 40  # narrow\n";
+        let saved = with_setting(text, "split-ratio", "25");
+        assert_eq!(saved, "theme = \"nord\"\nsplit-ratio = 25  # narrow\n");
+        assert_eq!(parse(&saved).theme.as_deref(), Some("nord"));
     }
 
     #[test]

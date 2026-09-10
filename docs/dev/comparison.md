@@ -10,9 +10,9 @@ A comparison of leo-rs (`leolib` and `leotui`) with the Qt-based leo-editor, mea
 | tests | 308 | 967 unit tests |
 | commands | 86 | 934 distinct names |
 | scripting (`@button`, `@command`, `execute-script`) | none | central |
-| settings | `config.toml`, one key | `@settings` trees, `myLeoSettings.leo` |
+| settings | `config.toml`, two keys | `@settings` trees, `myLeoSettings.leo` |
 | plugins | none | 98k lines |
-| load `LeoPyRef.leo` and its external files | 0.10s | 0.48s, of which 0.10s is Python and bridge startup |
+| load `LeoPyRef.leo` and its external files | 0.09s | 0.48s, of which 0.10s is Python and bridge startup |
 
 How each row was measured:
 
@@ -28,7 +28,7 @@ How each row was measured:
 
   - leo-editor: `leoBridge.controller(gui='nullGui', loadPlugins=False, readSettings=False).openLeoFile(...)`. Startup is the interpreter (0.02s), importing Leo (0.01s) and the bridge (0.07s).
 
-With `--no-external`, leotui opens the outline in 4ms, so almost all of its 0.10s goes to reading external files. The load took 0.78s before the regex cache in `atfile_read.rs`. The `@file` reader compiled its 12 sentinel patterns twice per file, and a profile put 80% of the load there. Leo compiles the same patterns per file, but Python's `re` caches them. leo-editor's `leoCache.py` is not used by its file-reading code, so both programs read the same files. Both timings are headless; a Qt launch with plugins is slower, and was not measured.
+With `--no-external`, leotui opens the outline in 4ms, so almost all of its 0.09s goes to reading external files. The load took 0.78s before the regex cache in `atfile_read.rs`. The `@file` reader compiled its 12 sentinel patterns twice per file, and a profile put 80% of the load there. Leo compiles the same patterns per file, but Python's `re` caches them. leo-editor's `leoCache.py` is not used by its file-reading code, so both programs read the same files. Both timings are headless; a Qt launch with plugins is slower, and was not measured.
 
 ## Where leo-rs is stronger
 
@@ -38,7 +38,7 @@ With `--no-external`, leotui opens the outline in 4ms, so almost all of its 0.10
 
 - **Terminal-native editing.** Modal vim editing in the body, one binary, tree-sitter highlighting, Helix themes.
 
-- **Load speed.** 0.10s against 0.48s for the same outline and external files.
+- **Load speed.** 0.09s against 0.48s for the same outline and external files.
 
 ## Where it is weaker
 

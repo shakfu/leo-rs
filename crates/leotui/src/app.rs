@@ -73,12 +73,23 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            search_scope: Scope::Headlines,
+            search_scope: Scope::All,
             wrap: false,
             number: false,
             syntax: true,
         }
     }
+}
+
+/// Where a search started. Escape puts all of it back.
+#[derive(Clone)]
+struct SearchOrigin {
+    start: search::Hit,
+    focus: Focus,
+    cursor: (usize, usize),
+    scroll: usize,
+    hlsearch: Option<regex::Regex>,
+    last_hit: Option<search::Hit>,
 }
 
 pub struct App {
@@ -99,7 +110,12 @@ pub struct App {
     pub search_history: Vec<String>,
     pub last_search: Option<LastSearch>,
     /// Where a search started, so Escape can put the view back.
-    search_origin: Option<(Position, usize)>,
+    search_origin: Option<SearchOrigin>,
+    /// The pattern whose matches are highlighted, vim's hlsearch. `:noh`
+    /// clears it; the next search or `n` sets it again.
+    pub hlsearch: Option<regex::Regex>,
+    /// Where a search last landed, so `n` in a headline starts after it.
+    last_hit: Option<search::Hit>,
     pending: Pending,
     /// First visible row of the outline pane.
     pub top: usize,
@@ -190,11 +206,13 @@ impl App {
             search_history: Vec::new(),
             last_search: None,
             search_origin: None,
+            hlsearch: None,
+            last_hit: None,
             pending: Pending::default(),
             top: 0,
             body_scroll: 0,
             help_scroll: 0,
-            tree_percent: 45,
+            tree_percent: 35,
             expansion_level: 1,
             expansion_node: None,
             message: String::new(),
@@ -339,14 +357,6 @@ impl App {
 
     pub fn current_row(&self) -> usize {
         row_of(&self.rows(), &self.current)
-    }
-
-    pub fn body_lines(&self) -> Vec<String> {
-        self.current
-            .b(self.outline())
-            .split('\n')
-            .map(String::from)
-            .collect()
     }
 
     /// The current node's ancestors, outermost first: the breadcrumb.
@@ -565,7 +575,14 @@ impl App {
             _ => Mode::Headline,
         };
         if kind.is_search() {
-            self.search_origin = Some((self.current.clone(), self.body_cursor_row()));
+            self.search_origin = Some(SearchOrigin {
+                start: self.search_cursor(),
+                focus: self.focus,
+                cursor: self.editor.cursor,
+                scroll: self.body_scroll,
+                hlsearch: self.hlsearch.clone(),
+                last_hit: self.last_hit.clone(),
+            });
         }
         if kind == MiniKind::Command && self.theme_names.is_empty() {
             self.theme_names = Rc::new(crate::theme::names());
@@ -688,6 +705,18 @@ impl App {
         };
     }
 
+    /// Record the split in the settings file, as `save_theme` does the theme.
+    fn save_split_ratio(&mut self) {
+        let Some(path) = self.config_path.clone() else {
+            return;
+        };
+        let percent = self.tree_percent;
+        self.message = match crate::config::save_split_ratio(&path, percent) {
+            Ok(()) => format!("split: {percent}% (saved)"),
+            Err(e) => format!("split: {percent}% (not saved: {e})"),
+        };
+    }
+
     /// Put back the theme a preview replaced.
     fn restore_theme(&mut self) {
         if let Some(name) = self.theme_origin.take() {
@@ -717,57 +746,86 @@ impl App {
         } else {
             Direction::Backward
         };
-        let Some((origin, row)) = self.search_origin.clone() else {
+        let Some(origin) = self.search_origin.clone() else {
             return;
         };
+        // Each keystroke searches afresh from where the search began.
+        self.restore_search_origin(&origin);
         if pattern.is_empty() {
-            self.restore_search_origin(&origin, row);
             return;
         }
-        match self.focus {
-            Focus::Tree => {
-                match search::find_node(
-                    self.outline(),
-                    &origin,
-                    &pattern,
-                    direction,
-                    self.options.search_scope,
-                ) {
-                    Some(p) => {
-                        self.select(p);
-                        self.message.clear();
-                    }
-                    None => {
-                        self.restore_search_origin(&origin, row);
-                        self.message = format!("not found: {pattern}");
-                    }
-                }
+        // A pattern half typed, such as `(`, is not an error yet.
+        let Ok(re) = search::compile(&pattern) else {
+            return;
+        };
+        let scope = self.options.search_scope;
+        match search::find(self.outline(), &re, &origin.start, direction, scope) {
+            Some((hit, _)) => {
+                self.land(hit);
+                self.hlsearch = Some(re);
+                self.message.clear();
             }
+            None => self.message = format!("not found: {pattern}"),
+        }
+    }
+
+    fn restore_search_origin(&mut self, origin: &SearchOrigin) {
+        if self.current != origin.start.node {
+            self.select(origin.start.node.clone());
+        }
+        self.focus = origin.focus;
+        self.editor.cursor = origin.cursor;
+        self.body_scroll = origin.scroll;
+        self.hlsearch = origin.hlsearch.clone();
+        self.last_hit = origin.last_hit.clone();
+    }
+
+    /// The cursor, as a search starts from it.
+    fn search_cursor(&self) -> search::Hit {
+        let place = match self.focus {
             Focus::Body => {
-                let lines = self.body_lines();
-                match search::find_in_lines(&lines, (row, 0), &pattern, direction) {
-                    Some((r, _)) => {
-                        self.body_scroll = r;
-                        self.message.clear();
-                    }
-                    None => {
-                        self.body_scroll = row;
-                        self.message = format!("not found: {pattern}");
-                    }
-                }
+                let (row, col) = self.editor.cursor;
+                let lines = self.body_buffer();
+                let byte = lines
+                    .get(row)
+                    .map_or(0, |l| l.char_indices().nth(col).map_or(l.len(), |(i, _)| i));
+                search::Place::Body(row, byte)
+            }
+            // The outline has no column, so a headline is searched from its
+            // start, or from the match a search last landed on in it.
+            Focus::Tree => match &self.last_hit {
+                Some(hit) if hit.node == self.current => match hit.place {
+                    search::Place::Headline(col) => search::Place::Headline(col),
+                    search::Place::Body(..) => search::Place::Headline(0),
+                },
+                _ => search::Place::Headline(0),
+            },
+        };
+        search::Hit {
+            node: self.current.clone(),
+            place,
+        }
+    }
+
+    /// Go to a match: a headline in the outline, body text in the body.
+    fn land(&mut self, hit: search::Hit) {
+        if self.current != hit.node {
+            self.select(hit.node.clone());
+        }
+        match hit.place {
+            search::Place::Headline(_) => self.focus = Focus::Tree,
+            search::Place::Body(row, byte) => {
+                self.focus = Focus::Body;
+                let lines = self.body_buffer();
+                let col = lines
+                    .get(row)
+                    .map_or(0, |l| l[..byte.min(l.len())].chars().count());
+                self.editor.cursor = (row, col);
+                self.editor.desired_col = col;
+                self.scroll_to_cursor();
             }
         }
-    }
-
-    fn restore_search_origin(&mut self, origin: &Position, row: usize) {
-        match self.focus {
-            Focus::Tree => self.current = origin.clone(),
-            Focus::Body => self.body_scroll = row,
-        }
-    }
-
-    fn body_cursor_row(&self) -> usize {
-        self.body_scroll
+        self.last_hit = Some(hit);
     }
 
     /// Close the line at the bottom, acting on it if it was accepted.
@@ -789,8 +847,8 @@ impl App {
         }
         if !accepted {
             if mini.kind.is_search() {
-                if let Some((origin, row)) = self.search_origin.take() {
-                    self.restore_search_origin(&origin, row);
+                if let Some(origin) = self.search_origin.take() {
+                    self.restore_search_origin(&origin);
                 }
             }
             return;
@@ -831,6 +889,14 @@ impl App {
                     return;
                 }
                 remember(&mut self.search_history, &text);
+                // The preview has already landed; only a bad pattern is news.
+                match search::compile(&text) {
+                    Ok(re) => self.hlsearch = Some(re),
+                    Err(e) => {
+                        self.message = e;
+                        return;
+                    }
+                }
                 self.last_search = Some(LastSearch {
                     pattern: text,
                     direction: if mini.kind == MiniKind::SearchForward {
@@ -854,33 +920,32 @@ impl App {
         } else {
             last.direction.reverse()
         };
+        let re = match search::compile(&last.pattern) {
+            Ok(re) => re,
+            Err(e) => {
+                self.message = e;
+                return;
+            }
+        };
+        // As in vim, `n` after `:noh` highlights again.
+        self.hlsearch = Some(re.clone());
+        let scope = self.options.search_scope;
         for _ in 0..count {
-            match self.focus {
-                Focus::Tree => {
-                    match search::find_node(
-                        self.outline(),
-                        &self.current,
-                        &last.pattern,
-                        direction,
-                        self.options.search_scope,
-                    ) {
-                        Some(p) => self.select(p),
-                        None => {
-                            self.message = format!("not found: {}", last.pattern);
-                            return;
+            let from = self.search_cursor();
+            match search::find(self.outline(), &re, &from, direction, scope) {
+                Some((hit, wrapped)) => {
+                    if wrapped {
+                        self.message = match direction {
+                            Direction::Forward => "search hit BOTTOM, continuing at TOP",
+                            Direction::Backward => "search hit TOP, continuing at BOTTOM",
                         }
+                        .to_string();
                     }
+                    self.land(hit);
                 }
-                Focus::Body => {
-                    let lines = self.body_lines();
-                    let from = (self.body_scroll, 0);
-                    match search::find_in_lines(&lines, from, &last.pattern, direction) {
-                        Some((r, _)) => self.body_scroll = r,
-                        None => {
-                            self.message = format!("not found: {}", last.pattern);
-                            return;
-                        }
-                    }
+                None => {
+                    self.message = format!("not found: {}", last.pattern);
+                    return;
                 }
             }
         }
@@ -888,6 +953,15 @@ impl App {
 
     /// Run one `:` line.
     pub fn run_command_line(&mut self, line: &str) {
+        // Trimmed at the start only: a replacement may end in spaces.
+        match crate::substitute::parse(line.trim_start().trim_start_matches(':').trim_start()) {
+            Some(Ok(sub)) => return self.substitute(sub),
+            Some(Err(e)) => {
+                self.message = e;
+                return;
+            }
+            None => {}
+        }
         let Some(parsed) = minibuffer::parse_command(line) else {
             return;
         };
@@ -915,7 +989,11 @@ impl App {
             },
             "open" => self.open_file(&parsed.arg),
             "import-at-file" => self.import_at_file(&parsed.arg),
-            "set" => self.set_option(&parsed.arg),
+            "set" => self.set_options(&parsed.arg),
+            "nohlsearch" | "noh" => self.hlsearch = None,
+            "substitute" | "s" => {
+                self.message = "usage: :[range]s/pattern/replacement/[flags]".to_string()
+            }
             "theme" if parsed.arg.is_empty() => {
                 self.message = format!("theme: {}", self.theme.name())
             }
@@ -986,17 +1064,77 @@ impl App {
         }
     }
 
-    fn set_option(&mut self, arg: &str) {
-        let (name, value) = match arg.split_once('=') {
-            Some((n, v)) => (n.trim(), Some(v.trim())),
-            None => (arg.trim(), None),
+    /// `:set`, as vim reads it: words separated by spaces, each `name`,
+    /// `noname`, `name=value`, `name:value` or `name?`. The first error stops
+    /// the rest, and `:set` alone shows every value.
+    fn set_options(&mut self, arg: &str) {
+        if arg.trim().is_empty() {
+            let all = ["search", "split", "wrap", "number", "syntax", "colors"];
+            self.message = all
+                .iter()
+                .filter_map(|name| self.option_value(name))
+                .collect::<Vec<_>>()
+                .join("  ");
+            return;
+        }
+        for word in arg.split_whitespace() {
+            if !self.set_option(word) {
+                return;
+            }
+        }
+    }
+
+    /// Option `name` as `:set name?` shows it.
+    fn option_value(&self, name: &str) -> Option<String> {
+        let flag = |on: bool, name: &str| match on {
+            true => name.to_string(),
+            false => format!("no{name}"),
+        };
+        Some(match name {
+            "search" => match self.options.search_scope {
+                Scope::Headlines => "search=headlines".to_string(),
+                Scope::All => "search=all".to_string(),
+            },
+            "split" => format!("split={}", self.tree_percent),
+            "wrap" => flag(self.options.wrap, "wrap"),
+            "number" | "nu" => flag(self.options.number, "number"),
+            "syntax" => flag(self.options.syntax, "syntax"),
+            "colors" | "colours" => match self.depth {
+                crate::theme::Depth::True => "colors=true".to_string(),
+                crate::theme::Depth::Indexed => "colors=256".to_string(),
+                crate::theme::Depth::Ansi16 => "colors=16".to_string(),
+            },
+            _ => return None,
+        })
+    }
+
+    /// One `:set` word. False, with the message saying why, if it failed.
+    fn set_option(&mut self, word: &str) -> bool {
+        if let Some(name) = word.strip_suffix('?') {
+            return match self.option_value(name) {
+                Some(value) => {
+                    self.message = value;
+                    true
+                }
+                None => self.unknown_option(name),
+            };
+        }
+        let (name, value) = match word.find(['=', ':']) {
+            Some(i) => (&word[..i], Some(&word[i + 1..])),
+            None => (word, None),
         };
         match (name, value) {
             ("search", Some("all")) => self.options.search_scope = Scope::All,
             ("search", Some("headlines")) => self.options.search_scope = Scope::Headlines,
             ("split", Some(v)) => match v.parse::<u16>() {
-                Ok(n) => self.tree_percent = n.clamp(15, 85),
-                Err(_) => self.message = format!("set: not a number: {v}"),
+                Ok(n) => {
+                    self.tree_percent = n.clamp(15, 85);
+                    self.save_split_ratio();
+                }
+                Err(_) => {
+                    self.message = format!("set: not a number: {v}");
+                    return false;
+                }
             },
             ("wrap", None) => self.options.wrap = true,
             ("nowrap", None) => self.options.wrap = false,
@@ -1006,13 +1144,52 @@ impl App {
             ("nosyntax", None) => self.options.syntax = false,
             ("colors", Some(v)) | ("colours", Some(v)) => match crate::theme::Depth::parse(v) {
                 Some(depth) => self.depth = depth,
-                None => self.message = format!("set: colors must be true, 256 or 16, not {v}"),
+                None => {
+                    self.message = format!("set: colors must be true, 256 or 16, not {v}");
+                    return false;
+                }
             },
-            _ => {
-                self.message = format!(
-                    "set: unknown option: {arg}. try search=all|headlines, split=N, wrap, \
-                     number, syntax, colors=true|256|16"
-                )
+            // A number or string option named alone shows its value, as in vim.
+            ("search" | "split" | "colors" | "colours", None) => {
+                self.message = self.option_value(name).unwrap_or_default()
+            }
+            _ => return self.unknown_option(word),
+        }
+        true
+    }
+
+    fn unknown_option(&mut self, word: &str) -> bool {
+        self.message = format!(
+            "set: unknown option: {word}. try search=all|headlines, split=N, wrap, \
+             number, syntax, colors=true|256|16"
+        );
+        false
+    }
+
+    /// `:[range]s/pattern/replacement/[flags]` on the current node's body.
+    fn substitute(&mut self, sub: crate::substitute::Substitute) {
+        let mut lines = self.body_buffer();
+        let last = self.last_search.as_ref().map(|s| s.pattern.clone());
+        let cursor = self.editor.cursor.0;
+        match crate::substitute::apply(&sub, &mut lines, cursor, last.as_deref()) {
+            Err(e) => self.message = e,
+            Ok(o) => {
+                let plural = |n: usize, word: &str| match n {
+                    1 => format!("1 {word}"),
+                    n => format!("{n} {word}s"),
+                };
+                let what = if sub.count_only {
+                    "match"
+                } else {
+                    "substitution"
+                };
+                self.message = format!("{} on {}", plural(o.count, what), plural(o.lines, "line"));
+                if sub.count_only {
+                    return;
+                }
+                self.commit_body(&lines);
+                self.editor.cursor = (o.last_line, 0);
+                self.editor.clamp(&lines);
             }
         }
     }
@@ -1876,22 +2053,68 @@ mod tests {
     }
 
     #[test]
-    fn set_widens_the_search_to_body_text() {
+    fn set_search_headlines_leaves_bodies_out() {
         let mut app = app();
         let p = app.rows()[2].position.clone();
-        app.doc.set_body(
-            &p,
-            "a needle
-",
-        );
-        press(&mut app, "/");
-        type_text(&mut app, "needle");
-        assert!(app.message.contains("not found"), "{}", app.message);
-        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        app.run_command_line("set search=all");
+        app.doc.set_body(&p, "a needle\n");
         press(&mut app, "/");
         type_text(&mut app, "needle");
         assert_eq!(app.current.h(app.outline()), "c");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.run_command_line("set search=headlines");
+        press(&mut app, "/");
+        type_text(&mut app, "needle");
+        assert!(app.message.contains("not found"), "{}", app.message);
+    }
+
+    #[test]
+    fn a_search_from_the_outline_lands_in_a_body_and_n_steps_through() {
+        let mut app = app();
+        let rows = app.rows();
+        let (b, c) = (rows[1].position.clone(), rows[2].position.clone());
+        app.doc.set_body(&b, "one needle\n");
+        app.doc.set_body(&c, "needle\nno\nneedle needle\n");
+        press(&mut app, "/");
+        type_text(&mut app, "needle");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "b");
+        assert_eq!(app.focus, Focus::Body);
+        assert_eq!(app.editor.cursor, (0, 4));
+        assert!(app.hlsearch.is_some());
+        press(&mut app, "n");
+        assert_eq!(app.current.h(app.outline()), "c");
+        assert_eq!(app.editor.cursor, (0, 0));
+        press(&mut app, "n");
+        assert_eq!(app.editor.cursor, (2, 0));
+        press(&mut app, "n");
+        assert_eq!(app.editor.cursor, (2, 7));
+        press(&mut app, "n");
+        assert_eq!(app.current.h(app.outline()), "b");
+        assert_eq!(app.message, "search hit BOTTOM, continuing at TOP");
+        press(&mut app, "N");
+        assert_eq!(app.current.h(app.outline()), "c");
+        assert_eq!(app.editor.cursor, (2, 7));
+        assert_eq!(app.message, "search hit TOP, continuing at BOTTOM");
+        app.run_command_line("noh");
+        assert!(app.hlsearch.is_none());
+        press(&mut app, "n");
+        assert!(app.hlsearch.is_some(), "n highlights again after :noh");
+    }
+
+    #[test]
+    fn escape_puts_back_the_node_the_pane_and_the_highlight() {
+        let mut app = app();
+        let c = app.rows()[2].position.clone();
+        app.doc.set_body(&c, "a needle\n");
+        press(&mut app, "/");
+        type_text(&mut app, "needle");
+        assert_eq!(app.current.h(app.outline()), "c");
+        assert_eq!(app.focus, Focus::Body);
+        assert!(app.hlsearch.is_some());
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.current.h(app.outline()), "a");
+        assert_eq!(app.focus, Focus::Tree);
+        assert!(app.hlsearch.is_none());
     }
 
     #[test]
@@ -1903,6 +2126,70 @@ mod tests {
         assert!(app.message.contains("not a number"), "{}", app.message);
         app.run_command_line("set frobnicate");
         assert!(app.message.contains("unknown option"), "{}", app.message);
+    }
+
+    #[test]
+    fn set_takes_several_options_and_shows_values() {
+        let mut app = app();
+        app.run_command_line("set nowrap number split:40");
+        assert!(app.options.number && !app.options.wrap);
+        assert_eq!(app.tree_percent, 40);
+        app.run_command_line("set split?");
+        assert_eq!(app.message, "split=40");
+        app.run_command_line("set split");
+        assert_eq!(app.message, "split=40");
+        app.run_command_line("set nonumber bogus wrap");
+        assert!(!app.options.number);
+        assert!(!app.options.wrap, "an error stops the rest");
+        assert!(
+            app.message.contains("unknown option: bogus"),
+            "{}",
+            app.message
+        );
+        app.run_command_line("set");
+        assert!(
+            app.message
+                .starts_with("search=all  split=40  nowrap  nonumber"),
+            "{}",
+            app.message
+        );
+    }
+
+    #[test]
+    fn substitute_changes_the_body_as_one_undoable_step() {
+        let mut app = app();
+        let p = app.current.clone();
+        app.doc.set_body(&p, "one fish\ntwo fish\n");
+        app.doc.undoer.clear();
+        // Typed, as a user would: `%` and `/` must reach the line intact.
+        press(&mut app, ":");
+        type_text(&mut app, "%s/fish/cat/");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.current.b(app.outline()), "one cat\ntwo cat\n");
+        assert_eq!(app.message, "2 substitutions on 2 lines");
+        assert_eq!(app.editor.cursor.0, 1);
+        app.run_command_line("undo");
+        assert_eq!(app.current.b(app.outline()), "one fish\ntwo fish\n");
+        app.run_command_line("s/nothing/x/");
+        assert!(app.message.contains("pattern not found"), "{}", app.message);
+        app.run_command_line("substitute");
+        assert!(app.message.starts_with("usage:"), "{}", app.message);
+    }
+
+    #[test]
+    fn set_split_saves_the_ratio_and_the_keys_do_not() {
+        let dir = std::env::temp_dir().join(format!("leotui-split-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let mut app = app();
+        app.config_path = Some(path.clone());
+        app.run_command_line("set split=30");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(saved, "split-ratio = 30\n");
+        assert_eq!(app.message, "split: 30% (saved)");
+        press(&mut app, "Ctrl-Left");
+        assert_eq!(app.tree_percent, 25);
+        assert!(!path.exists(), "Ctrl-Left wrote the settings file");
     }
 
     #[test]
@@ -2080,12 +2367,13 @@ mod tests {
     }
 
     #[test]
-    fn the_body_has_its_own_search() {
+    fn a_body_search_puts_the_cursor_on_the_match() {
         let mut app = body_app("alpha\nbeta\ngamma\n");
         press(&mut app, "/");
-        type_text(&mut app, "gam");
+        type_text(&mut app, "mm");
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.body_scroll, 2);
+        assert_eq!(app.editor.cursor, (2, 2));
+        assert_eq!(app.focus, Focus::Body);
         // The outline did not move.
         assert_eq!(app.current.h(app.outline()), "a");
     }

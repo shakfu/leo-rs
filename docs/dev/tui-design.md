@@ -205,7 +205,8 @@ Vim habits that must not be errors:
 | `:wq` `:x` | `save` then quit |
 | `:e <path>` | open another `.leo` file |
 | `:h` `:help` [cmd] | the help overlay, or one command's summary |
-| `:set <option>` | see section 10 |
+| `:set <option>...` | one or more, as vim reads them: `name`, `noname`, `name=value`, `name:value`, `name?`; see section 10 |
+| `:[range]s/pat/rep/[flags]` | substitute in the current node's body; a `regex` crate pattern, not vim's dialect |
 
 ### 6.1 The v1 command set
 
@@ -452,7 +453,7 @@ The cost is Leo's `Ctrl-D`/`Ctrl-L`/`Ctrl-R`/`Ctrl-U` set for moving nodes. That
 
 ## 10. Configuration
 
-Settings live in `~/.config/leotui/config.toml`, read at startup. It is TOML, in the subset `theme.rs` already parses, and holds one setting so far: `theme`. An accepted `:theme` rewrites that line and leaves the rest of the file alone (section 19.7.3). A line the reader does not understand is reported on the status line and skipped.
+Settings live in `~/.config/leotui/config.toml`, read at startup. It is TOML, in the subset `theme.rs` already parses, and holds two settings: `theme` and `split-ratio`. An accepted `:theme` or `:set split=N` rewrites its line and leaves the rest of the file alone (section 19.7.3). A line the reader does not understand is reported on the status line and skipped.
 
 Key bindings still ship as one built-in table. The override file proposed below predates `config.toml`; whether it keeps Leo's `@shortcuts` syntax or becomes a `[keys]` table there is open.
 
@@ -615,7 +616,7 @@ The `:` minibuffer and search, in `minibuffer.rs` and `search.rs`.
 **`:set`** carries the options section 10 named: `search=all|headlines`,
 `split=N`, `wrap`/`nowrap`, `number`/`nonumber`.
 
-**Search is incremental and smartcase.** `/` and `?` move the selection as the pattern is typed and put it back on Escape; `n` and `N` repeat. Focus decides what is searched: headlines in the outline (`:set search=all` adds body text), the current node's text in the body. An all-lowercase pattern ignores case; one with a capital does not.
+**Search is incremental and smartcase.** `/` and `?` move the selection as the pattern is typed and put it back on Escape; `n` and `N` go to the next and previous match. One walk covers the outline in order, each headline then its body, whichever pane has focus; a body match puts the body's cursor on it, and `:set search=headlines` leaves bodies out. The pattern is a `regex` crate regex. An all-lowercase pattern ignores case; one with a capital does not. Matches are highlighted until `:noh`.
 
 ### 15.1 The minibuffer is drawn plain
 

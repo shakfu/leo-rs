@@ -98,7 +98,8 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
             if row.dirty { "~" } else { " " },
         );
         let indent = "  ".repeat(row.depth);
-        let text = truncate(&format!("{flags}{indent}{marker}{}", row.headline), width);
+        let prefix = format!("{flags}{indent}{marker}");
+        let text = truncate(&format!("{prefix}{}", row.headline), width);
         let style = if i == current {
             let bg = if focused {
                 Color::Blue
@@ -116,7 +117,25 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Style::default()
         };
-        lines.push(Line::from(Span::styled(text, style)));
+        let matches: Vec<std::ops::Range<usize>> =
+            app.hlsearch.as_ref().map_or_else(Vec::new, |re| {
+                crate::search::ranges(re, &row.headline)
+                    .into_iter()
+                    .map(|r| r.start + prefix.len()..r.end + prefix.len())
+                    .collect()
+            });
+        let cells: Vec<Span> = cut(&text, &matches)
+            .into_iter()
+            .map(|(piece, hit)| {
+                let style = if hit {
+                    style.patch(match_style())
+                } else {
+                    style
+                };
+                Span::styled(piece.to_string(), style)
+            })
+            .collect();
+        lines.push(Line::from(cells));
     }
 
     let title = format!(" outline {}/{} ", current + 1, rows.len());
@@ -170,6 +189,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         None => Rc::default(),
     };
     let palette = palette(&app.theme, app.depth);
+    let hlsearch = app.hlsearch.clone();
     let shown: Vec<Line> = lines
         .iter()
         .enumerate()
@@ -191,12 +211,31 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 Style::default()
             };
+            let matches = hlsearch
+                .as_ref()
+                .map_or_else(Vec::new, |re| crate::search::ranges(re, l));
+            // The runs are consecutive slices of the line; `offset` is where
+            // each starts, so a match can be cut out of whichever it crosses.
+            let mut offset = 0;
             for (text, class) in split_line(l, spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])) {
-                let text = truncate(&text.replace('\t', "    "), text_width);
-                if text.is_empty() {
-                    continue;
+                let local: Vec<std::ops::Range<usize>> = matches
+                    .iter()
+                    .map(|r| r.start.saturating_sub(offset)..r.end.saturating_sub(offset))
+                    .collect();
+                offset += text.len();
+                for (piece, hit) in cut(text, &local) {
+                    let piece = truncate(&piece.replace('\t', "    "), text_width);
+                    if piece.is_empty() {
+                        continue;
+                    }
+                    let style = style_for(class, base, &palette);
+                    let style = if hit {
+                        style.patch(match_style())
+                    } else {
+                        style
+                    };
+                    cells.push(Span::styled(piece, style));
                 }
-                cells.push(Span::styled(text, style_for(class, base, &palette)));
             }
             Line::from(cells)
         })
@@ -357,6 +396,34 @@ pub fn help_lines(focus: Focus) -> Vec<String> {
             binding.command,
             summary
         ));
+    }
+    out
+}
+
+/// A search match: vim's default `Search` colours.
+fn match_style() -> Style {
+    Style::default().bg(Color::Yellow).fg(Color::Black)
+}
+
+/// `text` cut at the edges of `ranges`, each piece marked if it lies in one.
+/// Ranges are byte offsets, sorted and apart, as `Regex::find_iter` gives
+/// them; any part past the end of `text` is dropped.
+fn cut<'a>(text: &'a str, ranges: &[std::ops::Range<usize>]) -> Vec<(&'a str, bool)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for r in ranges {
+        let (start, end) = (r.start.min(text.len()), r.end.min(text.len()));
+        if start < at || start >= end {
+            continue;
+        }
+        if start > at {
+            out.push((&text[at..start], false));
+        }
+        out.push((&text[start..end], true));
+        at = end;
+    }
+    if at < text.len() {
+        out.push((&text[at..], false));
     }
     out
 }

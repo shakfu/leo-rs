@@ -1,9 +1,13 @@
-//! Incremental search, over headlines in the tree and text in the body.
+//! Search, vim's `/` and `?`, over the whole outline.
 //!
-//! Focus decides what is searched, as it decides everything else: `/` in the
-//! outline walks headlines, `/` in the body walks that node's text.
+//! One walk in outline order, whichever pane has focus: each node's headline,
+//! then its body. `:set search=headlines` leaves bodies out. The pattern is a
+//! `regex` crate regex with vim's smartcase, as `:s` uses.
+
+use std::ops::Range;
 
 use leolib::{Outline, Position};
+use regex::{Regex, RegexBuilder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -20,11 +24,12 @@ impl Direction {
     }
 }
 
-/// What a tree search looks at.
+/// What a search looks at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
+    /// Headlines only, which `:set search=headlines` turns on.
     Headlines,
-    /// Headlines and body text, which `:set search=all` turns on.
+    /// Headlines and body text.
     All,
 }
 
@@ -35,117 +40,122 @@ pub struct LastSearch {
     pub direction: Direction,
 }
 
-/// vim's smartcase: an all-lowercase pattern ignores case, one with any
-/// capital does not. It is what a user means without having to say so.
-fn matches(haystack: &str, pattern: &str) -> bool {
-    if pattern.chars().any(|c| c.is_uppercase()) {
-        haystack.contains(pattern)
-    } else {
-        haystack.to_lowercase().contains(&pattern.to_lowercase())
-    }
+/// Where in a node a match starts. A headline sorts before its body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Place {
+    /// A byte offset in the headline.
+    Headline(usize),
+    /// A body line, and a byte offset in it.
+    Body(usize, usize),
 }
 
-/// The first node matching `pattern`, starting after `from` and wrapping once.
-pub fn find_node(
+/// A match: its node, and where in the node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hit {
+    pub node: Position,
+    pub place: Place,
+}
+
+/// `pattern` as a regex, with vim's smartcase.
+pub fn compile(pattern: &str) -> Result<Regex, String> {
+    RegexBuilder::new(pattern)
+        .case_insensitive(!has_capital(pattern))
+        .build()
+        .map_err(|e| {
+            let detail = e.to_string();
+            format!("search: {}", detail.lines().last().unwrap_or("bad pattern"))
+        })
+}
+
+/// Smartcase: a capital letter makes the pattern case sensitive. One after a
+/// backslash is an escape, such as `\S`, not a letter.
+pub fn has_capital(pattern: &str) -> bool {
+    let mut escaped = false;
+    for c in pattern.chars() {
+        if !escaped && c.is_uppercase() {
+            return true;
+        }
+        escaped = !escaped && c == '\\';
+    }
+    false
+}
+
+/// Where the matches in `text` lie, for highlighting. Empty ones are left out.
+pub fn ranges(re: &Regex, text: &str) -> Vec<Range<usize>> {
+    re.find_iter(text)
+        .filter(|m| !m.is_empty())
+        .map(|m| m.range())
+        .collect()
+}
+
+/// Every match in node `p`, in order.
+fn places(o: &Outline, p: &Position, re: &Regex, scope: Scope) -> Vec<Place> {
+    let mut out: Vec<Place> = re
+        .find_iter(p.h(o))
+        .map(|m| Place::Headline(m.start()))
+        .collect();
+    let body = p.b(o);
+    if scope == Scope::All && re.is_match(body) {
+        // The body's lines as the editor splits them: a final newline ends
+        // the last line rather than starting another.
+        let body = body.strip_suffix('\n').unwrap_or(body);
+        for (row, line) in body.split('\n').enumerate() {
+            out.extend(re.find_iter(line).map(|m| Place::Body(row, m.start())));
+        }
+    }
+    out
+}
+
+/// The first match after `from`, or the last before it going backward,
+/// wrapping once round the outline. The flag says whether it wrapped.
+pub fn find(
     o: &Outline,
-    from: &Position,
-    pattern: &str,
+    re: &Regex,
+    from: &Hit,
     direction: Direction,
     scope: Scope,
-) -> Option<Position> {
-    if pattern.is_empty() {
-        return None;
-    }
+) -> Option<(Hit, bool)> {
     let all = o.all_positions();
-    let start = all.iter().position(|p| p == from)?;
     let n = all.len();
-    for step in 1..=n {
-        let i = match direction {
-            Direction::Forward => (start + step) % n,
-            Direction::Backward => (start + n - step % n) % n,
-        };
-        let p = &all[i];
-        let hit = matches(p.h(o), pattern) || (scope == Scope::All && matches(p.b(o), pattern));
-        if hit {
-            return Some(p.clone());
-        }
-    }
-    None
-}
-
-/// The next occurrence of `pattern` in `lines`, as (row, column) in characters.
-pub fn find_in_lines(
-    lines: &[String],
-    from: (usize, usize),
-    pattern: &str,
-    direction: Direction,
-) -> Option<(usize, usize)> {
-    if pattern.is_empty() || lines.is_empty() {
-        return None;
-    }
-    let n = lines.len();
-    let (row, col) = from;
-    // The starting line is searched twice: after the cursor first, then from
-    // its start when the search wraps all the way round.
-    for step in 0..=n {
-        let r = match direction {
-            Direction::Forward => (row + step) % n,
-            Direction::Backward => (row + n - step % n) % n,
-        };
-        let line = &lines[r];
-        let hit = if step == 0 {
-            match direction {
-                Direction::Forward => {
-                    let start = char_index(line, col + 1);
-                    find_at(&line[start..], pattern).map(|i| char_count(&line[..start + i]))
-                }
-                Direction::Backward => {
-                    let end = char_index(line, col);
-                    rfind_at(&line[..end], pattern).map(|i| char_count(&line[..i]))
+    let start = all.iter().position(|p| *p == from.node).unwrap_or(0);
+    let hit = |i: usize, place: Place| Hit {
+        node: all[i].clone(),
+        place,
+    };
+    let here = places(o, &all[start], re, scope);
+    match direction {
+        Direction::Forward => {
+            if let Some(&p) = here.iter().find(|p| **p > from.place) {
+                return Some((hit(start, p), false));
+            }
+            for step in 1..n {
+                let i = (start + step) % n;
+                if let Some(&p) = places(o, &all[i], re, scope).first() {
+                    return Some((hit(i, p), start + step >= n));
                 }
             }
-        } else {
-            match direction {
-                Direction::Forward => find_at(line, pattern).map(|i| char_count(&line[..i])),
-                Direction::Backward => rfind_at(line, pattern).map(|i| char_count(&line[..i])),
+            here.first().map(|&p| (hit(start, p), true))
+        }
+        Direction::Backward => {
+            if let Some(&p) = here.iter().rev().find(|p| **p < from.place) {
+                return Some((hit(start, p), false));
             }
-        };
-        if let Some(c) = hit {
-            return Some((r, c));
+            for step in 1..n {
+                let i = (start + n - step) % n;
+                if let Some(&p) = places(o, &all[i], re, scope).last() {
+                    return Some((hit(i, p), step > start));
+                }
+            }
+            here.last().map(|&p| (hit(start, p), true))
         }
     }
-    None
-}
-
-fn find_at(haystack: &str, pattern: &str) -> Option<usize> {
-    if pattern.chars().any(|c| c.is_uppercase()) {
-        haystack.find(pattern)
-    } else {
-        haystack.to_lowercase().find(&pattern.to_lowercase())
-    }
-}
-
-fn rfind_at(haystack: &str, pattern: &str) -> Option<usize> {
-    if pattern.chars().any(|c| c.is_uppercase()) {
-        haystack.rfind(pattern)
-    } else {
-        haystack.to_lowercase().rfind(&pattern.to_lowercase())
-    }
-}
-
-fn char_index(s: &str, n: usize) -> usize {
-    s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len())
-}
-
-fn char_count(s: &str) -> usize {
-    s.chars().count()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use leolib::Outline;
 
+    /// Alpha, beta, Gamma, delta, with needles in two bodies.
     fn outline() -> (Outline, Vec<Position>) {
         let mut o = Outline::new_empty();
         for (i, h) in ["Alpha", "beta", "Gamma", "delta"].iter().enumerate() {
@@ -158,69 +168,86 @@ mod tests {
             o.set_headline(&p, h);
         }
         let all = o.all_positions();
+        o.set_body(&all[0], "x needle\nneedle y\n");
+        o.set_body(&all[2], "needle\n");
         (o, all)
     }
 
+    fn at(node: &Position, place: Place) -> Hit {
+        Hit {
+            node: node.clone(),
+            place,
+        }
+    }
+
+    fn next(o: &Outline, pattern: &str, from: &Hit, d: Direction, s: Scope) -> Option<(Hit, bool)> {
+        find(o, &compile(pattern).unwrap(), from, d, s)
+    }
+
     #[test]
-    fn a_lowercase_pattern_ignores_case() {
+    fn a_walk_visits_each_headline_then_its_body_and_wraps() {
         let (o, all) = outline();
-        let hit = find_node(&o, &all[0], "gamma", Direction::Forward, Scope::Headlines);
-        assert_eq!(hit.unwrap().h(&o), "Gamma");
+        let f = Direction::Forward;
+        let start = at(&all[0], Place::Headline(0));
+        let first = next(&o, "needle", &start, f, Scope::All).unwrap();
+        assert_eq!(first, (at(&all[0], Place::Body(0, 2)), false));
+        let second = next(&o, "needle", &first.0, f, Scope::All).unwrap();
+        assert_eq!(second, (at(&all[0], Place::Body(1, 0)), false));
+        let third = next(&o, "needle", &second.0, f, Scope::All).unwrap();
+        assert_eq!(third, (at(&all[2], Place::Body(0, 0)), false));
+        let wrapped = next(&o, "needle", &third.0, f, Scope::All).unwrap();
+        assert_eq!(wrapped, (at(&all[0], Place::Body(0, 2)), true));
     }
 
     #[test]
-    fn a_pattern_with_a_capital_is_case_sensitive() {
+    fn backward_walks_the_other_way_and_wraps() {
         let (o, all) = outline();
-        assert!(find_node(&o, &all[0], "Beta", Direction::Forward, Scope::Headlines).is_none());
-        let hit = find_node(&o, &all[0], "Gamma", Direction::Forward, Scope::Headlines);
-        assert_eq!(hit.unwrap().h(&o), "Gamma");
+        let b = Direction::Backward;
+        let from = at(&all[0], Place::Body(1, 0));
+        let hit = next(&o, "needle", &from, b, Scope::All).unwrap();
+        assert_eq!(hit, (at(&all[0], Place::Body(0, 2)), false));
+        let hit = next(&o, "needle", &hit.0, b, Scope::All).unwrap();
+        assert_eq!(hit, (at(&all[2], Place::Body(0, 0)), true));
     }
 
     #[test]
-    fn search_wraps_round_the_outline() {
+    fn the_headline_scope_leaves_bodies_out() {
         let (o, all) = outline();
-        let hit = find_node(&o, &all[3], "alpha", Direction::Forward, Scope::Headlines);
-        assert_eq!(hit.unwrap().h(&o), "Alpha");
+        let from = at(&all[0], Place::Headline(0));
+        assert!(next(&o, "needle", &from, Direction::Forward, Scope::Headlines).is_none());
+        let hit = next(&o, "delta", &from, Direction::Forward, Scope::Headlines).unwrap();
+        assert_eq!(hit.0.node, all[3]);
     }
 
     #[test]
-    fn backward_search_walks_the_other_way() {
+    fn case_is_smart_and_the_pattern_is_a_regex() {
         let (o, all) = outline();
-        let hit = find_node(&o, &all[3], "a", Direction::Backward, Scope::Headlines);
-        assert_eq!(hit.unwrap().h(&o), "Gamma");
+        let from = at(&all[0], Place::Headline(0));
+        let f = Direction::Forward;
+        assert_eq!(
+            next(&o, "gamma", &from, f, Scope::All).unwrap().0.node,
+            all[2]
+        );
+        assert!(next(&o, "Beta", &from, f, Scope::All).is_none());
+        assert_eq!(
+            next(&o, "g.mma", &from, f, Scope::All).unwrap().0.node,
+            all[2]
+        );
+        assert!(!has_capital(r"\Sx"));
+        assert!(compile("(").is_err());
     }
 
     #[test]
-    fn body_text_is_searched_only_with_the_wider_scope() {
-        let (mut o, all) = outline();
-        o.set_body(&all[2], "a needle in here\n");
-        assert!(find_node(&o, &all[0], "needle", Direction::Forward, Scope::Headlines).is_none());
-        let hit = find_node(&o, &all[0], "needle", Direction::Forward, Scope::All);
-        assert_eq!(hit.unwrap().h(&o), "Gamma");
+    fn a_lone_match_wraps_round_to_itself() {
+        let (o, all) = outline();
+        let only = at(&all[3], Place::Headline(0));
+        let hit = next(&o, "delta", &only, Direction::Forward, Scope::All).unwrap();
+        assert_eq!(hit, (only, true));
     }
 
     #[test]
-    fn body_search_finds_the_next_occurrence_and_wraps() {
-        let lines: Vec<String> = ["one two", "three two", "four"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(
-            find_in_lines(&lines, (0, 0), "two", Direction::Forward),
-            Some((0, 4))
-        );
-        assert_eq!(
-            find_in_lines(&lines, (0, 4), "two", Direction::Forward),
-            Some((1, 6))
-        );
-        // Wraps back to the first.
-        assert_eq!(
-            find_in_lines(&lines, (1, 6), "two", Direction::Forward),
-            Some((0, 4))
-        );
-        assert_eq!(
-            find_in_lines(&lines, (1, 6), "two", Direction::Backward),
-            Some((0, 4))
-        );
+    fn ranges_leave_out_empty_matches() {
+        let re = compile("x*").unwrap();
+        assert_eq!(ranges(&re, "axxbx"), [1..3, 4..5]);
     }
 }

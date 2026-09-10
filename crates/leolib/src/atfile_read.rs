@@ -6,7 +6,7 @@
 //! no sentinels; see [`crate::atclean`].
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -52,11 +52,12 @@ impl Patterns {
     /// The patterns for these delimiters, compiled once per pair.
     ///
     /// Leo compiles them for every file too, but Python's `re` caches what it
-    /// compiles and the `regex` crate does not. Compiling was 80% of loading
-    /// `LeoPyRef.leo`'s external files.
-    fn new(delim1: &str, delim2: &str) -> Self {
-        static CACHE: Lazy<Mutex<HashMap<(String, String), Patterns>>> =
-            Lazy::new(Default::default);
+    /// compiles and the `regex` crate does not. Shared rather than cloned: a
+    /// cloned `Regex` starts with an empty search cache. See
+    /// `docs/dev/optimizations.md`.
+    fn new(delim1: &str, delim2: &str) -> Arc<Self> {
+        type Cache = HashMap<(String, String), Arc<Patterns>>;
+        static CACHE: Lazy<Mutex<Cache>> = Lazy::new(Default::default);
         let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         // Bounded, as `re._MAXCACHE` is, against a file of distinct @delims.
         if cache.len() >= 64 {
@@ -64,7 +65,7 @@ impl Patterns {
         }
         cache
             .entry((delim1.to_string(), delim2.to_string()))
-            .or_insert_with(|| Self::compile(delim1, delim2))
+            .or_insert_with(|| Arc::new(Self::compile(delim1, delim2)))
             .clone()
     }
 
@@ -160,7 +161,7 @@ struct Scanner<'a> {
     o: &'a mut Outline,
     root_v: VnodeId,
     path: String,
-    pats: Patterns,
+    pats: Arc<Patterns>,
     warnings: Vec<String>,
 }
 
@@ -502,7 +503,7 @@ impl<'a> Scanner<'a> {
                 } else {
                     section_delim1 = m[1].to_string();
                     section_delim2 = m.get(2).map(|x| x.as_str()).unwrap_or("").to_string();
-                    self.pats.set_section_delims(
+                    Arc::make_mut(&mut self.pats).set_section_delims(
                         &section_delim1,
                         &section_delim2,
                         &comment_delim1,

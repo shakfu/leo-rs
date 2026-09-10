@@ -21,6 +21,7 @@ mod keys;
 mod keywords;
 mod minibuffer;
 mod search;
+mod substitute;
 mod theme;
 mod treesit;
 mod ui;
@@ -147,6 +148,9 @@ fn main() {
     // colours stand, and saying so on every start would be noise.
     let settings = config::load();
     let (theme, asked) = config::chosen_theme(args.theme.as_deref(), &settings, DEFAULT_THEME);
+    if let Some(percent) = settings.split_ratio {
+        app.tree_percent = percent;
+    }
     if !app.set_theme(theme) && !asked {
         app.message.clear();
     }
@@ -584,6 +588,27 @@ mod tests {
             highlighted.contains("onedark"),
             "nothing was highlighted: {highlighted:?}"
         );
+    }
+
+    #[test]
+    fn search_matches_are_highlighted_in_both_panes() {
+        let mut doc = Document::new_empty("");
+        let root = doc.outline.root_position().unwrap();
+        doc.set_headline(&root, "find the needle");
+        doc.set_body(&root, "a needle here\n");
+        let mut app = App::new(doc);
+        app.hlsearch = Some(regex::Regex::new("needle").unwrap());
+        // Wide enough that the outline pane shows the whole headline.
+        let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let marked: String = (0..8)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .filter(|&(x, y)| buffer[(x, y)].bg == Color::Yellow)
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .collect();
+        // The headline's and the body's, on the same screen row.
+        assert_eq!(marked, "needleneedle");
     }
 
     #[test]

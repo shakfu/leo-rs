@@ -160,8 +160,8 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 | `Tab` `Shift-Tab` | move between the outline and the body |
 | `Escape` | in the body, go back to the outline |
 | `:` | the command line |
-| `/` `?` | search forwards, backwards |
-| `n` `N` | repeat the search, and the other way |
+| `/` `?` | search headlines and bodies, forwards, backwards |
+| `n` `N` | next match, previous match |
 | `u` `Ctrl-z` | undo |
 | `Ctrl-r` | redo |
 | `Ctrl-s` | write the `.leo` file |
@@ -176,8 +176,11 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 **The `:` command line**
 
 Every Leo command name, with Tab completion and Up/Down history, plus the vim spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
-the Nth visible row. `:set search=all|headlines split=N wrap number syntax`.
+the Nth visible row. `:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values.
+`/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
 `:import-at-file path` imports a file as an `@file` tree, and asks before writing sentinels into it.
+`:[range]s/pattern/replacement/[flags]` substitutes in the current node's body, as one undo step. The pattern is a Rust `regex`, with smartcase as in `/`; an empty pattern reuses the last search. The replacement takes `&`, `\1`-`\9` and `\r`. Ranges are `%`, `.`, `$`, `N` and `N,M`; flags are `g`, `i`, `I` and `n`.
+`:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
 
 **Leo's own chords**
 
