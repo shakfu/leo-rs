@@ -7,15 +7,23 @@
 //! matches `@language` only at column 0 and switches from that line onward, so
 //! one node can hold Python and then C, and this follows it.
 //!
-//! The scanner lives here rather than in `leolib` for the reason Leo keeps
-//! `leoColorizer` out of its model: colouring is a view's business. It shares
-//! the language *data* -- comment delimiters and string delimiters -- with the
-//! model rather than restating it.
+//! Two engines. A dozen languages have a tree-sitter grammar compiled in and
+//! go through `treesit`, which can tell a function from a field. The rest --
+//! Leo knows comment delimiters for some 170 -- go through the line scanner
+//! below, which classifies a word by looking it up in `keywords`.
+//!
+//! Both live here rather than in `leolib` for the reason Leo keeps
+//! `leoColorizer` out of its model: colouring is a view's business.
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 use leolib::outline::set_delims_from_language;
 use leolib::Outline;
 
 use crate::keywords;
+use crate::treesit;
 
 /// What a run of characters is, and therefore how it is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,10 +35,19 @@ pub enum Class {
     Section,
     Comment,
     Str,
+    /// A literal value: a number, a boolean, a named constant.
     Number,
     Keyword,
     /// A library name: jEdit's `keyword2` to `keyword4`.
     Builtin,
+    /// A function or method, defined or called.
+    Function,
+    /// A type, or a constructor of one.
+    Type,
+    /// A field or attribute of an object.
+    Property,
+    /// A decorator or annotation: `@property`, `#[derive(Debug)]`.
+    Attribute,
 }
 
 /// A run of one class, as byte offsets into its line.
@@ -71,13 +88,64 @@ const DIRECTIVES: &[&str] = &[
     "@doc",
 ];
 
-/// One language's lexical shape, from the model's own tables.
+/// How a language writes strings and block comments.
+///
+/// The importers keep a `string_list` too, and this used to read it. They
+/// answer a different question -- where does a block of code start -- and
+/// Rust's is deliberately empty because its importer scans for itself. Read as
+/// a colouring rule that says Rust has no strings, so `//` inside a literal
+/// opened a comment that ran to the end of the line.
+#[derive(Clone, Copy)]
+struct Lex {
+    /// String delimiters, longest first.
+    strings: &'static [&'static str],
+    /// A backslash escapes the next character inside a string.
+    escapes: bool,
+    /// Block comments nest, so the first close does not end the outermost.
+    nested_comments: bool,
+}
+
+const DEFAULT_LEX: Lex = Lex {
+    strings: &["\"", "'"],
+    escapes: true,
+    nested_comments: false,
+};
+
+/// `language`'s lexical shape, where it differs from `DEFAULT_LEX`.
+fn lex_for(language: &str) -> Lex {
+    /// `'x'` is a character literal, so a lone `'` must not open a string.
+    const CHARS: &[&str] = &["\""];
+    const TRIPLE: &[&str] = &["\"\"\"", "'''", "\"", "'"];
+    match language {
+        "python" | "cython" | "coffeescript" => Lex {
+            strings: TRIPLE,
+            ..DEFAULT_LEX
+        },
+        "c" | "cplusplus" | "csharp" | "java" | "objective_c" | "go" | "groovy" | "kotlin"
+        | "swift" | "clojure" | "elisp" | "lisp" | "erlang" => Lex {
+            strings: CHARS,
+            ..DEFAULT_LEX
+        },
+        "rust" | "scala" | "d" | "dart" | "haskell" | "ocaml" | "scheme" => Lex {
+            strings: CHARS,
+            nested_comments: true,
+            ..DEFAULT_LEX
+        },
+        // `''` is the escape, so a backslash is an ordinary character.
+        "sql" | "pascal" | "fortran" | "fortran90" | "ada" | "vbscript" => Lex {
+            escapes: false,
+            ..DEFAULT_LEX
+        },
+        _ => DEFAULT_LEX,
+    }
+}
+
+/// One language's lexical shape, from the model's tables and `lex_for`.
 struct Rules {
     line_comment: String,
     block_start: String,
     block_end: String,
-    /// String delimiters, longest first.
-    strings: Vec<String>,
+    lex: Lex,
     keywords: &'static [&'static str],
     builtins: &'static [&'static str],
 }
@@ -85,53 +153,190 @@ struct Rules {
 impl Rules {
     fn for_language(language: &str) -> Self {
         let (line_comment, block_start, block_end) = set_delims_from_language(language);
-        // The importers already know which delimiters open a string in each
-        // language -- Python's triple quotes, C's lack of single ones -- so
-        // take theirs rather than keeping a second list.
-        let strings = leolib::importers::LANGUAGES
-            .iter()
-            .find(|spec| spec.language == language)
-            .map(|spec| spec.string_list.iter().map(|s| s.to_string()).collect())
-            .unwrap_or_else(|| vec!["\"".to_string(), "'".to_string()]);
         let (keywords, builtins) = keywords::for_language(language);
         Self {
             line_comment,
             block_start,
             block_end,
-            strings,
+            lex: lex_for(language),
             keywords,
             builtins,
         }
     }
+
+    /// The opening delimiter to count when a block comment nests.
+    fn nesting_open(&self) -> &str {
+        match self.lex.nested_comments {
+            true => &self.block_start,
+            false => "",
+        }
+    }
 }
 
-/// What carries over from one line to the next.
+/// What carries over from one line to the next, inside one region.
 #[derive(Default)]
 struct State {
     /// The delimiter that closes an open string or block comment.
     target: String,
     /// True while the open target is a comment rather than a string.
     target_is_comment: bool,
-    /// `@nocolor` until `@color`, or `@killcolor` for good.
-    colouring: bool,
-    killed: bool,
+    /// How many nested block comments are open, when the language nests them.
+    depth: usize,
 }
 
-/// Colour a body, line by line.
+/// A run of lines in one language, as a half-open range.
+struct Region {
+    start: usize,
+    end: usize,
+    language: String,
+}
+
+/// A body's colouring, and the text it was made from.
+///
+/// `highlight` parses the whole body, and the body pane redraws on every key.
+/// A node holding a function costs microseconds; an `@edit` node holds a whole
+/// file in one body, where the parse costs tens of milliseconds. The key is a
+/// hash of the input, so any edit invalidates it.
+#[derive(Default)]
+pub struct Colouring {
+    key: Option<u64>,
+    spans: Rc<Vec<Vec<Span>>>,
+}
+
+impl Colouring {
+    /// The colouring of `lines`, recomputed only when they have changed.
+    pub fn of(&mut self, lines: &[String], language: &str) -> Rc<Vec<Vec<Span>>> {
+        let mut hasher = DefaultHasher::new();
+        language.hash(&mut hasher);
+        lines.hash(&mut hasher);
+        let key = Some(hasher.finish());
+        if key != self.key {
+            self.key = key;
+            self.spans = Rc::new(highlight(lines, language));
+        }
+        Rc::clone(&self.spans)
+    }
+}
+
+/// Colour a body.
 ///
 /// `language` is where the body starts, from `Outline::get_language`. The
 /// result has one entry per line, holding only the runs that are not plain.
+///
+/// Two passes. The first claims Leo's own lines -- directives and section
+/// references -- and cuts the body into regions, one per `@language` and one
+/// either side of a `@nocolor` block. The second colours each region, with
+/// tree-sitter where a grammar exists and the line scanner where it does not.
 pub fn highlight(lines: &[String], language: &str) -> Vec<Vec<Span>> {
-    let mut rules = Rules::for_language(language);
-    let mut state = State {
-        colouring: true,
-        ..Default::default()
-    };
-    let mut out = Vec::with_capacity(lines.len());
-    for line in lines {
-        out.push(highlight_line(line, &mut rules, &mut state));
+    let mut out: Vec<Vec<Span>> = vec![Vec::new(); lines.len()];
+    let (masked, regions) = plan(lines, language, &mut out);
+    for region in regions {
+        let slice = &masked[region.start..region.end];
+        let spans = treesit::highlight(slice, &region.language).unwrap_or_else(|| {
+            let rules = Rules::for_language(&region.language);
+            let mut state = State::default();
+            slice
+                .iter()
+                .map(|line| scan(line, &rules, &mut state))
+                .collect()
+        });
+        for (k, line_spans) in spans.into_iter().enumerate() {
+            if out[region.start + k].is_empty() {
+                out[region.start + k] = line_spans;
+            }
+        }
     }
     out
+}
+
+/// Claim Leo's own lines and cut the rest into single-language regions.
+///
+/// Returns the body with every claimed line blanked. A parser meeting
+/// `@others` or `<< a section >>` reports an error there and mis-reads the
+/// lines after it; spaces of the same byte width keep every offset intact.
+fn plan(lines: &[String], language: &str, out: &mut [Vec<Span>]) -> (Vec<String>, Vec<Region>) {
+    let mut masked: Vec<String> = Vec::with_capacity(lines.len());
+    let mut regions: Vec<Region> = Vec::new();
+    let mut start: Option<usize> = Some(0);
+    let mut lang = language.to_string();
+    let mut colouring = true;
+    let mut killed = false;
+    let mut close = |start: &mut Option<usize>, end: usize, lang: &str| {
+        if let Some(from) = start.take() {
+            if from < end {
+                regions.push(Region {
+                    start: from,
+                    end,
+                    language: lang.to_string(),
+                });
+            }
+        }
+    };
+
+    for (i, line) in lines.iter().enumerate() {
+        if killed {
+            masked.push(blanked(line));
+            continue;
+        }
+        if let Some((name, at)) = directive_at(line) {
+            out[i] = vec![Span {
+                start: at,
+                end: line.trim_end().len(),
+                class: Class::Directive,
+            }];
+            masked.push(blanked(line));
+            match name {
+                "@language" => {
+                    let word: String = line[at + name.len()..]
+                        .trim()
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    close(&mut start, i, &lang);
+                    if !word.is_empty() {
+                        lang = word;
+                    }
+                    // A language change inside a `@nocolor` block does not
+                    // end it; only `@color` does.
+                    if colouring {
+                        start = Some(i + 1);
+                    }
+                }
+                "@nocolor" | "@nocolor-node" => {
+                    close(&mut start, i, &lang);
+                    colouring = false;
+                }
+                "@color" => {
+                    close(&mut start, i, &lang);
+                    colouring = true;
+                    start = Some(i + 1);
+                }
+                "@killcolor" => {
+                    close(&mut start, i, &lang);
+                    killed = true;
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if start.is_none() {
+            masked.push(blanked(line));
+            continue;
+        }
+        if let Some(span) = section_reference(line) {
+            out[i] = vec![span];
+            masked.push(blanked(line));
+            continue;
+        }
+        masked.push(line.clone());
+    }
+    close(&mut start, lines.len(), &lang);
+    (masked, regions)
+}
+
+/// The line's width in spaces, so a parser skips it without losing offsets.
+fn blanked(line: &str) -> String {
+    " ".repeat(line.len())
 }
 
 /// The language declared at `p`, which the body may then change.
@@ -145,52 +350,21 @@ pub fn language_of(outline: &Outline, p: &leolib::Position) -> Option<String> {
     outline.language_at(p)
 }
 
-fn highlight_line(line: &str, rules: &mut Rules, state: &mut State) -> Vec<Span> {
-    if state.killed {
-        return Vec::new();
-    }
-    // Leo matches directives only at the start of a line.
-    if let Some(spans) = directive_line(line, rules, state) {
-        return spans;
-    }
-    if !state.colouring {
-        return Vec::new();
-    }
-    if let Some(span) = section_reference(line) {
-        return vec![span];
-    }
-    scan(line, rules, state)
-}
-
-/// A line whose first characters are a Leo directive.
+/// The directive starting `line`, and the column it starts at.
 ///
-/// `@language` switches the rules from here on, which is the whole point of
-/// this module; `@nocolor` and `@color` bracket a region that is left plain.
-fn directive_line(line: &str, rules: &mut Rules, state: &mut State) -> Option<Vec<Span>> {
-    let name = DIRECTIVES.iter().find(|d| starts_word(line, d)).copied()?;
-    match name {
-        "@language" => {
-            let rest = line[name.len()..].trim();
-            let word: String = rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if !word.is_empty() {
-                *rules = Rules::for_language(&word);
-                // A language change cannot leave a string open behind it.
-                state.target.clear();
-            }
-        }
-        "@nocolor" | "@nocolor-node" => state.colouring = false,
-        "@color" => state.colouring = true,
-        "@killcolor" => state.killed = true,
-        _ => {}
+/// Leo's `directiveKind4` matches a directive at column 0, and `@others` and
+/// `@all` after leading whitespace as well. Those two are the ones that sit
+/// inside a class body, and left unclaimed a parser reads `@others` as a
+/// decorator on whatever follows it.
+fn directive_at(line: &str) -> Option<(&'static str, usize)> {
+    if let Some(name) = DIRECTIVES.iter().find(|d| starts_word(line, d)).copied() {
+        return Some((name, 0));
     }
-    Some(vec![Span {
-        start: 0,
-        end: line.trim_end().len(),
-        class: Class::Directive,
-    }])
+    let indent = line.len() - line.trim_start().len();
+    ["@others", "@all"]
+        .into_iter()
+        .find(|d| starts_word(&line[indent..], d))
+        .map(|name| (name, indent))
 }
 
 /// True if `word` starts `line` and is not glued to more word characters.
@@ -227,13 +401,18 @@ fn scan(line: &str, rules: &Rules, state: &mut State) -> Vec<Span> {
 
     // A string or comment left open by the previous line.
     if !state.target.is_empty() {
-        let class = if state.target_is_comment {
-            Class::Comment
-        } else {
-            Class::Str
+        let (class, close) = match state.target_is_comment {
+            true => (
+                Class::Comment,
+                find_block_close(line, 0, rules.nesting_open(), &state.target, state.depth),
+            ),
+            false => (
+                Class::Str,
+                find_close(line, 0, &state.target, rules.lex.escapes).ok_or(0),
+            ),
         };
-        match find_close(line, 0, &state.target) {
-            Some(end) => {
+        match close {
+            Ok(end) => {
                 spans.push(Span {
                     start: 0,
                     end,
@@ -241,8 +420,10 @@ fn scan(line: &str, rules: &Rules, state: &mut State) -> Vec<Span> {
                 });
                 i = end;
                 state.target.clear();
+                state.depth = 0;
             }
-            None => {
+            Err(depth) => {
+                state.depth = depth;
                 return vec![Span {
                     start: 0,
                     end: line.trim_end_matches('\n').len(),
@@ -271,8 +452,8 @@ fn scan(line: &str, rules: &Rules, state: &mut State) -> Vec<Span> {
         if !rules.block_start.is_empty() && rest.starts_with(&rules.block_start) {
             flush_word(line, &mut run_start, i, rules, &mut spans);
             let from = i + rules.block_start.len();
-            match find_close(line, from, &rules.block_end) {
-                Some(end) => {
+            match find_block_close(line, from, rules.nesting_open(), &rules.block_end, 1) {
+                Ok(end) => {
                     spans.push(Span {
                         start: i,
                         end,
@@ -280,7 +461,7 @@ fn scan(line: &str, rules: &Rules, state: &mut State) -> Vec<Span> {
                     });
                     i = end;
                 }
-                None => {
+                Err(depth) => {
                     spans.push(Span {
                         start: i,
                         end: line.trim_end_matches('\n').len(),
@@ -288,16 +469,17 @@ fn scan(line: &str, rules: &Rules, state: &mut State) -> Vec<Span> {
                     });
                     state.target = rules.block_end.clone();
                     state.target_is_comment = true;
+                    state.depth = depth;
                     return spans;
                 }
             }
             continue;
         }
         // A string, taking the longest delimiter that matches.
-        if let Some(delim) = rules.strings.iter().find(|d| rest.starts_with(d.as_str())) {
+        if let Some(delim) = rules.lex.strings.iter().find(|d| rest.starts_with(**d)) {
             flush_word(line, &mut run_start, i, rules, &mut spans);
             let from = i + delim.len();
-            match find_close(line, from, delim) {
+            match find_close(line, from, delim, rules.lex.escapes) {
                 Some(end) => {
                     spans.push(Span {
                         start: i,
@@ -312,7 +494,7 @@ fn scan(line: &str, rules: &Rules, state: &mut State) -> Vec<Span> {
                         end: line.trim_end_matches('\n').len(),
                         class: Class::Str,
                     });
-                    state.target = delim.clone();
+                    state.target = (*delim).to_string();
                     state.target_is_comment = false;
                     return spans;
                 }
@@ -367,18 +549,24 @@ fn flush_word(
     spans.push(Span { start, end, class });
 }
 
-/// The offset just past the closing delimiter, honouring backslash escapes.
-fn find_close(line: &str, from: usize, close: &str) -> Option<usize> {
+/// The offset just past the string's closing delimiter.
+///
+/// `escapes` is false for the languages that double the quote instead, where
+/// a backslash is an ordinary character and skipping past it would run the
+/// string on to the end of the body.
+fn find_close(line: &str, from: usize, close: &str, escapes: bool) -> Option<usize> {
     if close.is_empty() {
         return None;
     }
     let mut i = from;
     while i < line.len() {
         let rest = &line[i..];
-        if let Some(after) = rest.strip_prefix('\\') {
-            // The escape takes the next character with it.
-            i += 1 + after.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
-            continue;
+        if escapes {
+            if let Some(after) = rest.strip_prefix('\\') {
+                // The escape takes the next character with it.
+                i += 1 + after.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+                continue;
+            }
         }
         if rest.starts_with(close) {
             return Some(i + close.len());
@@ -386,6 +574,43 @@ fn find_close(line: &str, from: usize, close: &str) -> Option<usize> {
         i += rest.chars().next().unwrap().len_utf8();
     }
     None
+}
+
+/// The offset just past the block comment's close, or the depth still open.
+///
+/// `open` is empty when the language's comments do not nest, which makes the
+/// first close end the comment. Backslashes are ordinary here: `/* \*/` ends
+/// the comment in C, and treating the escape as a string's would have run it
+/// on.
+fn find_block_close(
+    line: &str,
+    from: usize,
+    open: &str,
+    close: &str,
+    mut depth: usize,
+) -> Result<usize, usize> {
+    if close.is_empty() {
+        return Err(depth);
+    }
+    let mut i = from;
+    while i < line.len() {
+        let rest = &line[i..];
+        if rest.starts_with(close) {
+            depth -= 1;
+            i += close.len();
+            if depth == 0 {
+                return Ok(i);
+            }
+            continue;
+        }
+        if !open.is_empty() && rest.starts_with(open) {
+            depth += 1;
+            i += open.len();
+            continue;
+        }
+        i += rest.chars().next().unwrap().len_utf8();
+    }
+    Err(depth)
 }
 
 #[cfg(test)]
@@ -410,7 +635,11 @@ mod tests {
         let out = highlight(&src, "python");
         assert_eq!(
             classes(&src[0], &out[0]),
-            vec![("def", Class::Keyword), ("# note", Class::Comment)]
+            vec![
+                ("def", Class::Keyword),
+                ("f", Class::Function),
+                ("# note", Class::Comment)
+            ]
         );
         assert_eq!(
             classes(&src[1], &out[1]),
@@ -453,14 +682,13 @@ mod tests {
     fn a_block_comment_runs_across_lines() {
         let src = lines("int x; /* one\ntwo */ int y;");
         let out = highlight(&src, "c");
-        // Leo's C mode tags `int` keyword3, a type, which is a Builtin here.
         assert_eq!(
             classes(&src[0], &out[0]),
-            vec![("int", Class::Builtin), ("/* one", Class::Comment)]
+            vec![("int", Class::Type), ("/* one", Class::Comment)]
         );
         assert_eq!(
             classes(&src[1], &out[1]),
-            vec![("two */", Class::Comment), ("int", Class::Builtin)]
+            vec![("two */", Class::Comment), ("int", Class::Type)]
         );
     }
 
@@ -481,7 +709,7 @@ mod tests {
             classes(&src[2], &out[2]),
             vec![("// a c comment", Class::Comment)]
         );
-        assert_eq!(classes(&src[3], &out[3])[0], ("int", Class::Builtin));
+        assert_eq!(classes(&src[3], &out[3])[0], ("int", Class::Type));
     }
 
     #[test]
@@ -572,5 +800,258 @@ mod tests {
                 last = s.end;
             }
         }
+    }
+
+    #[test]
+    fn rust_strings_are_coloured_and_hide_a_line_comment() {
+        // The importers give Rust an empty string_list, which left `//` inside
+        // a literal opening a comment that ran to the end of the line.
+        let src = lines("let s = \"a // b\"; // c");
+        let out = highlight(&src, "rust");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![
+                ("let", Class::Keyword),
+                ("\"a // b\"", Class::Str),
+                ("// c", Class::Comment)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rust_lifetime_does_not_open_a_string() {
+        let src = lines("fn f<'a>(s: &'a str) -> u8 { 1 }");
+        let out = highlight(&src, "rust");
+        assert!(out[0].iter().all(|s| s.class != Class::Str));
+        assert_eq!(out[0].last().unwrap().class, Class::Number);
+    }
+
+    #[test]
+    fn rust_block_comments_nest() {
+        let src = lines("/* a /* b */ still */ let x = 1;");
+        let out = highlight(&src, "rust");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![
+                ("/* a /* b */ still */", Class::Comment),
+                ("let", Class::Keyword),
+                ("1", Class::Number)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_nested_comment_carries_its_depth_across_lines() {
+        let src = lines("/* a /* b\nc */ d */ let x = 1;");
+        let out = highlight(&src, "rust");
+        assert_eq!(out[0][0].class, Class::Comment);
+        assert_eq!(
+            classes(&src[1], &out[1]),
+            vec![
+                ("c */ d */", Class::Comment),
+                ("let", Class::Keyword),
+                ("1", Class::Number)
+            ]
+        );
+    }
+
+    #[test]
+    fn c_block_comments_do_not_nest() {
+        let src = lines("/* a /* b */ int x;");
+        let out = highlight(&src, "c");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![("/* a /* b */", Class::Comment), ("int", Class::Type)]
+        );
+    }
+
+    #[test]
+    fn a_backslash_does_not_end_a_c_block_comment_early_or_late() {
+        // A backslash is not an escape inside a comment, so `*/` still closes.
+        let src = lines("/* a \\*/ int x;");
+        let out = highlight(&src, "c");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![("/* a \\*/", Class::Comment), ("int", Class::Type)]
+        );
+    }
+
+    #[test]
+    fn a_language_without_backslash_escapes_closes_its_string() {
+        // SQL doubles the quote instead, so a trailing backslash is ordinary.
+        let src = lines("select 'c:\\' , 1");
+        let out = highlight(&src, "sql");
+        assert_eq!(out[0].iter().filter(|s| s.class == Class::Str).count(), 1);
+        assert_eq!(out[0].last().unwrap().class, Class::Number);
+    }
+
+    #[test]
+    fn cplusplus_char_literals_do_not_open_a_string() {
+        // Leo's language name is `cplusplus`; the importers only register `c`,
+        // so this fell through to the default list that treats `'` as a quote.
+        let src = lines("char c = 'x'; int n = 1;");
+        let out = highlight(&src, "cplusplus");
+        assert!(out[0].iter().all(|s| s.class != Class::Str));
+        assert_eq!(out[0].last().unwrap().class, Class::Number);
+    }
+
+    // Leo knows delimiters for some 170 languages and only a dozen have a
+    // grammar compiled in, so the line scanner still colours most of them.
+    // These pin its own rules to languages tree-sitter does not claim.
+
+    #[test]
+    fn the_scanner_nests_the_comments_of_a_language_that_does() {
+        let src = lines("{- a {- b -} still -} data X = 1");
+        let out = highlight(&src, "haskell");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![
+                ("{- a {- b -} still -}", Class::Comment),
+                ("data", Class::Keyword),
+                ("1", Class::Number)
+            ]
+        );
+    }
+
+    #[test]
+    fn the_scanner_does_not_nest_the_comments_of_a_language_that_does_not() {
+        let src = lines("/* a /* b */ int x;");
+        let out = highlight(&src, "objective_c");
+        assert_eq!(out[0][0].class, Class::Comment);
+        assert_eq!(&src[0][out[0][0].start..out[0][0].end], "/* a /* b */");
+    }
+
+    #[test]
+    fn the_scanner_treats_a_char_literal_as_no_string_at_all() {
+        let src = lines("char c = 'x'; int n = 1;");
+        let out = highlight(&src, "objective_c");
+        assert!(out[0].iter().all(|s| s.class != Class::Str));
+        assert_eq!(out[0].last().unwrap().class, Class::Number);
+    }
+
+    // A parse tree says what a table lookup cannot: which identifier is a
+    // function, a type or a field. These cover the languages with a grammar
+    // and the masking that gets a Leo body through a parser.
+
+    #[test]
+    fn a_body_that_is_only_a_method_body_is_still_coloured() {
+        // The common Leo shape: no class above it, no `def`, just the body.
+        let src = lines("self.count += 1\nreturn self.total(\"x\")  # done");
+        let out = highlight(&src, "python");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![("count", Class::Property), ("1", Class::Number)]
+        );
+        assert_eq!(
+            classes(&src[1], &out[1]),
+            vec![
+                ("return", Class::Keyword),
+                ("total", Class::Property),
+                ("\"x\"", Class::Str),
+                ("# done", Class::Comment)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_parse_tree_tells_a_type_from_a_function_from_a_field() {
+        let src = lines("struct P { n: u8 }\nfn f(p: P) -> u8 { g(p.n) }");
+        let out = highlight(&src, "rust");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![
+                ("struct", Class::Keyword),
+                ("P", Class::Type),
+                ("n", Class::Property),
+                ("u8", Class::Builtin)
+            ]
+        );
+        assert_eq!(
+            classes(&src[1], &out[1]),
+            vec![
+                ("fn", Class::Keyword),
+                ("f", Class::Function),
+                ("P", Class::Type),
+                ("u8", Class::Builtin),
+                ("g", Class::Function),
+                ("n", Class::Property)
+            ]
+        );
+    }
+
+    #[test]
+    fn an_attribute_is_told_from_the_code_it_sits_on() {
+        let src = lines("#[derive(Debug)]\nstruct P;");
+        let out = highlight(&src, "rust");
+        assert_eq!(out[0][0].class, Class::Attribute);
+        assert_eq!(classes(&src[1], &out[1])[1], ("P", Class::Type));
+    }
+
+    #[test]
+    fn an_indented_at_others_is_a_directive_and_spoils_nothing_below_it() {
+        // Leo's `directiveKind4` allows leading whitespace before `@others`,
+        // and unclaimed it reads as a decorator on the `def` beneath it.
+        let src = lines("class Widget:\n    @others\n    def later(self):\n        return 1");
+        let out = highlight(&src, "python");
+        assert_eq!(
+            classes(&src[1], &out[1]),
+            vec![("@others", Class::Directive)]
+        );
+        assert_eq!(
+            classes(&src[2], &out[2]),
+            vec![("def", Class::Keyword), ("later", Class::Function)]
+        );
+    }
+
+    #[test]
+    fn a_section_reference_spoils_nothing_below_it() {
+        // Unmasked, the parser reads `>> return` as one expression and
+        // `return` stops being a keyword.
+        let src = lines("def f():\n    << do the work >>\n    return 1");
+        let out = highlight(&src, "python");
+        assert_eq!(
+            classes(&src[1], &out[1]),
+            vec![("<< do the work >>", Class::Section)]
+        );
+        assert_eq!(
+            classes(&src[2], &out[2]),
+            vec![("return", Class::Keyword), ("1", Class::Number)]
+        );
+    }
+
+    #[test]
+    fn a_grammar_colours_one_region_and_the_scanner_the_next() {
+        let src = lines("def f():\n    pass\n@language haskell\n{- a comment -}\ndata X = 1");
+        let out = highlight(&src, "python");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![("def", Class::Keyword), ("f", Class::Function)]
+        );
+        assert_eq!(
+            classes(&src[3], &out[3]),
+            vec![("{- a comment -}", Class::Comment)]
+        );
+        assert_eq!(classes(&src[4], &out[4])[0], ("data", Class::Keyword));
+    }
+
+    #[test]
+    fn the_kept_colouring_follows_an_edit_and_a_language_change() {
+        let mut colouring = Colouring::default();
+        let src = lines("def f():");
+        assert_eq!(colouring.of(&src, "python")[0][0].class, Class::Keyword);
+        let src = lines("# f");
+        assert_eq!(colouring.of(&src, "python")[0][0].class, Class::Comment);
+        // The same text again, in a language that has no comment delimiter.
+        assert!(colouring.of(&src, "not_a_language")[0].is_empty());
+    }
+
+    #[test]
+    fn a_language_change_inside_a_nocolor_block_does_not_end_it() {
+        // The change still lands: `@color` resumes in C, not in Python.
+        let src = lines("@nocolor\ndef a():\n@language c\nint x;\n@color\nint y;");
+        let out = highlight(&src, "python");
+        assert!(out[1].is_empty(), "{:?}", out[1]);
+        assert!(out[3].is_empty(), "{:?}", out[3]);
+        assert_eq!(classes(&src[5], &out[5])[0], ("int", Class::Type));
     }
 }

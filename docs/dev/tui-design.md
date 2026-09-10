@@ -899,10 +899,19 @@ It shares the model's *data* rather than restating it:
 | | from |
 |---|---|
 | comment delimiters | `leolib::outline::set_delims_from_language`, over Leo's 190-language table |
-| string delimiters | `leolib::importers::LANGUAGES`, whose `string_list` the importers already need |
 | keywords | `keywords.rs`, generated from `leo/modes/*.py` |
+| grammars | `treesit.rs`, one tree-sitter crate per language |
 
-So every language Leo knows gets comments and strings; 36 get keywords.
+So every language Leo knows gets comments and strings; 33 get keywords.
+
+String delimiters used to come from `leolib::importers::LANGUAGES`, whose
+`string_list` the importers already need. They now live in `highlight.rs`'s
+`lex_for`. The importers answer a different question -- where a block of code
+starts -- and `rust.string_list` is deliberately empty because the Rust
+importer scans for itself. Read as a colouring rule it said Rust has no
+strings, so `//` inside a literal opened a comment that ran to the end of the
+line. `lex_for` also carries the two rules a delimiter list cannot: whether a
+backslash escapes inside a string, and whether block comments nest.
 
 ### 19.3 The keyword cap
 
@@ -917,10 +926,70 @@ under 400. Python keeps all 265, C all 42, matlab keeps its 457 keywords and
 loses its 5,126 function names. The two classes are drawn differently, as Leo
 draws them.
 
-### 19.4 What is not done
+### 19.4 Two engines
 
-The scanner is a lexer, not a parser: it knows comments, strings, numbers,
-keywords and Leo's own constructs. It does not know that a Python `f"{x}"`
-holds an expression, or that a C `#include <a.h>` is not a comparison. Leo
-reads jEdit mode files with full span and regex rules to do better; that is 159
-more files and a rule engine, and the terminal's six colours do not repay it.
+Twelve languages have a tree-sitter grammar compiled in -- c, cplusplus, css,
+go, html, java, javascript, json, python, rust, shell, typescript -- and are
+parsed. Every other language runs the line scanner.
+
+A parse tree adds five classes a table lookup cannot produce -- function, type,
+property, constant, attribute -- because those depend on where an identifier
+sits, not on what it spells. `self.count += 1` colours `count` as a field;
+`fn f(p: P)` colours `f` as a function and `P` as a type.
+
+Cost, measured on this machine: the release binary goes from 2.8MB to 12MB,
+about 1MB per grammar. A clean release build takes the same 28s either way --
+the C parse tables compile alongside the Rust.
+
+Grammars disagree about what a literal is: tree-sitter-python tags `1` as
+`number`, tree-sitter-rust tags it `constant.builtin`. Both map to one class,
+so a number is the same colour in every language.
+
+### 19.5 A body is a fragment
+
+A Leo body is not a file. It is a method with no class above it, a class whose
+methods are `@others`, a function whose middle is `<< a section >>`. Measured
+against tree-sitter-python and tree-sitter-c:
+
+| body | parse |
+|---|---|
+| method body, no enclosing class | clean |
+| indented `def`, no enclosing class | clean |
+| `class C:` then `@others` then more methods | clean |
+| `def f():` then an inline `<< do the work >>` | error, and `return` on the next line stops being a keyword |
+
+Error recovery handles a missing enclosing scope. Only Leo's own lines break a
+parse, so `plan()` claims them first -- directives and whole-line section
+references -- and replaces each with spaces of the same byte width. Spaces beat
+an identifier, which is not a C statement, and beat a comment, which needs a
+per-language delimiter. Every offset survives, so the spans come back aligned.
+
+`directiveKind4` allows leading whitespace before `@others` and `@all`, and
+nothing before the rest. `highlight.rs` matched every directive at column 0
+until this mattered: an unclaimed indented `@others` reads as a decorator on
+the `def` beneath it.
+
+### 19.6 Keeping the answer
+
+`highlight` parses the whole body, and the body pane redraws on every key.
+Measured, release build, generated Python: 48 lines 0.55ms, 500 lines 2.2ms,
+5000 lines 22.7ms. The last row is real -- an `@edit` node holds a whole file
+in one body -- so `Colouring` keeps the last result, keyed on a hash of the
+lines and the language.
+
+Incremental re-parse would beat a cache. It costs threading `InputEdit` out of
+every vim operator in `app.rs`, for a body whose median length in
+`LeoPyRef.leo` is 12 lines.
+
+### 19.7 What is not done
+
+- **Injections.** A SQL string inside Python, CSS inside HTML.
+  `tree_sitter_highlight` takes an injection callback and this passes `|_| None`.
+- **Inline section references.** `<< x >>` in the middle of a line is neither
+  coloured nor masked, so the line after it can lose a keyword.
+- **The other ~170 languages.** They get the scanner, which is a lexer: it
+  knows comments, strings, numbers, keywords and Leo's own constructs, and not
+  that a Python `f"{x}"` holds an expression.
+- **jEdit mode files.** Leo reads them with full span and regex rules. That is
+  159 more files and a rule engine, and tree-sitter covers the languages it
+  would have paid off on.

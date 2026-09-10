@@ -20,6 +20,7 @@ mod keys;
 mod keywords;
 mod minibuffer;
 mod search;
+mod treesit;
 mod ui;
 
 use std::io;
@@ -492,6 +493,25 @@ mod tests {
                 .iter()
                 .any(|(t, c)| t == "# note" && *c == Color::DarkGray),
             "the comment was not coloured: {second:?}"
+        );
+    }
+
+    #[test]
+    fn a_parse_tree_reaches_the_screen() {
+        // The colour a table lookup cannot produce: `f` is a function because
+        // of where it sits, not because it is in a keyword list.
+        let mut app = highlighted("def f(self):\n    return self.n\n");
+        let first = row_colours(&mut app, 60, 8, 2);
+        assert!(
+            first
+                .iter()
+                .any(|(t, c)| t == "f" && *c == Color::LightBlue),
+            "`f` was not coloured as a function: {first:?}"
+        );
+        let second = row_colours(&mut app, 60, 8, 3);
+        assert!(
+            second.iter().any(|(t, c)| t == "n" && *c == Color::Gray),
+            "`n` was not coloured as a field: {second:?}"
         );
     }
 

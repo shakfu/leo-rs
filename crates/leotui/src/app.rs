@@ -113,6 +113,8 @@ pub struct App {
     /// Rows and columns of the outline pane, for paging. Set while drawing.
     pub tree_height: usize,
     pub body_height: usize,
+    /// The body pane's colouring, which survives a redraw that changed nothing.
+    pub colouring: crate::highlight::Colouring,
     /// Total positions, and the outline generation it was counted at.
     /// Counting is O(outline), and the status line asks on every keystroke.
     position_count: (u64, usize),
@@ -162,6 +164,7 @@ impl App {
             quit: false,
             tree_height: 20,
             body_height: 20,
+            colouring: Default::default(),
             position_count: (u64::MAX, 0),
         };
         app.expand_ancestors();

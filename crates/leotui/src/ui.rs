@@ -2,6 +2,8 @@
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use std::rc::Rc;
+
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
@@ -157,11 +159,13 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     // The language comes from the model, and the body may change it partway
     // through: see `highlight`. A node nothing declares a language for is left
     // plain rather than coloured as whatever the outline's default is.
-    let spans = match app.options.syntax {
-        true => highlight::language_of(app.outline(), &app.current)
-            .map(|language| highlight::highlight(&lines, &language))
-            .unwrap_or_default(),
-        false => Vec::new(),
+    let language = match app.options.syntax {
+        true => highlight::language_of(app.outline(), &app.current),
+        false => None,
+    };
+    let spans = match language {
+        Some(language) => app.colouring.of(&lines, &language),
+        None => Rc::default(),
     };
     let shown: Vec<Line> = lines
         .iter()
@@ -383,6 +387,10 @@ fn style_for(class: Class, base: Style) -> Style {
         Class::Number => base.fg(Color::Cyan),
         Class::Keyword => base.fg(Color::Yellow),
         Class::Builtin => base.fg(Color::Blue),
+        Class::Function => base.fg(Color::LightBlue),
+        Class::Type => base.fg(Color::LightCyan),
+        Class::Property => base.fg(Color::Gray),
+        Class::Attribute => base.fg(Color::LightMagenta),
     }
 }
 
