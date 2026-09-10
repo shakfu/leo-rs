@@ -932,18 +932,29 @@ Twelve languages have a tree-sitter grammar compiled in -- c, cplusplus, css,
 go, html, java, javascript, json, python, rust, shell, typescript -- and are
 parsed. Every other language runs the line scanner.
 
-A parse tree adds five classes a table lookup cannot produce -- function, type,
-property, constant, attribute -- because those depend on where an identifier
-sits, not on what it spells. `self.count += 1` colours `count` as a field;
-`fn f(p: P)` colours `f` as a function and `P` as a type.
+A parse tree adds the classes a table lookup cannot produce -- function, type,
+property, attribute, and a builtin told from a plain one -- because those
+depend on where an identifier sits, not on what it spells. `self.count += 1`
+colours `count` as a field; `fn f(p: P)` colours `f` as a function and `P` as a
+type.
 
 Cost, measured on this machine: the release binary goes from 2.8MB to 12MB,
 about 1MB per grammar. A clean release build takes the same 28s either way --
 the C parse tables compile alongside the Rust.
 
-Grammars disagree about what a literal is: tree-sitter-python tags `1` as
-`number`, tree-sitter-rust tags it `constant.builtin`. Both map to one class,
-so a number is the same colour in every language.
+`function.builtin`, `type.builtin` and `constant.builtin` are three classes,
+not one. Of the 31 themes that name both `function.builtin` and `type.builtin`,
+26 give them their own colours, so collapsing them threw away a distinction the
+theme had already made. The line scanner cannot follow: jEdit's `keyword2` to
+`keyword4` is one list holding both, and lands on `function.builtin`, which is
+what most of it is -- 138 entries for Lua, 303 for Tcl, 174 for Scheme are
+library functions and variables, against Objective-C's 19, which are types.
+
+One grammar is corrected rather than followed. tree-sitter-rust tags every
+literal `@constant.builtin`, numbers included, so `treesit` appends two rules
+tagging integers and floats `@constant.numeric`; a later pattern wins. Without
+them a Rust `1` and a Python `1` differ in the 29 of 38 themes that give
+`constant.builtin` and `constant.numeric` their own colours.
 
 ### 19.5 A body is a fragment
 
@@ -981,7 +992,94 @@ Incremental re-parse would beat a cache. It costs threading `InputEdit` out of
 every vim operator in `app.rs`, for a body whose median length in
 `LeoPyRef.leo` is 12 lines.
 
-### 19.7 What is not done
+### 19.7 The theme
+
+`style_for` used to hold twelve `Color` constants. Twelve classes do not fit
+the terminal's sixteen colours: only Red, Magenta, DarkGray, LightBlue and
+LightMagenta clear a contrast of 3.0 on both a black and a white background,
+so any fixed assignment is unreadable on one of them. The palette was the weak
+layer, not the class list.
+
+Themes are read from Helix's files. Their scopes *are* tree-sitter capture
+names -- `keyword`, `type.builtin`, `variable.other.member` -- which is the
+vocabulary `treesit` already speaks, and resolution is longest-prefix, the rule
+tree-sitter already applies to captures. The two agree by construction, and a
+hundred themes exist that nobody here had to write.
+
+Nothing is vendored. `theme.rs` reads `~/.config/leotui/themes`, then
+`~/.config/helix/themes`, then `$HELIX_RUNTIME/themes`, so leotui carries no
+other project's files or licence. `--theme NAME` and `:set theme=NAME` choose
+one; the default is `sonokai`, and when no file of that name exists the
+built-in sixteen colours stand, unannounced.
+
+The parser is by hand. A theme file uses three shapes -- `key = "value"`,
+`key = { fg = "value", modifiers = [..] }`, and a `[palette]` of names to hex
+-- against five crates for `toml` and `serde`. Anything it does not recognise
+is skipped: a theme is decoration, and refusing to start over one helps
+nobody. `inherits` is followed, parents first, capped at eight to survive a
+file that names itself.
+
+`bg` and `underline` are parsed and dropped. Painting a pane's background is a
+decision about the whole frame, not about a run of text, and a theme's
+background under a terminal's own would leave the outline pane and the borders
+mismatched.
+
+#### 19.7.1 Fewer colours than the theme wants
+
+`Depth` is truecolor, the 256-colour cube, or the terminal's sixteen, from
+`COLORTERM` and `TERM`, and `:set colors=true|256|16` overrides the guess.
+Crossterm emits truecolor unconditionally, so the reduction has to be ours.
+
+It measures in CIELAB. Distance in RGB puts grey nearest to anything
+unsaturated, because (127,127,127) sits in the middle of the cube: sonokai's
+pink keyword `#fc5d7c` is 16,790 from DarkGray and 24,034 from red, so a whole
+theme collapsed to two greys at sixteen colours. In CIELAB it is red.
+
+A colour a theme names rather than spells -- `"red"`, not `"#fc5d7c"` -- passes
+through every depth untouched. The terminal's own palette is already the best
+answer for it, and the sixteen keep their ratatui names rather than becoming
+`Indexed`, for the same reason.
+
+The palette is resolved once per frame. A scope walk and a 240-candidate
+CIELAB search per run of text would cost more than the colouring does.
+
+#### 19.7.2 Choosing one
+
+`:theme` names the current theme; `:theme NAME` changes it. Tab completes over
+the names on disk, and the candidates are drawn above the command line.
+
+Tab and the arrow keys both move the selection, and the theme is applied as
+they land on each name, so the outline is the preview.
+`/` already worked this way -- `preview_search` shows where a search would go
+-- and `theme_origin` mirrors `search_origin`: Escape puts back the theme that
+was in force when the line opened, and an accepted line keeps what it shows.
+
+Two details the drop-down forced:
+
+- **The menu reads from the completion, not from the line.** Tab replaces the
+  line with the selection, so recomputing candidates from it would leave a
+  list of one.
+- **Completion replaces a slice, not the line.** `Candidates::at` is where the
+  argument starts, so `theme one` completes `one` and leaves the command
+  alone. Before this, completion only ever rewrote the whole line, because
+  only command names completed.
+
+A bare command name gets no drop-down. A list over the whole command table
+would cover the outline every time `:` is pressed, and vim's in-place
+completion is what a `:` line is expected to do. `Menu::is_open` answers for
+both the drawing and the keys, so the arrows never move something the eye
+cannot see.
+
+Up and Down move the selection only while the drop-down is open, and walk the
+command history otherwise. Left and Right stay on the cursor: a name is being
+typed as well as chosen. Tab takes the longest common prefix before it takes a
+name; an arrow never does, because it is aimed at the list rather than at what
+is safe to type.
+
+`theme::names` is read when the `:` line opens, not per redraw. It is a
+`readdir` over 110 files, and a frame must not touch the disk.
+
+### 19.8 What is not done
 
 - **Injections.** A SQL string inside Python, CSS inside HTML.
   `tree_sitter_highlight` takes an injection callback and this passes `|_| None`.
@@ -993,3 +1091,5 @@ every vim operator in `app.rs`, for a body whose median length in
 - **jEdit mode files.** Leo reads them with full span and regex rules. That is
   159 more files and a rule engine, and tree-sitter covers the languages it
   would have paid off on.
+- **The rest of the frame.** Only the body pane is themed. Borders, the status
+  line and the outline's own flags still hold their own colours.

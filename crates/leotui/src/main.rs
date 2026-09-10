@@ -20,6 +20,7 @@ mod keys;
 mod keywords;
 mod minibuffer;
 mod search;
+mod theme;
 mod treesit;
 mod ui;
 
@@ -49,7 +50,14 @@ struct Args {
     width: u16,
     height: u16,
     read_external: bool,
+    theme: Option<String>,
 }
+
+/// The theme loaded when `--theme` says nothing.
+///
+/// A Helix theme name: leotui reads their files and vendors none, so this is
+/// only a default and holds whatever the user has on disk under that name.
+const DEFAULT_THEME: &str = "sonokai";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
@@ -62,6 +70,7 @@ fn parse_args() -> Result<Args, String> {
         width: 100,
         height: 30,
         read_external: true,
+        theme: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -74,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
                 args.press = spec.split(',').map(|s| s.trim().to_string()).collect();
             }
             "--no-external" => args.read_external = false,
+            "--theme" => args.theme = Some(it.next().ok_or("--theme needs a name")?),
             "--no-kitty-keys" => args.kitty_keys = false,
             "--width" => {
                 args.width = it
@@ -97,7 +107,7 @@ fn parse_args() -> Result<Args, String> {
 
 fn usage() -> String {
     "usage: leotui [FILE.leo] [--dump] [--keys] [--key-specs] [--press KEYS] \
-[--no-external] [--no-kitty-keys] [--width N] [--height N]"
+[--no-external] [--no-kitty-keys] [--width N] [--height N] [--theme NAME]"
         .to_string()
 }
 
@@ -130,6 +140,13 @@ fn main() {
         None => Document::new_empty(""),
     };
     let mut app = App::new(doc);
+    // The default theme, from the user's own Helix or leotui directory. When
+    // there is no such file the built-in sixteen colours stand, and saying so
+    // on every start would be noise.
+    if !app.set_theme(args.theme.as_deref().unwrap_or(DEFAULT_THEME)) && args.theme.is_none() {
+        app.message.clear();
+    }
+
     // Unfold the top level, so an outline opens showing something.
     if let Some(root) = app.outline().root_position() {
         for p in root.self_and_siblings(app.outline()) {
@@ -285,6 +302,7 @@ fn event_loop(app: &mut App) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use leolib::Outline;
     use ratatui::style::Color;
 
@@ -335,7 +353,7 @@ mod tests {
     fn press(app: &mut App, specs: &[&str]) {
         for spec in specs {
             for key in keys::parse(spec) {
-                app.handle_key(crossterm::event::KeyEvent::new(key.code, key.mods));
+                app.handle_key(KeyEvent::new(key.code, key.mods));
             }
         }
     }
@@ -422,7 +440,7 @@ mod tests {
         );
 
         // So are the other lines that take input.
-        app.handle_key(crossterm::event::KeyEvent::new(
+        app.handle_key(KeyEvent::new(
             crossterm::event::KeyCode::Esc,
             crossterm::event::KeyModifiers::NONE,
         ));
@@ -433,7 +451,7 @@ mod tests {
                 line.iter().all(|c| *c == Color::Reset),
                 "the {spec} line is painted: {line:?}"
             );
-            app.handle_key(crossterm::event::KeyEvent::new(
+            app.handle_key(KeyEvent::new(
                 crossterm::event::KeyCode::Esc,
                 crossterm::event::KeyModifiers::NONE,
             ));
@@ -476,6 +494,82 @@ mod tests {
         o.set_headline(&root, "@file demo.py");
         o.set_body(&root, text);
         App::new(Document::new(o))
+    }
+
+    /// The frame's rows as plain text, so an overlay can be looked for.
+    fn frame_text(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| ui::draw(f, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// An app with `:` open, a fixed theme list, and `text` typed.
+    fn with_theme_line(text: &str) -> App {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file demo.py");
+        o.set_body(&root, "x = 1\n");
+        let mut app = App::new(Document::new(o));
+        app.handle_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
+        // A list of its own, so the test does not depend on what is installed.
+        app.theme_names = std::rc::Rc::new(
+            ["onedark", "onedarker", "onelight"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+        for ch in text.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app
+    }
+
+    #[test]
+    fn the_theme_names_are_listed_above_the_command_line() {
+        let mut app = with_theme_line("theme o");
+        let rows = frame_text(&mut app, 60, 14);
+        let joined = rows.join("\n");
+        assert!(joined.contains("onedarker"), "no drop-down:\n{joined}");
+        assert!(joined.contains("3 themes"), "no count:\n{joined}");
+        // The line being typed is still the bottom row.
+        assert!(rows.last().unwrap().starts_with(":theme o"));
+    }
+
+    #[test]
+    fn a_command_name_gets_no_drop_down() {
+        // A list over the whole command table would cover the outline every
+        // time `:` is pressed.
+        let mut app = with_theme_line("goto");
+        let joined = frame_text(&mut app, 60, 14).join("\n");
+        assert!(!joined.contains("themes"), "{joined}");
+    }
+
+    #[test]
+    fn tab_highlights_the_name_it_lands_on() {
+        let mut app = with_theme_line("theme o");
+        // The first Tab takes the common prefix; the second takes a match.
+        for _ in 0..2 {
+            app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(60, 14)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let highlighted: String = (0..14)
+            .flat_map(|y| (0..60).map(move |x| (x, y)))
+            .filter(|&(x, y)| buffer[(x, y)].bg == Color::Blue)
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .collect();
+        assert!(
+            highlighted.contains("onedark"),
+            "nothing was highlighted: {highlighted:?}"
+        );
     }
 
     #[test]

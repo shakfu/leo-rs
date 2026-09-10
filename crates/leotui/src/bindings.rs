@@ -246,7 +246,7 @@ mod tests {
 
     /// Commands reached only through `:`, because they take an argument or
     /// are not worth a key.
-    const COMMAND_LINE_ONLY: &[&str] = &["goto-visible-row"];
+    const COMMAND_LINE_ONLY: &[&str] = &["goto-visible-row", "theme"];
 
     #[test]
     fn every_command_is_reachable() {

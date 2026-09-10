@@ -197,6 +197,12 @@ The body is coloured by the language declared at the node: an `@language` direct
 
 Twelve languages -- C, C++, CSS, Go, HTML, Java, JavaScript, JSON, Python, Rust, shell, TypeScript -- are parsed with tree-sitter, which tells a function from a field from a type. Every other language Leo knows a comment delimiter for runs a line scanner instead: comments, strings, numbers, and keywords from Leo's colorizer modes for 33 of them.
 
+Colours come from a Helix theme, read from `~/.config/leotui/themes` or `~/.config/helix/themes`. Nothing is vendored, so the themes are whichever ones you already have. The default is `sonokai`, and without a file of that name leotui uses the terminal's sixteen colours.
+
+`:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. `--theme NAME` does the same at launch.
+
+Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess.
+
 Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
 ## `@auto`

@@ -12,6 +12,7 @@ use crate::app::{App, Focus, Mode};
 use crate::bindings::{self, BINDINGS};
 use crate::commands;
 use crate::highlight::{self, Class};
+use crate::theme::{Colour, Depth, Theme};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -38,6 +39,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::Help {
         draw_help(f, app, area);
     }
+    draw_menu(f, app, area);
 }
 
 /// The path to the current node, so a deep node says where it is.
@@ -167,6 +169,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         Some(language) => app.colouring.of(&lines, &language),
         None => Rc::default(),
     };
+    let palette = palette(&app.theme, app.depth);
     let shown: Vec<Line> = lines
         .iter()
         .enumerate()
@@ -193,7 +196,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
                 if text.is_empty() {
                     continue;
                 }
-                cells.push(Span::styled(text, style_for(class, base)));
+                cells.push(Span::styled(text, style_for(class, base, &palette)));
             }
             Line::from(cells)
         })
@@ -376,21 +379,159 @@ fn split_line<'a>(line: &'a str, spans: &[highlight::Span]) -> Vec<(&'a str, Cla
     out
 }
 
-/// The colour for one class, over whatever the line's own style is.
-fn style_for(class: Class, base: Style) -> Style {
-    match class {
-        Class::Plain => base,
-        Class::Directive => base.fg(Color::Magenta).add_modifier(Modifier::BOLD),
-        Class::Section => base.fg(Color::Magenta),
-        Class::Comment => base.fg(Color::DarkGray),
-        Class::Str => base.fg(Color::Green),
-        Class::Number => base.fg(Color::Cyan),
-        Class::Keyword => base.fg(Color::Yellow),
-        Class::Builtin => base.fg(Color::Blue),
-        Class::Function => base.fg(Color::LightBlue),
-        Class::Type => base.fg(Color::LightCyan),
-        Class::Property => base.fg(Color::Gray),
-        Class::Attribute => base.fg(Color::LightMagenta),
+/// The completion drop-down, above the `:` line.
+///
+/// Only for a command's argument. A bare command name completes in place, as
+/// vim's does, and a list over the whole command table would cover the outline
+/// every time `:` is pressed.
+fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
+    let Some(mini) = &app.mini else {
+        return;
+    };
+    let menu = mini.menu(&app.theme_names);
+    if !menu.is_open() || area.height < 3 {
+        return;
+    }
+
+    // Columns wide enough for the longest name, as many as the width allows.
+    let width = menu
+        .items
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(1)
+        + 2;
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let columns = (inner_width / width).max(1);
+    let rows = menu.items.len().div_ceil(columns);
+    let height = (rows as u16 + 2).min(area.height.saturating_sub(1)).min(12);
+    let visible = height.saturating_sub(2) as usize;
+
+    // Scroll by whole columns, so the selected name is on screen.
+    let first = match menu.selected {
+        Some(i) if visible > 0 => (i % rows) / visible * visible,
+        _ => 0,
+    };
+
+    let lines: Vec<Line> = (first..(first + visible).min(rows))
+        .map(|row| {
+            let mut cells: Vec<Span> = Vec::new();
+            for column in 0..columns {
+                let Some(name) = menu.items.get(column * rows + row) else {
+                    continue;
+                };
+                let text = format!("{name:<width$}");
+                let style = match menu.selected == Some(column * rows + row) {
+                    true => Style::default().bg(Color::Blue).fg(Color::White),
+                    false => Style::default(),
+                };
+                cells.push(Span::styled(text, style));
+            }
+            Line::from(cells)
+        })
+        .collect();
+
+    let popup = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(1 + height),
+        width: area.width,
+        height,
+    };
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(format!(" {} themes ", menu.items.len())),
+        ),
+        popup,
+    );
+}
+
+/// The Helix scope each class is drawn as.
+///
+/// A theme names scopes, not classes, and resolves `type.builtin` to `type`
+/// when it defines only the second. `Plain` is absent, and keeps the
+/// terminal's own foreground.
+const SCOPES: &[(Class, &str)] = &[
+    (Class::Directive, "keyword.directive"),
+    (Class::Section, "markup.link.text"),
+    (Class::Comment, "comment"),
+    (Class::Str, "string"),
+    (Class::Number, "constant.numeric"),
+    (Class::Keyword, "keyword"),
+    (Class::BuiltinFunction, "function.builtin"),
+    (Class::BuiltinType, "type.builtin"),
+    (Class::BuiltinConstant, "constant.builtin"),
+    (Class::Function, "function"),
+    (Class::Type, "type"),
+    (Class::Property, "variable.other.member"),
+    (Class::Attribute, "attribute"),
+];
+
+/// Every class's style, resolved once for the frame.
+///
+/// Resolving a scope walks its prefixes, and reducing a colour searches 240
+/// candidates in CIELAB. A body holds thousands of runs and neither answer
+/// changes between them.
+fn palette(theme: &Theme, depth: Depth) -> Vec<(Class, Style)> {
+    SCOPES
+        .iter()
+        .map(|&(class, scope)| {
+            let face = theme.face(scope);
+            let mut style = Style::default();
+            if let Some(colour) = face.fg {
+                style = style.fg(terminal_colour(colour.reduce(depth)));
+            }
+            if face.bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            if face.italic {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            (class, style)
+        })
+        .collect()
+}
+
+/// The style for one class, over whatever the line's own style is.
+///
+/// A class the theme says nothing about is left plain rather than guessed at.
+fn style_for(class: Class, base: Style, palette: &[(Class, Style)]) -> Style {
+    match palette.iter().find(|(c, _)| *c == class) {
+        Some((_, style)) => base.patch(*style),
+        None => base,
+    }
+}
+
+/// A reduced colour as ratatui names it.
+///
+/// The sixteen keep their names rather than becoming `Indexed`, so the
+/// terminal's own palette decides them.
+fn terminal_colour(colour: Colour) -> Color {
+    let n = match colour {
+        Colour::Rgb(r, g, b) => return Color::Rgb(r, g, b),
+        Colour::Ansi(n) => n,
+    };
+    match n {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::Gray,
+        8 => Color::DarkGray,
+        9 => Color::LightRed,
+        10 => Color::LightGreen,
+        11 => Color::LightYellow,
+        12 => Color::LightBlue,
+        13 => Color::LightMagenta,
+        14 => Color::LightCyan,
+        15 => Color::White,
+        n => Color::Indexed(n),
     }
 }
 
@@ -400,4 +541,60 @@ fn truncate(s: &str, width: usize) -> String {
         return String::new();
     }
     s.chars().take(width).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_terminals_own_sixteen_keep_their_names() {
+        // `Indexed(3)` and `Yellow` paint the same cell, but only the name
+        // follows a terminal whose palette has been changed.
+        assert_eq!(terminal_colour(Colour::Ansi(3)), Color::Yellow);
+        assert_eq!(terminal_colour(Colour::Ansi(8)), Color::DarkGray);
+        assert_eq!(terminal_colour(Colour::Ansi(200)), Color::Indexed(200));
+        assert_eq!(terminal_colour(Colour::Rgb(1, 2, 3)), Color::Rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn every_class_but_plain_has_a_scope() {
+        // A class with no entry is drawn plain, which for anything but
+        // `Plain` would be a colour silently lost.
+        for class in [
+            Class::Directive,
+            Class::Section,
+            Class::Comment,
+            Class::Str,
+            Class::Number,
+            Class::Keyword,
+            Class::BuiltinFunction,
+            Class::BuiltinType,
+            Class::BuiltinConstant,
+            Class::Function,
+            Class::Type,
+            Class::Property,
+            Class::Attribute,
+        ] {
+            assert!(
+                SCOPES.iter().any(|(c, _)| *c == class),
+                "{class:?} has no scope"
+            );
+        }
+        assert!(!SCOPES.iter().any(|(c, _)| *c == Class::Plain));
+    }
+
+    #[test]
+    fn a_reduced_theme_reaches_the_style() {
+        let palette = palette(&Theme::builtin(), Depth::Ansi16);
+        let base = Style::default();
+        assert_eq!(
+            style_for(Class::Keyword, base, &palette).fg,
+            Some(Color::Yellow)
+        );
+        assert_eq!(style_for(Class::Plain, base, &palette).fg, None);
+        assert!(style_for(Class::Directive, base, &palette)
+            .add_modifier
+            .contains(Modifier::BOLD));
+    }
 }

@@ -28,22 +28,19 @@ use crate::highlight::{Class, Span};
 const CAPTURES: &[(&str, Class)] = &[
     ("attribute", Class::Attribute),
     ("comment", Class::Comment),
-    // Grammars disagree about what a literal is: tree-sitter-python tags `1`
-    // as `number`, tree-sitter-rust tags it `constant.builtin`. One class for
-    // all of them keeps a number the same colour in every language.
     ("constant", Class::Number),
-    ("constant.builtin", Class::Number),
+    ("constant.builtin", Class::BuiltinConstant),
     ("constructor", Class::Type),
     ("escape", Class::Str),
     ("function", Class::Function),
-    ("function.builtin", Class::Builtin),
+    ("function.builtin", Class::BuiltinFunction),
     ("keyword", Class::Keyword),
     ("number", Class::Number),
     ("property", Class::Property),
     ("string", Class::Str),
     ("tag", Class::Type),
     ("type", Class::Type),
-    ("type.builtin", Class::Builtin),
+    ("type.builtin", Class::BuiltinType),
     // CSS names its at-rules rather than calling them keywords.
     ("charset", Class::Keyword),
     ("import", Class::Keyword),
@@ -73,6 +70,12 @@ macro_rules! grammar {
         Some(&*CONFIG)
     }};
 }
+
+/// tree-sitter-rust tags every literal `@constant.builtin`, numbers included.
+const RUST_NUMBERS: &str = "
+(integer_literal) @constant.numeric
+(float_literal) @constant.numeric
+";
 
 /// The grammar for `language`, under Leo's name for it.
 fn config_for(language: &str) -> Option<&'static HighlightConfiguration> {
@@ -131,7 +134,7 @@ fn config_for(language: &str) -> Option<&'static HighlightConfiguration> {
         "rust" => grammar!(
             "rust",
             tree_sitter_rust::LANGUAGE.into(),
-            tree_sitter_rust::HIGHLIGHTS_QUERY
+            &format!("{}{}", tree_sitter_rust::HIGHLIGHTS_QUERY, RUST_NUMBERS)
         ),
         "shell" | "shellscript" => grammar!(
             "bash",

@@ -425,6 +425,9 @@ pub static COMMANDS: &[Command] = &[
         "write the changed external files",
         |app, _| app.write_external(),
     ),
+    // The command line runs this one: it takes an argument, and Tab completes
+    // over the themes on disk. The entry is here so `:the` completes to it.
+    c("theme", "change the theme, or name the current one", noop),
     c("help", "show the key bindings", |app, _| {
         app.mode = Mode::Help;
         app.help_scroll = 0;

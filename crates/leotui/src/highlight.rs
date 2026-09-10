@@ -38,8 +38,17 @@ pub enum Class {
     /// A literal value: a number, a boolean, a named constant.
     Number,
     Keyword,
-    /// A library name: jEdit's `keyword2` to `keyword4`.
-    Builtin,
+    /// A builtin function: `print`, `strlen`.
+    ///
+    /// Also where the line scanner puts jEdit's `keyword2` to `keyword4`,
+    /// which is one list with no way to tell a function from a type. Those
+    /// lists are mostly library functions and variables -- 138 for Lua, 303
+    /// for Tcl, 174 for Scheme -- against Objective-C's 19, which are types.
+    BuiltinFunction,
+    /// A builtin type: `int`, `u8`.
+    BuiltinType,
+    /// A builtin constant: `None`, `true`, `nil`.
+    BuiltinConstant,
     /// A function or method, defined or called.
     Function,
     /// A type, or a constructor of one.
@@ -542,7 +551,7 @@ fn flush_word(
     } else if rules.keywords.contains(&word) {
         Class::Keyword
     } else if rules.builtins.contains(&word) {
-        Class::Builtin
+        Class::BuiltinFunction
     } else {
         return;
     };
@@ -963,7 +972,7 @@ mod tests {
                 ("struct", Class::Keyword),
                 ("P", Class::Type),
                 ("n", Class::Property),
-                ("u8", Class::Builtin)
+                ("u8", Class::BuiltinType)
             ]
         );
         assert_eq!(
@@ -972,7 +981,7 @@ mod tests {
                 ("fn", Class::Keyword),
                 ("f", Class::Function),
                 ("P", Class::Type),
-                ("u8", Class::Builtin),
+                ("u8", Class::BuiltinType),
                 ("g", Class::Function),
                 ("n", Class::Property)
             ]
@@ -1053,5 +1062,61 @@ mod tests {
         assert!(out[1].is_empty(), "{:?}", out[1]);
         assert!(out[3].is_empty(), "{:?}", out[3]);
         assert_eq!(classes(&src[5], &out[5])[0], ("int", Class::Type));
+    }
+
+    #[test]
+    fn a_builtin_function_a_builtin_type_and_a_builtin_constant_are_told_apart() {
+        // Helix themes colour the three differently in 26 of the 31 that name
+        // both `function.builtin` and `type.builtin`, so one class lost that.
+        let src = lines("x = len([1]) if True else None");
+        let out = highlight(&src, "python");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![
+                ("len", Class::BuiltinFunction),
+                ("1", Class::Number),
+                ("if", Class::Keyword),
+                ("True", Class::BuiltinConstant),
+                ("else", Class::Keyword),
+                ("None", Class::BuiltinConstant)
+            ]
+        );
+        let src = lines("let n: u8 = 1;");
+        let out = highlight(&src, "rust");
+        assert_eq!(
+            classes(&src[0], &out[0]),
+            vec![
+                ("let", Class::Keyword),
+                ("u8", Class::BuiltinType),
+                ("1", Class::Number)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rust_number_is_a_number_and_not_a_builtin_constant() {
+        // tree-sitter-rust tags every literal `@constant.builtin`, numbers
+        // included, so `treesit` appends a rule that tags them again. Without
+        // it a Rust `1` and a Python `1` are different colours in the 29 of 38
+        // themes that give `constant.builtin` and `constant.numeric` their own.
+        let src = lines("let n = 1.5;\nlet ok = true;");
+        let out = highlight(&src, "rust");
+        assert_eq!(classes(&src[0], &out[0])[1], ("1.5", Class::Number));
+        assert_eq!(
+            classes(&src[1], &out[1])[1],
+            ("true", Class::BuiltinConstant)
+        );
+    }
+
+    #[test]
+    fn the_scanners_one_builtin_list_lands_on_builtin_functions() {
+        // jEdit's `keyword2` to `keyword4` is one list with no way to tell a
+        // function from a type, and it holds mostly functions.
+        let src = lines("print(math.pi)");
+        let out = highlight(&src, "lua");
+        assert_eq!(
+            classes(&src[0], &out[0])[0],
+            ("print", Class::BuiltinFunction)
+        );
     }
 }

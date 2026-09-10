@@ -14,6 +14,8 @@ use crate::editor::motion::Kind;
 use crate::editor::parse::{Action, Parser};
 use crate::editor::{self, Editor};
 use crate::keys::{self, Key, Pending};
+use std::rc::Rc;
+
 use crate::minibuffer::{self, MiniKind, Minibuffer};
 use crate::search::{self, Direction, LastSearch, Scope};
 
@@ -115,9 +117,27 @@ pub struct App {
     pub body_height: usize,
     /// The body pane's colouring, which survives a redraw that changed nothing.
     pub colouring: crate::highlight::Colouring,
+    /// What each class is drawn as, and how many colours the terminal has.
+    pub theme: crate::theme::Theme,
+    pub depth: crate::theme::Depth,
+    /// Every theme on disk, read when the `:` line first opens. Completion
+    /// and the drop-down both walk it, and a redraw must not touch the disk.
+    pub theme_names: Rc<Vec<String>>,
+    /// The theme in force before `:theme` began previewing, so Escape can put
+    /// it back. `search_origin` does the same for `/`.
+    theme_origin: Option<String>,
     /// Total positions, and the outline generation it was counted at.
     /// Counting is O(outline), and the status line asks on every keystroke.
     position_count: (u64, usize),
+}
+
+/// The theme a `:theme NAME` line names, if it names one.
+fn theme_argument(line: &str) -> Option<String> {
+    let parsed = minibuffer::parse_command(line)?;
+    match parsed.name == "theme" && !parsed.arg.is_empty() {
+        true => Some(parsed.arg),
+        false => None,
+    }
 }
 
 /// One row of the outline pane.
@@ -165,6 +185,12 @@ impl App {
             tree_height: 20,
             body_height: 20,
             colouring: Default::default(),
+            // A theme is loaded by `main`, so a test's colours do not depend
+            // on what is installed on the machine running it.
+            theme: crate::theme::Theme::builtin(),
+            depth: crate::theme::Depth::detect(),
+            theme_names: Rc::new(Vec::new()),
+            theme_origin: None,
             position_count: (u64::MAX, 0),
         };
         app.expand_ancestors();
@@ -489,6 +515,9 @@ impl App {
         if kind.is_search() {
             self.search_origin = Some((self.current.clone(), self.body_cursor_row()));
         }
+        if kind == MiniKind::Command && self.theme_names.is_empty() {
+            self.theme_names = Rc::new(crate::theme::names());
+        }
         self.mini = Some(Minibuffer::new(kind, text));
     }
 
@@ -513,11 +542,18 @@ impl App {
                 if mini.kind == MiniKind::Command {
                     mini.cancel_completion();
                 }
+                self.restore_theme();
                 self.finish_mini(false)
             }
             KeyCode::Enter => self.finish_mini(true),
-            KeyCode::Tab => mini.complete(false),
-            KeyCode::BackTab => mini.complete(true),
+            KeyCode::Tab | KeyCode::BackTab => {
+                let backwards = event.code == KeyCode::BackTab;
+                let names = Rc::clone(&self.theme_names);
+                if let Some(mini) = self.mini.as_mut() {
+                    mini.complete(backwards, &names);
+                }
+                self.preview_theme();
+            }
             KeyCode::Backspace => {
                 mini.backspace();
                 self.preview_search();
@@ -532,6 +568,19 @@ impl App {
             KeyCode::End => mini.end(),
             KeyCode::Up | KeyCode::Down => {
                 let back = event.code == KeyCode::Up;
+                let names = Rc::clone(&self.theme_names);
+                // While a drop-down is on screen the arrows move through it.
+                // It is what the eye is on, and Escape closes it.
+                if self.mini.as_ref().is_some_and(|m| m.menu(&names).is_open()) {
+                    if let Some(mini) = self.mini.as_mut() {
+                        mini.select(back, &names);
+                    }
+                    self.preview_theme();
+                    return;
+                }
+                let Some(mini) = self.mini.as_ref() else {
+                    return;
+                };
                 let kind = mini.kind;
                 let entries = match kind {
                     MiniKind::Command => self.command_history.clone(),
@@ -547,6 +596,44 @@ impl App {
                 self.preview_search();
             }
             _ => {}
+        }
+    }
+
+    /// Show the theme the `:` line has landed on, as `/` shows a match.
+    ///
+    /// Only a chosen completion previews. Typing `theme onedar` should not
+    /// keep failing to load a theme and saying so.
+    fn preview_theme(&mut self) {
+        let Some(mini) = self.mini.as_ref() else {
+            return;
+        };
+        if mini.kind != MiniKind::Command {
+            return;
+        }
+        let Some(name) = theme_argument(&mini.buffer) else {
+            return;
+        };
+        if mini.selected().is_none() {
+            return;
+        }
+        if self.theme_origin.is_none() {
+            self.theme_origin = Some(self.theme.name().to_string());
+        }
+        self.set_theme(&name);
+    }
+
+    /// Put back the theme a preview replaced.
+    fn restore_theme(&mut self) {
+        if let Some(name) = self.theme_origin.take() {
+            if name != self.theme.name() {
+                match name.as_str() {
+                    "builtin" => self.theme = crate::theme::Theme::builtin(),
+                    name => {
+                        self.set_theme(name);
+                    }
+                }
+                self.message.clear();
+            }
         }
     }
 
@@ -619,6 +706,11 @@ impl App {
 
     /// Close the line at the bottom, acting on it if it was accepted.
     pub fn finish_mini(&mut self, accepted: bool) {
+        // An accepted line keeps whatever the preview applied, so there is
+        // nothing left to put back.
+        if accepted {
+            self.theme_origin = None;
+        }
         let Some(mini) = self.mini.take() else {
             return;
         };
@@ -742,6 +834,12 @@ impl App {
             },
             "open" => self.open_file(&parsed.arg),
             "set" => self.set_option(&parsed.arg),
+            "theme" if parsed.arg.is_empty() => {
+                self.message = format!("theme: {}", self.theme.name())
+            }
+            "theme" => {
+                self.set_theme(&parsed.arg);
+            }
             "help" if !parsed.arg.is_empty() => match commands::find(&parsed.arg) {
                 Some(c) => {
                     let keys = crate::bindings::keys_for(c.name).join(" ");
@@ -800,10 +898,32 @@ impl App {
             ("nonumber", None) | ("nonu", None) => self.options.number = false,
             ("syntax", None) => self.options.syntax = true,
             ("nosyntax", None) => self.options.syntax = false,
+            ("colors", Some(v)) | ("colours", Some(v)) => match crate::theme::Depth::parse(v) {
+                Some(depth) => self.depth = depth,
+                None => self.message = format!("set: colors must be true, 256 or 16, not {v}"),
+            },
             _ => {
                 self.message = format!(
-                    "set: unknown option: {arg}. try search=all|headlines, split=N, wrap, number"
+                    "set: unknown option: {arg}. try search=all|headlines, split=N, wrap, \
+                     number, syntax, colors=true|256|16"
                 )
+            }
+        }
+    }
+
+    /// Load a theme by name, keeping the current one if there is no such file.
+    ///
+    /// Returns false when nothing was found, which `main` uses to fall back
+    /// without a message and `:set theme=` uses to report one.
+    pub fn set_theme(&mut self, name: &str) -> bool {
+        match crate::theme::Theme::load(name) {
+            Some(theme) => {
+                self.theme = theme;
+                true
+            }
+            None => {
+                self.message = format!("theme not found: {name}");
+                false
             }
         }
     }
@@ -1463,6 +1583,90 @@ mod tests {
         press(&mut app, "/");
         type_text(&mut app, "ALPHA");
         assert!(app.message.contains("not found"), "{}", app.message);
+    }
+
+    #[test]
+    fn escape_puts_back_the_line_and_the_theme_a_preview_replaced() {
+        let mut app = app();
+        press(&mut app, ":");
+        app.theme_names = std::rc::Rc::new(
+            ["onedark", "onedarker"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+        type_text(&mut app, "theme one");
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onedark");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.mini.is_none());
+        // Neither theme is on this machine's disk, so the built-in stands.
+        assert_eq!(app.theme.name(), "builtin");
+    }
+
+    #[test]
+    fn tab_completes_a_theme_name_without_disturbing_the_command() {
+        let mut app = app();
+        press(&mut app, ":");
+        app.theme_names = std::rc::Rc::new(vec!["onelight".to_string()]);
+        type_text(&mut app, "theme onel");
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onelight");
+    }
+
+    #[test]
+    fn the_arrows_move_the_drop_down_and_otherwise_walk_the_history() {
+        let mut app = app();
+        app.command_history = vec!["save".to_string()];
+        // No drop-down: Up is the history, as it was.
+        press(&mut app, ":");
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "save");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        // A drop-down: Up and Down move through it instead.
+        press(&mut app, ":");
+        app.theme_names = std::rc::Rc::new(
+            ["onedark", "onelight"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+        type_text(&mut app, "theme one");
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onedark");
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onelight");
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.mini.as_ref().unwrap().buffer, "theme onedark");
+    }
+
+    #[test]
+    fn set_colors_takes_the_three_depths_and_refuses_the_rest() {
+        let mut app = app();
+        app.run_command_line("set colors=16");
+        assert_eq!(app.depth, crate::theme::Depth::Ansi16);
+        app.run_command_line("set colors=true");
+        assert_eq!(app.depth, crate::theme::Depth::True);
+        app.run_command_line("set colors=lots");
+        assert!(
+            app.message.contains("must be true, 256 or 16"),
+            "{}",
+            app.message
+        );
+        // A refused value leaves the depth alone.
+        assert_eq!(app.depth, crate::theme::Depth::True);
+    }
+
+    #[test]
+    fn theme_names_the_current_one_and_reports_a_missing_one() {
+        let mut app = app();
+        app.run_command_line("theme");
+        assert!(app.message.contains("builtin"), "{}", app.message);
+        app.run_command_line("theme no-such-theme-anywhere");
+        assert!(app.message.contains("not found"), "{}", app.message);
+        // The theme that was working stays working.
+        assert_eq!(app.theme.name(), "builtin");
     }
 
     #[test]
