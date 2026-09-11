@@ -116,6 +116,13 @@ def build_auto_languages(o, add):
     return sources
 
 
+def build_unreadable(o, add):
+    """An @file whose file has no sentinels, which both report unread, and one that reads."""
+    add('@file plain.py', '@others\n')
+    add('@clean readable.txt', 'A file that reads.\n')
+    return {'plain.py': 'x = 1\n'}
+
+
 BUILDERS = {
     'directives': build_directives,
     'clones': build_clones,
@@ -123,6 +130,7 @@ BUILDERS = {
     'encoding': build_encoding,
     'sentinel_lookalikes': build_sentinel_lookalikes,
     'auto_languages': build_auto_languages,
+    'unreadable': build_unreadable,
 }
 
 

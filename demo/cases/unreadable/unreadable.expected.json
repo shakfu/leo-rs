@@ -1,0 +1,20 @@
+{
+ "read_external": true,
+ "unread": [
+  "@file plain.py"
+ ],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file plain.py",
+   "b": ""
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@clean readable.txt",
+   "b": "A file that reads.\n"
+  }
+ ]
+}

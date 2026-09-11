@@ -2,6 +2,16 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
+## Unreleased
+
+### Added
+
+- **Corpus case `unreadable`**: an `@file` whose file has no sentinels, which both implementations report unread, beside an `@clean` file that reads. No case had an unread file, so nothing checked that Python and Rust agree on which files are unread.
+
+### Changed
+
+- `corpus.rs`'s tangle test skips files the read reported unread. They have nothing in the outline to reproduce.
+
 ## 0.2.1
 
 The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already contains every change below except the `quick-xml` and `ratatui` upgrades and `make audit`.
