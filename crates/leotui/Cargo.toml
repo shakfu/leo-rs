@@ -5,13 +5,17 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+# Reads the workspace README at ../../README.md, which the package lacks.
+exclude = ["tests/readme.rs"]
 
 [[bin]]
 name = "leotui"
 path = "src/main.rs"
 
 [dependencies]
-leolib = { path = "../leolib" }
+leolib.workspace = true
 once_cell = "1"
 # Already in the build through leolib; `:s` compiles its pattern with it.
 regex = "1"

@@ -4,7 +4,7 @@ A Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model
 
 Leo's outline model was separated from its Qt front end in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. `leotui` is one front end over that crate. Nothing in `leolib` depends on it.
 
-![Screenshot the tui.](docs/media/tui.png)
+![Screenshot the tui.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/tui.png)
 
 ## Status
 
@@ -29,6 +29,16 @@ crates/leotui     the terminal front end.
 ```
 
 `leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leotui` adds `ratatui` and `crossterm`.
+
+## Installing
+
+```sh
+cargo install leotui --locked      # from crates.io
+cargo install --path crates/leotui --locked   # from a checkout
+cargo add leolib                   # the library, in your own crate
+```
+
+`--locked` builds with the `Cargo.lock` shipped in the package. A checkout build uses the workspace's `lto = true`; the crates.io build does not, as cargo drops workspace profiles from a published package.
 
 ## Using leolib
 

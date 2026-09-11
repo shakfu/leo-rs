@@ -10,7 +10,17 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **`:bufdo %s/pattern/replacement/[flags]`**, vim's `:bufdo` with each node's body a buffer: `:s` in every body, as one undo step. A clone's body is changed once. Headlines are left alone, as a buffer's name is in vim.
 
+- An install section in the README.
+
+### Changed
+
+- Both crates take `repository` and `readme` from `[workspace.package]`, so crates.io shows the README and links the repository. The README's screenshot link is absolute, as the image is in neither package.
+
+- `tests/readme.rs` is excluded from the `leotui` package. It reads `../../README.md`, which an unpacked crate does not have.
+
 ### Fixed
+
+- `cargo publish` refused `leotui`: its `leolib` dependency had a path and no version. The version is set in `[workspace.dependencies]`, beside the workspace version, so a bump edits one file.
 
 - The 0.2.0 entry gives the outline pane's default width as 30%; 0.2.0 shipped with 35%.
 
