@@ -509,6 +509,9 @@ fn file_mtime(path: &str) -> Option<u64> {
 /// The comparison is what makes a save of an untouched outline free. The
 /// write is to a sibling temporary file, renamed into place: a crash midway
 /// leaves the original intact rather than a truncated source file.
+///
+/// The temporary file takes the original's permissions before the rename,
+/// or rewriting an executable script would leave it without `+x`.
 pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool, String> {
     if let Ok(old) = std::fs::read(path) {
         if old == contents.as_bytes() {
@@ -521,6 +524,16 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool,
     }
     let tmp = format!("{path}.leo-rs-tmp");
     std::fs::write(&tmp, contents.as_bytes()).map_err(|e| format!("{tmp}: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{path}: {e}"))?;
+    let finish = || -> Result<(), String> {
+        if let Ok(meta) = std::fs::metadata(path) {
+            std::fs::set_permissions(&tmp, meta.permissions())
+                .map_err(|e| format!("{tmp}: {e}"))?;
+        }
+        std::fs::rename(&tmp, path).map_err(|e| format!("{path}: {e}"))
+    };
+    if let Err(e) = finish() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     Ok(true)
 }

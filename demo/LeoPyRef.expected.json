@@ -1,0 +1,3228 @@
+{
+ "read_external": false,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "ekr.20051031040240",
+   "h": "Startup",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20080412053100.5",
+   "h": "@settings",
+   "b": "\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260526171943.1",
+   "h": "@bool minibuffer-find-mode = True",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20220904210247.1",
+   "h": "@enabled-plugins",
+   "b": "# This is a copy of the @enabled-plugins node from leoSettings.leo,\n# ensuring that the @enabled-plugins node in myLeoSettings.leo has no effect.\n\n# Standard plugins...\n\nplugins_menu.py     # Adds 'Plugins' menu.\nmod_scripting.py    # Support for @button and @command.\nnav_qt.py           # Forward/back buttons & goto-next/prev-history-node\nqt_layout.py        # Creates qt_layout menu in the Plugins menu.\n\n# viewrendered.py     # (Or viewrendered3.py) Plugins menu support.\n\n# Disabled standard menus...\n\n# contextmenu.py      # Required by the vim.py and xemacs.py plugins.\n# mod_autosave.py   # Creates .bak files.\n# nodetags.py       # Supports tags via uA's.\n# quicksearch.py    # Nav pane.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140902155015.18674",
+   "h": "@bool qt-use-scintilla = False",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20250715195948.1",
+   "h": "@bool report-changed-at-clean-nodes = False",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20221129012213.1",
+   "h": "@bool run-flake8-on-write = False",
+   "b": "# See flake8 settings in setup.cfg."
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260808003136.1",
+   "h": "@bool run-ruff-on-write = False",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260820160722.1",
+   "h": "@bool run-ty-on-write = False",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20210530065000.2",
+   "h": "@data exec-script-commands",
+   "b": "# This node contains the commands needed to execute a program in a particular language.\n# Format: language-name: command\n\n#\n# execute-general-script always creates a temporary file.\n# Just before executing the command, execute-general-script\n# Replaces <FILE> by the name of the temporary file.\n\n# This does work.\n# python: python -v <FILE>\n\ngo: go run .\npython: python\nrust: rustc\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20210530065000.3",
+   "h": "@data exec-script-patterns",
+   "b": "# This node contains the regex pattern to determine the line number in error messages.\n# Format: language-name: regex pattern\n#\n# Patterns must define two groups, in either order:\n# One group, containing only digits, defines the line number.\n# The other group defines the file name.\n\ngo: ^\\s*(.*):([0-9]+):([0-9]+):.+$\npython: ^\\s*File \"(.+)\", line ([0-9]+), in .+$\nrust: ^\\s*--> (.+):([0-9]+):([0-9]+)\\s*$"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150425145248.1",
+   "h": "@data history-list",
+   "b": "show-node-files\ndump-last-colorizer-trace\npylint\nexecute-script\n\n# test-one\n# clone-diff-pr\n# ctrl-click-at-cursor\n# show-commands\n# show-bindings\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20240107154430.1",
+   "h": "@int max-find-long-lines-length = 100",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140916101314.19538",
+   "h": "@string target_language = python",
+   "b": "The default language if no @language or @comment is in effect.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260111055821.1",
+   "h": "Beautifying files",
+   "b": "# These settings control ruff format, which is compatible with black."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260111055821.2",
+   "h": "@bool beautify-python-code-on-write = True",
+   "b": "# True: beautify all @<file> nodes in the outline using Leo's token-based beautifier.\n# True can result in much slower writes."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260111055821.4",
+   "h": "@int black-line-length = 100",
+   "b": "# This setting overrides any value in pyproject.toml or ruff.toml\n# Leo uses 120 for its own files."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260111055821.5",
+   "h": "@string black-toml = None",
+   "b": "# If given, this argument should be a full, absolute path to pyproject.toml or ruff.toml.\n# If not given, Leo's beautifier uses Leo's pyproject.toml file.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160122104332.1",
+   "h": "Buttons & commands",
+   "b": "@language python\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260113153148.1",
+   "h": "@@@button test bed",
+   "b": "\"\"\"Generic test bed for scripts and other development\"\"\"\ng.cls()\n# g.app.log.clearLog()\nimport textwrap\n\nresults_p = g.findTopLevelNode(c, 'TestResults')\nif not results_p:\n    results_p = c.lastTopLevel().insertAfter()\n    results_p.h = 'TestResults'\n\n<< define test_s >>\n@others\n\nresults = remove_cruft(self=None, diff_list=g.splitLines(test_s))\nresults_p.b = results\nc.redraw(results_p)\n\n@language python\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20260114092617.1",
+   "h": "<< define test_s >>",
+   "b": "@language diff\n\ntest_s = textwrap.dedent('''\n\n@nosearch\n@language patch\n--- master\n+++ devel\n@@ -1,8 +1,9 @@\n-#@+leo-ver=5-thin\n-#@+node:ekr.20150514035236.1: * @file ../commands/abbrevCommands.py\n+# @+leo-ver=5-thin\n+# @+node:ekr.20150514035236.1: * @file ../commands/abbrevCommands.py\n \"\"\"Leo's abbreviations commands.\"\"\"\n-#@+<< abbrevCommands imports & abbreviations >>\n-#@+node:ekr.20150514045700.1: ** << abbrevCommands imports & abbreviations >>\n+\n+# @+<< abbrevCommands imports & abbreviations >>\n+# @+node:ekr.20150514045700.1: ** << abbrevCommands imports & abbreviations >>\n from __future__ import annotations\n from collections.abc import Callable\n import functools\n@@ -18,22 +19,31 @@\n     from leo.core.leoGui import LeoKeyEvent\n     from leo.core.leoNodes import Position\n     from leo.plugins.qt_text import QTextEditWrapper as Wrapper\n-#@-<< abbrevCommands imports & abbreviations >>\n+# @-<< abbrevCommands imports & abbreviations >>\n+\n \n def cmd(name: str) -> Callable:\n     \"\"\"Command decorator for the abbrevCommands class.\"\"\"\n-    return g.new_cmd_decorator(name, ['c', 'abbrevCommands',])\n-\n-#@+others\n-#@+node:ekr.20160514095531.1: ** class AbbrevCommands\n+    return g.new_cmd_decorator(\n+        name,\n+        [\n+            'c',\n+            'abbrevCommands',\n+        ],\n+    )\n+\n+\n+# @+others\n+# @+node:ekr.20160514095531.1: ** class AbbrevCommands\n class AbbrevCommandsClass(BaseEditCommandsClass):\n     \"\"\"\n     A class to handle user-defined abbreviations.\n     See apropos-abbreviations for details.\n     \"\"\"\n-    #@+others\n-    #@+node:ekr.20150514043850.2: *3* abbrev.Birth\n-    #@+node:ekr.20150514043850.3: *4* abbrev.ctor\n+\n+    # @+others\n+    # @+node:ekr.20150514043850.2: *3* abbrev.Birth\n+    # @+node:ekr.20150514043850.3: *4* abbrev.ctor\n     def __init__(self, c: Cmdr) -> None:\n         \"\"\"Ctor for AbbrevCommandsClass class.\"\"\"\n         # pylint: disable=super-init-not-called\n@@ -41,8 +51,9 @@\n         # Set local ivars.\n         self.abbrevs: dict[str, tuple[str, str]] = {}  # Keys are names, values are (abbrev,tag).\n         self.dynaregex = re.compile(  # For dynamic abbreviations\n-            r'[%s%s\\-_]+' % (string.ascii_letters, string.digits))\n-            # Not a unicode problem.\n+            r'[%s%s\\-_]+' % (string.ascii_letters, string.digits)\n+        )\n+        # Not a unicode problem.\n         self.n_regex = re.compile(r'(?<!\\\\)\\\\n')  # to replace \\\\n but not \\\\\\\\n\n         self.enabled = False\n         self.expanding = False  # True: expanding abbreviations.\n@@ -54,11 +65,13 @@\n         self.store = {'rlist': [], 'stext': ''}  # For dynamic expansion.\n         self.tree_abbrevs_d: dict[str, str] = {}  # Keys are names, values are (tree,tag).\n         self.w = None\n-    #@+node:ekr.20150514043850.5: *4* abbrev.finishCreate & helpers\n+\n+    # @+node:ekr.20150514043850.5: *4* abbrev.finishCreate & helpers\n     def finishCreate(self) -> None:\n         \"\"\"AbbrevCommandsClass.finishCreate.\"\"\"\n         self.reload_settings()\n-    #@+node:ekr.20170221035644.1: *5* abbrev.reload_settings & helpers\n+\n+    # @+node:ekr.20170221035644.1: *5* abbrev.reload_settings & helpers\n     def reload_settings(self) -> None:\n         \"\"\"Reload all abbreviation settings.\"\"\"\n         self.abbrevs = {}\n@@ -68,7 +81,8 @@\n         self.init_env()\n \n     reloadSettings = reload_settings\n-    #@+node:ekr.20150514043850.6: *6* abbrev.init_abbrev\n+\n+    # @+node:ekr.20150514043850.6: *6* abbrev.init_abbrev\n     def init_abbrev(self) -> None:\n         \"\"\"\n         Init the user abbreviations from @data global-abbreviations\n@@ -77,8 +91,8 @@\n         c = self.c\n         table = (\n             ('global-abbreviations', 'global'),\n-            ('abbreviations', 'local'),\n-        )\n+            ('abbreviations',       'local'),\n+        )  # fmt: skip\n         for source, tag in table:\n             aList = c.config.getData(source, strip_data=False) or []\n             abbrev, result = [], []\n@@ -103,10 +117,11 @@\n         # fake the next placeholder abbreviation\n         if c.config.getString(\"abbreviations-next-placeholder\"):\n             self.addAbbrevHelper(\n-                f'{c.config.getString(\"abbreviations-next-placeholder\")}'\n-                f'=__NEXT_PLACEHOLDER',\n-                'global')\n-    #@+node:ekr.20150514043850.7: *6* abbrev.init_env\n+                f'{c.config.getString(\"abbreviations-next-placeholder\")}=__NEXT_PLACEHOLDER',\n+                'global',\n+            )\n+\n+    # @+node:ekr.20150514043850.7: *6* abbrev.init_env\n     def init_env(self) -> None:\n         \"\"\"\n         Init c.abbrev_subst_env by executing the contents of the\n@@ -134,11 +149,7 @@\n                 v = leoNodes.VNode(context=c)\n                 root = leoNodes.Position(v)\n             # Similar to g.getScript.\n-            script = at.stringToString(\n-                root=root,\n-                s=script,\n-                forcePythonSentinels=True,\n-                sentinels=False)\n+            script = at.stringToString(root=root, s=script, forcePythonSentinels=True, sentinels=False)\n             script = script.replace(\"\\r\\n\", \"\\n\")\n             try:\n                 exec(script, c.abbrev_subst_env, c.abbrev_subst_env)  # type:ignore\n@@ -147,7 +158,8 @@\n                 g.es_exception()\n         else:\n             c.abbrev_subst_start = ''  # Was False.\n-    #@+node:ekr.20150514043850.8: *6* abbrev.init_settings (called from reload_settings)\n+\n+    # @+node:ekr.20150514043850.8: *6* abbrev.init_settings (called from reload_settings)\n     def init_settings(self) -> None:\n         \"\"\"Called from AbbrevCommands.reload_settings aka reloadSettings.\"\"\"\n         c = self.c\n@@ -157,14 +169,16 @@\n         c.abbrev_subst_end = c.config.getString('abbreviations-subst-end')\n         # The environment for all substitutions.\n         # May be augmented in init_env.\n-        c.abbrev_subst_env = {'c': c, 'g': g, '_values': {}, }\n+        c.abbrev_subst_env = {\n+            'c': c,\n+            'g': g,\n+            '_values': {},\n+        }\n         c.abbrev_subst_start = c.config.getString('abbreviations-subst-start') or ''\n         # Local settings.\n-        self.enabled = (\n-            c.config.getBool('scripting-at-script-nodes') or\n-            c.config.getBool('scripting-abbreviations'))\n+        self.enabled = c.config.getBool('scripting-at-script-nodes') or c.config.getBool('scripting-abbreviations')\n         self.globalDynamicAbbrevs = c.config.getBool('globalDynamicAbbrevs')\n-        #@verbatim\n+        # @verbatim\n         # @data abbreviations-subst-env must *only* be defined in leoSettings.leo or myLeoSettings.leo!\n         self.subst_env: list[str]\n         if c.config:\n@@ -174,7 +188,8 @@\n                 self.subst_env = []\n             else:\n                 self.subst_env = c.config.getData(key, strip_data=False)\n-    #@+node:ekr.20150514043850.9: *6* abbrev.init_tree_abbrev\n+\n+    # @+node:ekr.20150514043850.9: *6* abbrev.init_tree_abbrev\n     def init_tree_abbrev(self) -> None:\n         \"\"\"Init tree_abbrevs_d from @data tree-abbreviations nodes.\"\"\"\n         c = self.c\n@@ -208,7 +223,8 @@\n             finally:\n                 g.app.disable_redraw = old_disable\n         self.tree_abbrevs_d = d\n-    #@+node:ekr.20170227062001.1: *7* abbrev.init_tree_abbrev_helper\n+\n+    # @+node:ekr.20170227062001.1: *7* abbrev.init_tree_abbrev_helper\n     def init_tree_abbrev_helper(self, d: dict[str, str], tree_s: str) -> None:\n         \"\"\"Init d from tree_s, the text of a copied outline.\"\"\"\n         c = self.c\n@@ -228,7 +244,8 @@\n                             break\n                     else:\n                         g.trace(f\"no definition for {abbrev_name}\")\n-    #@+node:ekr.20150514043850.11: *3* abbrev.expandAbbrev & helpers (entry point)\n+\n+    # @+node:ekr.20150514043850.11: *3* abbrev.expandAbbrev & helpers (entry point)\n     def expandAbbrev(self, event: LeoKeyEvent, stroke: g.KeyStroke) -> bool:\n         \"\"\"\n         Not a command.  Expand abbreviations in event.widget.\n@@ -255,14 +272,18 @@\n         for prefix in prefixes:\n             i, tag, word, val = self.match_prefix(ch, i, j, prefix, s)\n             if word:\n+                # #4462: Make only one substitution in headlines.\n+                if w_name.startswith('head'):\n+                    ok = self.make_script_substitutions_in_headline(i, p, val)\n+                    if ok:\n+                        return True\n                 # Fix another part of #438.\n-                if w_name.startswith('head'):\n-                    if val == '__NEXT_PLACEHOLDER':\n-                        i = w.getInsertPoint()\n-                        if i > 0:\n-                            w.delete(i - 1)\n-                            p.h = w.getAllText()\n-                    # Do not call c.endEditing here.\n+                if val == '__NEXT_PLACEHOLDER':\n+                    i = w.getInsertPoint()\n+                    if i > 0:\n+                        w.delete(i - 1)\n+                        p.h = w.getAllText()\n+                # Do not call c.endEditing here.\n                 break\n         else:\n             if trace and verbose:\n@@ -289,19 +310,16 @@\n             if self.save_ins:\n                 ins = self.save_ins\n                 sel1, sel2 = self.save_sel\n-                if sel1 == sel2:\n-                    # New in Leo 5.5\n-                    self.post_pass()\n-                else:\n-                    # some abbreviations *set* the selection range\n-                    # so only restore non-empty ranges\n-                    w.setSelectionRange(sel1, sel2, insert=ins)\n+                w.setSelectionRange(sel1, sel2, insert=ins)\n         return True\n-    #@+node:ekr.20161121121636.1: *4* abbrev.exec_content\n+\n+    # @+node:ekr.20161121121636.1: *4* abbrev.exec_content\n     def exec_content(self, content: str) -> None:\n         \"\"\"Execute the content in the environment, and return the result.\"\"\"\n-    #@+node:ekr.20150514043850.12: *4* abbrev.expand_text\n-    def expand_text(self,\n+\n+    # @+node:ekr.20150514043850.12: *4* abbrev.expand_text\n+    def expand_text(\n+        self,\n         w: Wrapper,\n         i: int,\n         j: int,\n@@ -327,7 +345,7 @@\n         else:\n             self.find_place_holder(p, do_placeholder)\n \n-    #@+node:ekr.20150514043850.13: *4* abbrev.expand_tree (entry) & helpers\n+    # @+node:ekr.20150514043850.13: *4* abbrev.expand_tree (entry) & helpers\n     def expand_tree(self, w: Wrapper, i: int, j: int, tree_s: str, word: str) -> None:\n         \"\"\"\n         Paste tree_s as children of c.p.\n@@ -352,7 +370,8 @@\n         for p in old_p.subtree():\n             if self.find_place_holder(p, do_placeholder):\n                 break\n-    #@+node:ekr.20150514043850.17: *5* abbrev.paste_tree\n+\n+    # @+node:ekr.20150514043850.17: *5* abbrev.paste_tree\n     def paste_tree(self, old_p: Position, s: str) -> None:\n         \"\"\"Paste the tree corresponding to s (xml) into the tree.\"\"\"\n         c = self.c\n@@ -367,7 +386,8 @@\n             c.redraw(old_p)  # 2017/02/27: required.\n         else:\n             g.trace('paste failed')\n-    #@+node:ekr.20150514043850.14: *4* abbrev.find_place_holder\n+\n+    # @+node:ekr.20150514043850.14: *4* abbrev.find_place_holder\n     def find_place_holder(self, p: Position, do_placeholder: bool) -> bool:\n         \"\"\"\n         Search for the next place-holder.\n@@ -410,10 +430,11 @@\n             c.bodyWantsFocusNow()\n             return True\n         # #453: do nothing here.\n-            # c.frame.body.forceFullRecolor()\n-            # c.bodyWantsFocusNow()\n+        # c.frame.body.forceFullRecolor()\n+        # c.bodyWantsFocusNow()\n         return False\n-    #@+node:ekr.20150514043850.15: *4* abbrev.make_script_substitutions\n+\n+    # @+node:ekr.20150514043850.15: *4* abbrev.make_script_substitutions\n     def make_script_substitutions(self, i: int, j: int, val: str) -> tuple[str, bool]:\n         \"\"\"Make scripting substitutions in node p.\"\"\"\n         c = self.c\n@@ -457,32 +478,35 @@\n             do_placeholder = False\n             c.p.v.b = w.getAllText()\n         return val, do_placeholder\n-    #@+node:ekr.20161121102113.1: *4* abbrev.make_script_substitutions_in_headline\n-    def make_script_substitutions_in_headline(self, p: Position) -> bool:\n-        \"\"\"Make scripting substitutions in p.h.\"\"\"\n-        c = self.c\n-        p = c.p\n-        pattern = re.compile(r'^(.*)%s(.+)%s(.*)$' % (\n-            re.escape(c.abbrev_subst_start),\n-            re.escape(c.abbrev_subst_end),\n-        ))\n-        changed = False\n-        # Perform at most one scripting substitution.\n-        if m := pattern.match(p.h):\n+\n+    # @+node:ekr.20161121102113.1: *4* abbrev.make_script_substitutions_in_headline\n+    def make_script_substitutions_in_headline(self, i: int, p: Position, val: str) -> bool:\n+        \"\"\"Make the first scripting substitution in p.h.\"\"\"\n+        c = self.c\n+        c.endEditing()\n+        pattern = re.compile(\n+            r'^(.*)%s(.+)%s(.*)$'\n+            % (\n+                re.escape(c.abbrev_subst_start),\n+                re.escape(c.abbrev_subst_end),\n+            )\n+        )\n+        if m := pattern.match(val):\n             content = m.group(2)\n             c.abbrev_subst_env['x'] = ''\n             try:\n                 exec(content, c.abbrev_subst_env, c.abbrev_subst_env)\n                 x = c.abbrev_subst_env.get('x')\n                 if x:\n-                    p.h = f\"{m.group(1)}{x}{m.group(3)}\"\n-                    changed = True\n+                    p.h = f\"{p.h[:i]}{m.group(1)}{x}{m.group(3)}\"\n+                    return True\n             except Exception:\n                 # Leave p.h alone.\n                 g.trace('scripting error in', p.h)\n                 g.es_exception()\n-        return changed\n-    #@+node:ekr.20161121112837.1: *4* abbrev.match_prefix\n+        return False\n+\n+    # @+node:ekr.20161121112837.1: *4* abbrev.match_prefix\n     def match_prefix(self, ch: str, i: int, j: int, prefix: str, s: str) -> tuple[int, str, str, str]:\n         \"\"\"A match helper.\"\"\"\n         i = j - len(prefix)\n@@ -505,7 +529,8 @@\n             i -= 1\n             word, val = None, None\n         return i, tag, word, val\n-    #@+node:ekr.20150514043850.16: *4* abbrev.next_place\n+\n+    # @+node:ekr.20150514043850.16: *4* abbrev.next_place\n     def next_place(self, s: str, offset: int = 0) -> tuple[str, int, int]:\n         \"\"\"\n         Given string s containing a placeholder like <| block |>,\n@@ -526,18 +551,12 @@\n             return s, None, None\n         start = new_pos\n         place_holder_delim = s[new_pos : new_end + len(c.abbrev_place_end)]\n-        place_holder = place_holder_delim[\n-            len(c.abbrev_place_start) : -len(c.abbrev_place_end)]\n+        place_holder = place_holder_delim[len(c.abbrev_place_start) : -len(c.abbrev_place_end)]\n         s2 = s[:start] + place_holder + s[start + len(place_holder_delim) :]\n         end = start + len(place_holder)\n         return s2, start, end\n-    #@+node:ekr.20161121114504.1: *4* abbrev.post_pass\n-    def post_pass(self) -> None:\n-        \"\"\"The post pass: make script substitutions in all headlines.\"\"\"\n-        if self.root:\n-            for p in self.root.self_and_subtree():\n-                self.make_script_substitutions_in_headline(p)\n-    #@+node:ekr.20150514043850.18: *4* abbrev.replace_selection\n+\n+    # @+node:ekr.20150514043850.18: *4* abbrev.replace_selection\n     def replace_selection(self, w: Wrapper, i: int, j: int, s: str) -> None:\n         \"\"\"Replace w[i:j] by s.\"\"\"\n         p, u = self.c.p, self.c.undoer\n@@ -563,7 +582,8 @@\n             delta = len(s) - len(abbrev)\n             self.save_sel = i + delta, j + delta\n             self.save_ins = ins + delta\n-    #@+node:ekr.20161121111502.1: *4* abbrev_get_ch\n+\n+    # @+node:ekr.20161121111502.1: *4* abbrev_get_ch\n     def get_ch(self, event: LeoKeyEvent, stroke: g.KeyStroke, w: Wrapper) -> str:\n         \"\"\"Get the ch from the stroke.\"\"\"\n         ch = g.checkUnicode(event and event.char or '')\n@@ -578,17 +598,15 @@\n         if stroke:\n             ch = d.get(stroke.s, stroke.s)\n             if len(ch) > 1:\n-                if (stroke.find('Ctrl+') > -1 or\n-                    stroke.find('Alt+') > -1 or\n-                    stroke.find('Meta+') > -1\n-                ):\n+                if stroke.find('Ctrl+') > -1 or stroke.find('Alt+') > -1 or stroke.find('Meta+') > -1:\n                     ch = ''\n                 else:\n                     ch = event.char if event else ''\n         else:\n             ch = event.char\n         return ch\n-    #@+node:ekr.20161121112346.1: *4* abbrev_get_prefixes\n+\n+    # @+node:ekr.20161121112346.1: *4* abbrev_get_prefixes\n     def get_prefixes(self, w: Wrapper) -> tuple[str, int, int, list[str]]:\n         \"\"\"Return the prefixes at the current insertion point of w.\"\"\"\n         # New code allows *any* sequence longer than 1 to be an abbreviation.\n@@ -603,8 +621,9 @@\n         if '' not in prefixes:\n             prefixes.append('')\n         return s, i, j, prefixes\n-    #@+node:ekr.20150514043850.19: *3* abbrev.dynamic abbreviation...\n-    #@+node:ekr.20150514043850.20: *4* abbrev.dynamicCompletion C-M-/\n+\n+    # @+node:ekr.20150514043850.19: *3* abbrev.dynamic abbreviation...\n+    # @+node:ekr.20150514043850.20: *4* abbrev.dynamicCompletion C-M-/\n     @cmd('dabbrev-completion')\n     def dynamicCompletion(self, event: LeoKeyEvent = None) -> None:\n         \"\"\"\n@@ -638,7 +657,8 @@\n             w.setYScrollPosition(ypos)\n             c.undoer.afterChangeNodeContents(p, command='dabbrev-completion', bunch=b)\n             c.recolor()\n-    #@+node:ekr.20150514043850.21: *4* abbrev.dynamicExpansion M-/ & helper\n+\n+    # @+node:ekr.20150514043850.21: *4* abbrev.dynamicExpansion M-/ & helper\n     @cmd('dabbrev-expands')\n     def dynamicExpansion(self, event: LeoKeyEvent = None) -> None:\n         \"\"\"\n@@ -666,8 +686,10 @@\n         prefix = functools.reduce(g.longestCommonPrefix, aList)\n         prefix = prefix.strip()\n         self.dynamicExpandHelper(event, prefix, aList, w)\n-    #@+node:ekr.20150514043850.22: *5* abbrev.dynamicExpandHelper\n-    def dynamicExpandHelper(self,\n+\n+    # @+node:ekr.20150514043850.22: *5* abbrev.dynamicExpandHelper\n+    def dynamicExpandHelper(\n+        self,\n         event: LeoKeyEvent,\n         prefix: str = None,\n         aList: list[str] = None,\n@@ -709,7 +731,8 @@\n             w.setYScrollPosition(ypos)\n             c.undoer.afterChangeNodeContents(p, command='dabbrev-expand', bunch=b)\n             c.recolor()\n-    #@+node:ekr.20150514043850.23: *4* abbrev.getDynamicList (helper)\n+\n+    # @+node:ekr.20150514043850.23: *4* abbrev.getDynamicList (helper)\n     def getDynamicList(self, w: Wrapper, s: str) -> list[str]:\n         \"\"\"Return a list of dynamic abbreviations.\"\"\"\n         if self.globalDynamicAbbrevs:\n@@ -722,8 +745,9 @@\n             items = self.dynaregex.findall(w.getAllText())\n         items = sorted(set([z for z in items if z.startswith(s)]))\n         return items\n-    #@+node:ekr.20150514043850.24: *3* abbrev.static abbrevs\n-    #@+node:ekr.20150514043850.25: *4* abbrev.addAbbrevHelper\n+\n+    # @+node:ekr.20150514043850.24: *3* abbrev.static abbrevs\n+    # @+node:ekr.20150514043850.25: *4* abbrev.addAbbrevHelper\n     def addAbbrevHelper(self, s: str, tag: str = '') -> None:\n         \"\"\"Enter the abbreviation 's' into the self.abbrevs dict.\"\"\"\n         if not s.strip():\n@@ -737,19 +761,30 @@\n             if val.endswith('\\n'):\n                 val = val[:-1]\n             val = self.n_regex.sub('\\n', val).replace('\\\\\\\\n', '\\\\n')\n-            old, tag = d.get(name, (None, None),)\n+            old, tag = d.get(\n+                name,\n+                (None, None),\n+            )\n             if old and old != val and not g.unitTesting:\n-                g.es_print('redefining abbreviation', name,\n-                    '\\nfrom', repr(old), 'to', repr(val))\n+                g.es_print(\n+                    'redefining abbreviation',\n+                    name,\n+                    '\\nfrom',\n+                    repr(old),\n+                    'to',\n+                    repr(val),\n+                )\n             d[name] = val, tag\n         except ValueError:\n             g.es_print(f\"bad abbreviation: {s}\")\n-    #@+node:ekr.20150514043850.28: *4* abbrev.killAllAbbrevs\n+\n+    # @+node:ekr.20150514043850.28: *4* abbrev.killAllAbbrevs\n     @cmd('abbrev-kill-all')\n     def killAllAbbrevs(self, event: LeoKeyEvent) -> None:\n         \"\"\"Delete all abbreviations.\"\"\"\n         self.abbrevs = {}\n-    #@+node:ekr.20150514043850.29: *4* abbrev.listAbbrevs\n+\n+    # @+node:ekr.20150514043850.29: *4* abbrev.listAbbrevs\n     @cmd('abbrev-list')\n     def listAbbrevs(self, event: LeoKeyEvent = None) -> None:\n         \"\"\"List all abbreviations.\"\"\"\n@@ -766,7 +801,8 @@\n                 g.es_print('', f\"{tag}{name}={val}\")\n         else:\n             g.es_print('No present abbreviations')\n-    #@+node:ekr.20150514043850.32: *4* abbrev.toggleAbbrevMode\n+\n+    # @+node:ekr.20150514043850.32: *4* abbrev.toggleAbbrevMode\n     @cmd('toggle-abbrev-mode')\n     def toggleAbbrevMode(self, event: LeoKeyEvent = None) -> None:\n         \"\"\"Toggle abbreviation mode.\"\"\"\n@@ -775,6 +811,9 @@\n         k.keyboardQuit()\n         if not g.unitTesting and not g.app.batchMode:\n             g.es('Abbreviations are ' + 'on' if k.abbrevOn else 'off')\n-    #@-others\n-#@-others\n-#@-leo\n+\n+    # @-others\n+\n+\n+# @-others\n+# @-leo\n@language python\n'''\n)"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20150502050609.1",
+   "h": "@button backup",
+   "b": "\"\"\"\nBack up this .leo file.\n\nos.environ['LEO_BACKUP'] must be the path to an existing (writable) directory.\n\"\"\"\nc.backup_helper(sub_dir='leoPy')\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170811173924.1",
+   "h": "@button backup-repo",
+   "b": "@language python\nimport os\nimport subprocess\nimport sys\nimport time\nold_dir = os.getcwd()\nif g.isWindows:\n    new_dir = r'C:\\Repos\\leo-editor'\n    path = r'C:\\Users\\Edward~1\\Backup\\backup-repo'\nelse:\n    new_dir = '/home/edward/Repos/leo-editor'\n    path = '/home/edward/Backup'\nassert g.os_path_exists(new_dir), repr(new_dir)\nassert g.os_path_exists(path), repr(path)\nstamp = time.strftime(\"%Y%m%d-%H%M%S\")\nfn = g.finalize_join(path, f\"leo-bundle-all-{stamp}\")\nbundle_command = f\"git bundle create {fn} --all\"\nprint(bundle_command)\nos.chdir(new_dir)\nproc = subprocess.Popen(bundle_command)\nproc.wait()\nos.chdir(old_dir)\nprint('done! wrote %s' % fn)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20231107062256.1",
+   "h": "@button check-leoPy.leo",
+   "b": "\"\"\"Ensure that all expected @<file> nodes exist.\"\"\"\ng.cls()\nimport glob  #noqa  # Because of g.cls()\nimport os\njoin, sep = os.path.join, os.sep\n\ndef norm(path):\n    return os.path.normpath(path).lower()\n\n# Compute the directories.\nleo_dir = norm(join(g.app.loadDir, '..'))  ### '..'))\ncore_dir = join(leo_dir, 'core')\ncommands_dir = join(leo_dir, 'commands')\nexternal_dir = join(leo_dir, 'external')\nimporters_dir = join(leo_dir, 'plugins', 'importers')\nplugins_dir = join(leo_dir, 'plugins')\nscripts_dir = join(leo_dir, 'scripts')\nunittests_dir = join(leo_dir, '..', 'unittests')\nwriters_dir = join(leo_dir, 'plugins', 'writers')\n\ndef make_list(pattern):\n    return [norm(z) for z in glob.glob(pattern) if '__init__' not in z]\n\n# Find paths on disk.\ncore_files = make_list(f\"{core_dir}{sep}*.py\")\ncommands_files = make_list(f\"{commands_dir}{sep}*.py\")\nexternal_files = make_list(f\"{external_dir}{sep}*.py\")\nimporter_files = make_list(f\"{importers_dir}{sep}*.py\")\n# plugin_files = make_list(f\"{plugins_dir}{sep}*.py\")\nqt_files = make_list(f\"{plugins_dir}{sep}qt*.py\")\nscript_files = make_list(f\"{scripts_dir}{sep}*.py\")\nunittests_files = make_list(f\"{unittests_dir}{sep}*.py\")\nwriter_files = make_list(f\"{writers_dir}{sep}*.py\")\n\n# Compute paths from @<file> nodes.\nat_file_paths = sorted([\n    norm(c.fullPath(z))\n        for z in c.all_unique_positions()\n            if z.isAnyAtFileNode()\n])\n\nexcluded_files = (\n    r'plugins\\qt_main.py',  # Generated automatically.\n    r'plugins\\baseNativeTree.py',  # No longer used.\n)\n\ndef is_excluded(path):\n    return any(z in path for z in excluded_files)\n    \nif 0:\n    for files, kind in (\n        (at_file_paths, 'all known paths'),\n        (core_files, 'core_files'),\n        (qt_files, 'qt_files'),\n        (importer_files, 'importer_files'),\n        (writer_files, 'writer_files'),\n    ):\n        g.printObj(files, tag=f\"{kind}\")\n\n# Ensure that @<file> nodes exist for every file on disk.\nmissing = []\nfor z in core_files + external_files + qt_files + importer_files + writer_files:\n    if z not in at_file_paths and not is_excluded(z):\n        missing.append(z)\nif missing:\n    n = len(missing)\n    g.es_print(f\"{n} missing file{g.plural(n)}\")\n    g.printObj(missing, tag='missing @<file> nodes')\nelse:\n    g.es_print('No missing files!')\nprint('done')"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230508145335.1",
+   "h": "@command slow-tests",
+   "b": "# These tests load (once) all files in leo/core, leo/commands and leo/plugins/qt_*.py.\ng.cls()\ng.execute_shell_commands(\n    'python -m unittest '\n    # 'leo.unittests.test_design.TestAnnotations.slow_test_all_paths '\n    # 'leo.unittests.test_design.TestChains.slow_test_all_paths'\n    # 'leo.unittests.core.test_leoImport.TestLeoImport.slow_test_ric_run',\n    # 'leo.unittests.commands.test_editFileCommands.TestEditFileCommands.verbose_test_git_diff',\n    # f\" {commands}.test_editFileCommands.TestEditFileCommands.slow_test_gdc_node_history\",\n\n)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240714075119.1",
+   "h": "@command sync-reqs",
+   "b": "\"\"\"Update the section `pyproject.toml: dependencies` from requirements.txt.\"\"\"\ng.cls()\nreq_h = '@file ../../requirements.txt'\nreq_p = g.findNodeAnywhere(c, req_h)\nassert req_p, req_h\nproj_h = g.angleBrackets(' pyproject.toml: dependencies ')\nproj_p = g.findNodeAnywhere(c, proj_h)\nassert proj_p, proj_h\n\n# Indent all non-blank lines with 2-blanks.\nresults = ['dependencies = [']\nfor s in g.splitLines(req_p.b):\n    ss = s.strip()\n    if not ss:\n        results.append('')\n    elif ss.startswith('@'):\n        continue  # Don't change directives.\n    elif ss.startswith('#'):\n        results.append(f\"  {ss}\")\n    else:\n        i = ss.find('#')\n        if i > -1:\n            s2 = ss[:i].strip().replace('\"', \"'\")\n            # Ensure spaces around '=='.\n            if '==' in s2 and ' == ' not in s2:\n                s2 = s2.replace('==', ' == ')\n                s3 = f'  {ss[len(s2):]}'\n            else:\n                s3 = ss[len(s2):]\n            results.append(f'  \"{s2}\",{s3}')\n        else:\n            results.append(f'  \"{ss}\",')\nresults.append(']\\n\\n')\n# Print the changes.\nfor s in results:\n    print(s)\n# Make the changes!\nnew_b = '\\n'.join(results)\nif new_b != proj_p.b:\n    print('Saving:', proj_p.h)\n    proj_p.b = new_b\n    c.redraw()\n    c.save()"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220306092217.1",
+   "h": "@command test-one",
+   "b": "\"\"\"Invoke EKR's private test-one.cmd script.\"\"\"\n\nimport os\n\nif c.isChanged():\n    print('Saved!')\n    c.save()\n\nos.system('test-one.cmd')\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240608035218.1",
+   "h": "<< test-one: test kind >>",
+   "b": "# Last one wins.\nkind = 'beautify'\nkind = 'test'  # Run unit test.\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240528034319.1",
+   "h": "<< test the beautifier >>",
+   "b": "# Can be run from the command line as follows:\n# python -c \"import leo.core.leoTokens\" --all --report --write leo/core/leoAst.py\nargs = '--all --report --write'  # --beautified --diff --write'\nfor command in (\n    # f'python -c \"import leo.core.leoTokens\" {args} leoAst.py',\n    f'python -c \"import leo.core.leoTokens\" {args} leo/core',\n    'echo done!',\n):\n    print(command)\n    g.execute_shell_commands(command)\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20230511074046.1",
+   "h": "<< prefixes >>",
+   "b": "commands = 'leo.unittests.commands'\ncore = 'leo.unittests.core'\ngui = 'leo.unittests.test_gui'\nimporters = 'leo.unittests.plugins.test_importers'\nmisc = 'leo.unittests.misc_tests'\nplugins = 'leo.unittests.plugins'\nsyntax = 'leo.unittests.plugins.test_syntax'\nwriters = 'leo.unittests.plugins.test_writers'\n\n# f\"{core}.test_leoGlobals\",\n# f\"{core}.test_leoTokens\",\n\n# f\"{misc}.test_design\",\n# f\"{misc}.test_doctests\",\n# f\"{misc}.test_syntax\",\n\n# f\"{plugins}.test_gui\",\n# f\"{plugins}.test_importers\",\n# f\"{plugins}.test_plugins\",\n# f\"{plugins}.test_writers\",\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260802055601.1",
+   "h": "@command cover-todo",
+   "b": "\"\"\"Invoke EKR's private cover-todo.cmd script.\"\"\"\n\ng.cls()\n\nimport os\n\nif c.isChanged():\n    print('Saved!')\n    c.save()\n\nos.system('cover-todo.cmd')\n\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20170427114412.1",
+   "h": "scripts",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20170428084123.1",
+   "h": "Recursive import script",
+   "b": "@language python\n\"\"\"Recursively import all python files in a directory and clean the result.\"\"\"\n@tabwidth - 4  # For a better match.\ng.cls()\n# dir_ = g.os_path_finalize_join(g.app.loadDir, '..', 'modes')\n# dir_ = g.os_path_finalize_join(g.app.loadDir, '..', '..', 'setup.py')\n# dir_ = r'C:\\Python\\Python3.13\\Lib\\pdb.py'\ndir_ = r'C:\\Python\\Python3.14\\Lib\\site-packages\\mypy'\nc.recursiveImport(\n    dir_=dir_,\n    kind= '@clean',  # '@auto', '@clean', '@nosent','@file',\n    recursive=True,\n    safe_at_file=False,\n    theTypes=['.py'],\n    verbose=True,\n)\nif 1:\n    last = c.lastTopLevel()\n    last.expand()\n    if last.hasChildren():\n        last.firstChild().expand()\n    c.redraw(last)\nprint('Done')\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260503063616.1",
+   "h": "--- (do not delete) diff scripts",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260721065927.1",
+   "h": "script: diff main/6.8.10",
+   "b": "from leo.commands import editFileCommands as efc\n\nefc.GitDiffController(c).diff_two_revs(\n    rev1='main',  # Old\n    rev2='6.8.10',  # New\n    # Optional path, relative to the git directory.\n    # path='leo/core',\n)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260503052547.1",
+   "h": "script: diff main/devel",
+   "b": "from leo.commands import editFileCommands as efc\n\nefc.GitDiffController(c).diff_two_revs(\n    rev1='v6.8.10',  # Old\n    rev2='main',  # New\n    # Optional path, relative to the git directory.\n    # path='leo/core',\n)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260709152903.1",
+   "h": "script: diff-branches/revs (leo/plugins/qt_text.py)",
+   "b": "g.cls()\nimport os\nimport leo.commands.editFileCommands as efc\n\npath = g.finalize_join(g.app.loadDir, '..', '..')\n# print(f\"os.chdir({path})\")\nos.chdir(path)\n\n# Any revspec is valid as an argument to the \"branch1\" and \"branch2\" args.\n# See https://git-scm.com/book/en/v2/Git-Tools-Revision-Selection\n\nefc.GitDiffController(c).diff_two_branches(\n    branch1='ekr-4785-restore-onTextChanged',  # old branch/rev\n    branch2='main',  # new branch/rev\n    fn='leo/plugins/qt_text.py',  # Don't use back slashes.\n)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20190402091335.1",
+   "h": "script: diff-branches/revs (master, 6.8.8, leo/core)",
+   "b": "from leo.commands import editFileCommands as efc\n\nefc.GitDiffController(c).diff_two_revs(\n    rev1='main',  # Old\n    rev2='6.8.8',  # New\n    path='leo/core',  # Optional path, relative to the git directory.\n)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180816105258.1",
+   "h": "script: diff-branches/revs (one file)",
+   "b": "g.cls()\nimport os\nimport leo.commands.editFileCommands as efc\n\npath = g.finalize_join(g.app.loadDir, '..', '..')\n# print(f\"os.chdir({path})\")\nos.chdir(path)\n\n# Any revspec is valid as an argument to the \"branch1\" and \"branch2\" args.\n# See https://git-scm.com/book/en/v2/Git-Tools-Revision-Selection\n\nefc.GitDiffController(c).diff_two_branches(\n    branch1='v6.8.10',  # old branch/rev\n    branch2='ekr-generalize-g.stat',  # new branch/rev\n    fn='leo/core/leoGlobals.py',  # Don't use back slashes.\n)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220319145807.1",
+   "h": "script: diff-two-revs-wo-comments",
+   "b": "g.cls()\n\n# Monkey-patched git-diff-pr command.\nimport leo.commands.editFileCommands as efc\n\nrev1 = 'main'  \nrev2 = 'ekr-walk-special-case'\nx = efc.GitDiffController(c)\n\n@others\n\n# Monkey-patch, with x bound.\nx.make_diff_outlines = make_diff_outlines_ignoring_comments\nx.diff_two_revs(rev1, rev2)\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220319151900.1",
+   "h": "function: make_diff_outlines_ignoring_comments",
+   "b": "def make_diff_outlines_ignoring_comments(c1, c2, fn, rev1='', rev2=''):\n    \"\"\"Create an outline-oriented diff from the *hidden* outlines c1 and c2.\"\"\"\n    self = x\n    added, deleted, changed = self.compute_dicts(c1, c2)\n    table = (\n        (added, 'Added'),\n        (deleted, 'Deleted'),\n        (changed, 'Changed'))\n    for d, kind in table:\n        if kind.lower() == 'changed':\n            for key in d:\n                v1, v2 = d.get(key)\n                v1.b = strip_comments(v1.b)\n                v2.b = strip_comments(v2.b)\n        self.create_compare_node(c1, c2, d, kind, rev1, rev2)\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220319152417.1",
+   "h": "function: strip_comments",
+   "b": "def strip_comments(aString):\n    \"\"\"\n    Strip everything that looks like a comment from aString.\n    It's fine, for now, to ignore strings and docstrings.\n    \"\"\"\n    result = []\n    lines = g.splitLines(aString)\n    for s in lines:\n        if s.strip().startswith('#@'):\n            # Retain everything that looks like a sentinel.\n            result.append(s)\n        else:\n            # Strip the comment, ignoring the end of the line.\n            i = s.find('#')\n            if i == -1:\n                result.append(s)\n            else:\n                tail = s[:i]\n                if tail.strip():\n                    result.append(tail.rstrip() + '\\n')\n    return ''.join(result)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260112121427.1",
+   "h": "script: summary-diff (main, 6.8.10, leo/core)",
+   "b": "g.cls()\nfrom leo.commands import editFileCommands as efc\n\n# Any branch or rev is valid.\nefc.GitDiffController(c).summary_diff_two_revs(\n    rev1='main',    # Old\n    rev2='6.8.10',     # New\n    path='leo/core',  # Limit diffs to this directory, relative to the nearest git repo.\n)  # fmt: skip\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260503063649.1",
+   "h": "--- other scripts",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240403111007.1",
+   "h": "script: add toolbar buttons",
+   "b": "\"\"\"Add toolbar buttons, centered in new rows.\"\"\"\n\ng.cls()\n\n# https://doc.qt.io/qt-6/qtoolbar.html\nfrom PyQt6.QtCore import QPointF, Qt\nfrom PyQt6.QtGui import QMouseEvent\nfrom PyQt6.QtWidgets import QApplication, QSizePolicy, QWidget\n\npos = QPointF(0, 0)\nbutton = Qt.MouseButton.LeftButton\nbtns = Qt.MouseButton(0)\nmods = Qt.KeyboardModifier(0)\n\n# Define the event types directly without accessing them through Qt\ne1 = QMouseEvent(QMouseEvent.Type.MouseButtonPress, pos, button, btns, mods)\ne2 = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, pos, button, btns, mods)\n\niconBar = c.frame.iconBar.w\n# print(iconBar)\n\ndef addSpacer():\n    w = QWidget()\n    policy = QSizePolicy()\n    w.setSizePolicy(policy.Policy.Expanding, policy.Policy.Preferred)\n    iconBar.addWidget(w)\n    \nfor i in range(20):\n    iconBar.addAction(str(i))\n    if i in (4, 8, 12, 16):\n        addSpacer()\n\nprint('Done!')\n\n@language python\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20201222095250.1",
+   "h": "script: check for duplicate settings in theme files",
+   "b": "g.cls()\nimport glob\nimport os\ntheme_dir = os.path.join(g.app.loadDir, '..', 'themes')\nassert os.path.exists(theme_dir), repr(theme_dir)\npaths = glob.glob(f\"{theme_dir}{os.sep}*.leo\")\n\ndef clean(s):\n    return s.strip().replace('-','').replace('_','').replace(' ','')\n    \nfor path in paths:\n    d = {}\n    c = g.createHiddenCommander(path)\n    if not c:\n        print('Not a .leo file:', path)\n        continue\n    sfn = c.shortFileName()\n    if sfn == 'old_themes.leo':\n        continue\n    print('checking ', sfn)\n    for p in c.all_unique_positions():\n        h = clean(p.h)\n        if h.startswith('@'):\n            if h in d:\n                print(f\"  {sfn:20}: duplicate {h}\")\n            else:\n                d [h] = True\nprint('done')"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20200308193719.1",
+   "h": "script: check gnx's",
+   "b": "d = {}  # Keys are gnxs, values is a list of vnodes with that gnx.\nfor v in c.all_unique_nodes():\n    gnx = v.gnx\n    aList = d.get(gnx, [])\n    if v not in aList:\n        aList.append(v)\n        d [gnx] = aList\n        if len(aList) > 1:\n            print(f\"gnx clash: {gnx}\")\n            g.printObj(aList)\nprint('done')"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210429045101.1",
+   "h": "script: check gnxDict",
+   "b": "g.cls()\nfc = c.fileCommands\nd = fc.gnxDict\nfor key in sorted(d.keys()):\n    v = d.get(key)\n    if v.h.lower() == 'newheadline':\n        print('in dict', key, v)\n        for p in c.all_positions():\n            if p.v == v:\n                print(p)\n        else:\n            print('no position for', v)\nprint('done')"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260112054444.1",
+   "h": "script: clean diffs",
+   "b": "g.cls()\nroot = g.findTopLevelNode(c, 'git diff revs: master 6.8.8')\nresults = g.findTopLevelNode(c, 'diff: results')\nif results:\n    results.deleteAllChildren()\nelse:\n    results = c.lastTopLevel().insertAsLastChild()\n    results.h = 'diff: results'\nchanged = 0\n\n\ndef report(p):\n    global changed\n    changed += 1\n    child = results.insertAsLastChild()\n    child.h = p.h\n    for s in g.splitLines(p.b):\n        if s.startswith(('+ ', '- ')):\n            tail = s[2:].strip()\n            if tail and not tail.startswith(('#@', '# @')):\n                child.b += s\n\n\nfor p in root.subtree():\n    if p.h.startswith('diff:'):\n        if p.h == 'diff: Changed':\n            pass\n        elif p.h.endswith('.py'):\n            report(p)\n\nprint(f\"changed: {changed}\")\nresults.expand()\nc.redraw()\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210118013157.1",
+   "h": "script: convert-LeoFind",
+   "b": "\"\"\"\nConvert defs in LeoFind to pep8 names.\n- Don't change defs containing underscores.\n- Check for existing target.\n\"\"\"\ng.cls()\nimport re\nh = 'class LeoFind (LeoFind.py)'\nroot = g.findNodeAnywhere(c, h)\n@others\nif root:\n    main(root)\nelse:\n    print('not found:', root)"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210118024739.1",
+   "h": "convert",
+   "b": "def convert(old_func, new_func, root):\n    print(f\"{old_func} => {new_func}\\n\")\n    for p in root.subtree():\n        pattern = rf\"\\b{old_func}\\b\"\n        p.h = re.sub(pattern, new_func, p.h)\n        p.b = re.sub(pattern, new_func, p.b)\n        # g.printObj(g.splitLines(s2), tag='p.h')\n    print('')"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210118013807.1",
+   "h": "main",
+   "b": "def main(root):\n    pattern = re.compile(r'^def\\s+(\\w+)', re.MULTILINE)\n    for pass_n in (0, 1):\n        n = 0\n        for p in root.subtree():\n            for m in re.finditer(pattern, p.b):\n                target = m.group(0)\n                old_func = m.group(1)\n                if '_' in target:\n                    continue\n                if target.islower():\n                    continue\n                if old_func == 'finishCreate':  # Special case.\n                    return\n                new_func = new_name(old_func)\n                if new_func == old_func:\n                    continue\n                if pass_n == 0:\n                    if exists(new_func, root):\n                        g.trace(f\"already exists: {old_func} {new_func}\")\n                        g.trace('aborting')\n                        return\n                else:\n                    n += 1\n                    convert(old_func, new_func, root)\n    g.trace(f\"converted {n} function names\")\n    c.redraw()\n            "
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210118020530.1",
+   "h": "new_name",
+   "b": "def new_name(s):\n    \"\"\"Return the new name of s.\"\"\"\n    assert ' ' not in s\n    # Convert s to underscore style.\n    result = []\n    for i, ch in enumerate(s):\n        if i > 0 and ch.isupper():\n            result.append('_')\n        result.append(ch.lower())\n    return ''.join(result).replace('i_search', 'isearch')\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210118021337.1",
+   "h": "exists",
+   "b": "def exists(s, root):\n    \"\"\"Return True if s exists in any of root's nodes.\"\"\"\n    for p in root.self_and_subtree():\n        if s in p.b:\n            return True\n    return False"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240707233742.1",
+   "h": "script: cvt-ast-names",
+   "b": "\"\"\"\nConvert the names of Ast visitors from all caps to the names of the corresponding Ast node.\nSaved in PR #4: https://github.com/edreamleo/ekr-fork-pyflakes/pull/4\n\"\"\"\ng.cls()\nc.save()\nimport ast\n# import re\nh = 'class Checker'\nroot = g.findNodeAnywhere(c, h)\n# pattern = re.compile(r'([A-Z]{3,})')\n<< define table >>\n<< check table >>\nsuppress = ('_MAGIC', 'PYFLAKES', 'FOR_TYPES', '.STRING')\nfor p in root.self_and_subtree():\n    changed, results = False, []\n    for s in g.splitLines(p.b):\n        if s.strip().startswith(('#', '\"\"\"')):\n            results.append(s)\n            continue\n        if any(z in s for z in suppress):\n            results.append(s)\n            continue\n        found = []\n        for data in table:\n            s1, s2 = data\n            if s1 in s and s1 not in suppress:\n                if s1.lower() not in found:\n                    # if 'name' in s1.lower():\n                        # print(s1)\n                        # print(s.rstrip())\n                    s = s.replace(s1, s2)\n                    changed = True\n                    found.append(s1.lower())\n        if found:\n            print(s.rstrip())\n        results.append(s)\n    if changed:\n        if 1:\n            p.b = ''.join(results)\n        # g.printObj(results) #, tag=p.h)\n        \nif 1:\n    print('')\n    print('Remember to update handleNode')\n\nc.save()\nprint('Done')\n    "
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240708062242.1",
+   "h": "<< define table >>",
+   "b": "\n# Longest prefixes first.\ntable = (\n\n    ('ANNASSIGN', 'AnnAssign'),\n    ('ARGUMENTS', 'arguments'),  # all lower.\n    ('ASSERT', 'Assert'),\n    ('ASYNCFOR', 'AsyncFor'),\n    ('ASYNCFUNCTIONDEF', 'AsyncFunctionDef'),\n    ('ASYNCWITH', 'AsyncWith'),\n    ('ATTRIBUTE', 'Attribute'),\n    ('AUGASSIGN', 'AugAssign'),\n    ('AUGLOAD', 'AugLoad'),\n    ('AUGSTORE', 'AugStore'),\n    ('AWAIT', 'Await'),\n    ('BINOP', 'BinOp'),\n    ('BITAND', 'BitAnd'),\n    ('BITOR', 'BitOr'),\n    ('BITXOR', 'BitXor'),\n    ('BOOLOP', 'BoolOp'),\n    ('BREAK', 'Break'),\n    ('CALL', 'Call'),\n    ('CLASSDEF', 'ClassDef'),\n    ('COMPARE', 'Compare'),\n    ('COMPREHENSION', 'comprehension'),\n    ('CONTINUE', 'Continue'),\n    ('DELETE', 'Delete'),\n    ('DICTCOMP', 'DictComp'),    \n    ('EXCEPTHANDLER', 'ExceptHandler'),\n    ('EXTSLICE', 'ExtSlice'),\n    ('FLOORDIV', 'FloorDiv'),\n    ('FORMATTEDVALUE', 'FormattedValue'),\n    ('FUNCTIONDEF', 'FunctionDef'),\n    ('GENERATOREXP', 'GeneratorExp'),\n    ('GLOBAL', 'Global'),\n    ('IFEXP', 'IfExp'),\n    ('IMPORTFROM', 'ImportFrom'),\n    ('INDEX', 'Index'),\n    ('INVERT', 'Invert'),\n    ('ISNOT', 'IsNot'),\n    ('JOINEDSTR', 'JoinedStr'),\n    ('KEYWORD', 'keyword'),\n    ('LAMBDA', 'Lambda'),\n    ('LISTCOMP', 'ListComp'),\n    ('LOAD', 'Load'),\n    ('LSHIFT', 'LShift'),\n    ('MATCHAS', 'MatchAs'),\n    ('MATCHCLASS', 'MatchClass'),\n    ('MATCHMAPPING', 'MatchMapping'),\n    ('MATCHOR', 'MatchOr'),\n    ('MATCHSEQUENCE', 'MatchSequence'),\n    ('MATCHSINGLETON', 'MatchSingleton'),\n    ('MATCHSTAR', 'MatchStar'),\n    ('MATCHVALUE', 'MatchValue'),\n    ('MATCH_CASE', 'match_case'),\n    ('MATMULT', 'MatMult'),\n    ('MODULE', 'Module'),\n    ('MULT', 'Mult'),\n    ('NONLOCAL', 'Nonlocal'),\n    ('NOTEQ', 'NotEq'),\n    ('NOTIN', 'NotIn'),\n    ('PARAMSPEC', 'ParamSpec'),\n    ('PARAM', 'Param'),\n    ('PASS', 'Pass'),\n    ('RAISE', 'Raise'),\n    ('RETURN', 'Return'),\n    ('RSHIFT', 'RShift'),\n    ('SETCOMP', 'SetComp'),\n    ('SLICE', 'Slice'),\n    ('STARRED', 'Starred'),\n    ('STORE', 'Store'),\n    ('SUBSCRIPT', 'Subscript'),\n    ('TRYSTAR', 'TryStar'),\n    ('TUPLE', 'Tuple'),\n    ('TYPEALIAS', 'TypeAlias'),\n    ('TYPEVARTUPLE', 'TypeVarTuple'),\n    ('TYPEVAR', 'TypeVar'),\n    ('UADD', 'UAdd'),\n    ('UNARYOP', 'UnaryOp'),\n    ('USUB', 'USub'),\n    ('WHILE', 'While'),\n    ('WITHITEM', 'withitem'),\n    ('YIELDFROM', 'YieldFrom'),\n    \n    # Prefixes last, by length.\n    ('NAMECONSTANT', 'NameConstant'),\n    ('NAMEDEXPR', 'NamedExpr'),\n    ('CONSTANT', 'Constant'),\n    ('ASSIGN', 'Assign'),\n    ('IMPORT', 'Import'),\n    ('MATCH', 'Match'),\n    ('YIELD', 'Yield'),\n\n    ('DICT', 'Dict'),\n    ('EXPR', 'Expr'),\n    ('LIST', 'List'),\n    ('NAME', 'Name'),\n    ('WITH', 'With'),\n\n    ('ARG', 'arg'),\n    ('ADD', 'Add'),\n    ('AND', 'And'),\n    ('DEL', 'Del'),\n    ('DIV', 'Div'),\n    ('FOR', 'For'),\n    ('GTE', 'GtE'),\n    ('LTE', 'LtE'),\n    ('MOD', 'Mod'),\n    ('NOT', 'Not'),\n    ('POW', 'Pow'),\n    ('SET', 'Set'),\n    ('SUB', 'Sub'),\n    ('TRY', 'Try'),\n\n    ('EQ', 'Eq'),\n    ('IF', 'If'),\n    ('IN', 'In'),\n    ('IS', 'Is'),\n    ('GT', 'Gt'),\n    ('LT', 'Lt'),\n    ('OR', 'Or'),\n)\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240708072327.1",
+   "h": "<< check table >>",
+   "b": "for data in table:\n    s1, s2 = data\n    visitor = getattr(ast, s2, None)\n    if not visitor:\n        print('Missing', s2)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210829132319.1",
+   "h": "script: cvt-tests",
+   "b": "\"\"\"Convert old-style tests to new-style tests\"\"\"\ng.cls()\nimport importlib\nfrom leo.commands import convertCommands\nimportlib.reload(convertCommands)\n\nroot_h = '--- To be converted'\nroot = g.findNodeAnywhere(c, root_h)\nconverter = convertCommands.ConvertAtTests()\n# converter = convertCommands.ConvertShadowTests()\n# converter = convertCommands.ConvertUndoTests()\n# converter = convertCommands.ConvertColorizerTests()\nconvertCommands.convert_at_test_nodes(c, converter, root, copy_tree=True)"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240403090451.1",
+   "h": "script: expand-toolbar",
+   "b": "\"\"\"\nExpand button bar.\n\nClicking this button does nothing if all buttons are already visible.\nOtherwise, this button shows all buttons, using separate lines if necessary.\n\"\"\"\n\n# https://doc.qt.io/qt-6/qtoolbar.html\n\nfrom PyQt6.QtCore import QPointF, Qt\nfrom PyQt6.QtGui import QMouseEvent\nfrom PyQt6.QtWidgets import QApplication\n\npos = QPointF(0, 0)\nbutton = Qt.MouseButton.LeftButton\nbtns = Qt.MouseButton(0)\nmods = Qt.KeyboardModifier(0)\n\n# Define the event types directly without accessing them through Qt\ne1 = QMouseEvent(QMouseEvent.Type.MouseButtonPress, pos, button, btns, mods)\ne2 = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, pos, button, btns, mods)\n\niconBar = c.frame.iconBar.w\n# print(iconBar)\n\nfor i in range(20):\n    iconBar.addAction(str(i))\n    \nif 0:\n    # Assuming 'c' and 'w' are already defined\n    for w in c.frame.iconBar.w.children():\n        print(repr(w.objectName()))\n        if w.objectName() == 'qt_toolbar_ext_button':\n            QApplication.sendEvent(w, e1)\n            QApplication.sendEvent(w, e2)\n            break\n        \nprint('Done!')\n\n@language python\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220318085657.1",
+   "h": "script: find trailing comments",
+   "b": "\"\"\"\nFind and mark all nodes containing underindented trailing comments in c's outline.\n\nSuch comments have the form:\n    \n    .. some code ..\n        A trailing, overindented comment.\n\"\"\"\ng.cls()\nimport re\npattern = re.compile(r'\\w+\\s*=\\s\\w+')\n\ndef do_node(p):\n    global count\n    prev_assign = False\n    old_lws = 0\n    lines = g.splitLines(p.b)\n    for i, line in enumerate(lines):\n        lws = g.computeLeadingWhitespaceWidth(line, tab_width=-4)\n        if line.strip().startswith('#'):\n            if prev_assign and lws > old_lws:\n                # Found a likely trailing comment.\n                p.setMarked()\n                count += 1\n                return True\n            prev_assign = False\n        else:\n            old_lws = lws\n            prev_assign = pattern.search(line)\n    return False\n    \ncount = 0\nc.clearAllMarked()\nfor p in c.all_unique_positions():\n    do_node(p)\nprint(f\"found {count} nodes.\")\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220503081113.1",
+   "h": "script: find-non-calls",
+   "b": "g.cls()\nimport re\n<< init core_p, command_p and globals_p >>\nd = {}  # Dict[func-name, True]\n# If I were going to do more work I would do the following:\n# exclusions: Dict[str, list[str]] = {}\nexclusions = set()  # Set[func-name]\n@others\n# Create d...\nscan(core_p)\nscan(command_p)\nscan(globals_p)\nsuppress = ('c',)  # 'g', 'p',\ncount = 0\nwords = list(sorted(z for z in d.keys() if z not in suppress))\nfunctions_pat = re.compile(fr\".*\\b({'|'.join(words)})\\b\\s*[^(]\")\n# Check functions...\ncheck(core_p)\ncheck(command_p)\ncheck(globals_p)\nprint('Found', count)\ng.printObj(list(sorted(exclusions)), tag='Function appearing in special contexts')\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220503193901.1",
+   "h": "old suppressions",
+   "b": "# 'exception',\n# Imports...\n    # 'commands', 'cmd', 'core', 'external', 'gui_plugins', 'import_module',\n    # 'modes', 'modules',\n    # 'os', 'pickle', 'plugins', 'rst3', 'test', 'tests',\n# Functions/methods...\n# 'caller', 'callers', 'copy', 'count', 'end', 'fileName',\n# 'ivars', 'key', 'kind', 'level', 'match', 'remove', 'trace',\n    # 'add', 'add_to_dot', 'backup', 'blank',\n    # 'caller', 'callers', 'children', 'clone', 'cls', 'command_name', 'commanders',\n    # 'commit', 'convert', 'copy', 'count',\n    # 'delegate', 'do', 'done', 'dump', 'encode', 'end', 'error', 'es', 'exists', 'expand',\n    # 'filename', 'fileName', 'find', 'flush', 'get',\n    # 'handler', 'handler1', 'handler2', 'hash',\n    # 'IdleTime', 'ignore', 'indent', 'it', 'items', 'ivars', 'join', 'key', 'keys', 'kind',\n    # 'level', 'lt', 'lower', 'lws', 'match', 'message', 'name', 'new', 'next', 'nodes', 'note',\n    # 'on_idle', 'open', 'parents', 'path', 'predicate', 'put',\n    # 'read', 'readline', 'red', 'redoHelper', 'remove', 'replace', 'report', 'rt',\n    # 'scan', 'select', 'set', 'show', 'start', 'stop',\n    # 'toString', 'toUnicode', 'trace', 'translateString',\n    # 'underline', 'undoHelper', 'unl', 'values', 'visit',\n    # 'warn', 'warning', 'word',"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220503084900.1",
+   "h": "<< init core_p, command_p and globals_p >>",
+   "b": "core_p = g.findNodeAnywhere(c, 'Core classes')\ncommand_p = g.findNodeAnywhere(c, 'Command classes')\nglobals_p = g.findNodeAnywhere(c, '@file leoGlobals.py')\nassert core_p and command_p and globals_p\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220503084230.1",
+   "h": "function: check",
+   "b": "def check(root: \"Position\") -> None:\n    \"\"\"Print any functions in d that don't look like a function call.\"\"\"\n    global count\n    print('Check:', root.h)\n    skipping = None\n    for p in root.subtree():\n        skipping = False\n        if '@language rest' in p.b:\n            continue\n        for s in p.b.split('\\n'):\n            ss = s.strip()\n            # Handle skipping modes...\n            if skipping == '@':\n                if ss.startswith('@c'):\n                    skipping = None\n                continue\n            if skipping:\n                for skipping in ('\"\"\"', \"'''\"):\n                    if skipping in ss:\n                        skipping = None\n                        continue\n                continue\n            # Not skipping strings. Ignore comments.\n            assert not skipping, repr(skipping)\n            i = ss.find('#')\n            if i > -1:\n                ss = ss[:i].strip()\n            if not ss:\n                continue\n            # Start skipping modes.\n            if ss.startswith('@ ') or ss=='@':\n                skipping = '@'\n                continue\n            if ss.count('\"\"\"') == 1:\n                skipping = '\"\"\"'\n                continue\n            if ss.count(\"'''\") == 1:\n                skipping = \"'''\"\n                continue\n            if '\"' in ss or \"'\" in ss:  # Ignore lines containing strings.\n                continue\n            # Skip special cases.\n            if ss.startswith((\n                '<<', '@cmd', '@g.command',\n                'def', 'from', 'import', 'print',\n            )):\n                continue\n            m = functions_pat.match(ss)\n            if not m:\n                continue\n            # The function is in the line.\n            # Ignore if it is within any kind of special context.\n            h = g.truncate(p.h, 25)\n            func = m.group(1)\n            args_pat = re.compile(rf\".*?[\\w_]+\\s*\\(.*?\\b{func}\\b.*?\\)\")\n            array_pat = re.compile(rf\".*?\\b{func}\\b\\s*(\\[|\\])\")\n            op_pat = re.compile(\n                rf\".*?\\b{func}\\b\\s*(\\=|\\<|\\>|\\+|\\-|\\,|\\)|\\:|\\!|\\%|\"\n                rf\"in\\b|is\\b|and\\b|or\\b|else\\b|if\\b|not\\b)\"\n            )\n            attr_pat = re.compile(rf\".*\\b{func}\\.\")\n            if args_pat.match(ss):\n                if 0: print(f\"  Arg: {h:30} {func:20} {ss}\")\n                exclusions.add(func)\n            elif array_pat.match(ss):\n                if 0: print(f\"Array: {h:30} {func:20} {ss}\")\n                exclusions.add(func)\n            elif op_pat.match(ss):\n                if 0: print(f\"   OP: {h:30} {func:20} {ss}\")\n                exclusions.add(func)\n            elif attr_pat.match(ss):\n                if 0: print(f\" Attr: {h:30} {func:20} {ss}\")\n                exclusions.add(func)\n            else:\n                count += 1\n                print(f\"Found: {h:30} {func:20} {ss}\")"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220503084045.1",
+   "h": "function: scan",
+   "b": "def_pat = re.compile(r'^\\s*def ([\\w_]+)\\s*\\(')\n\ndef scan(root: \"Position\") -> None:\n    \"\"\"Add entries in d for all function/method definitions.\"\"\"\n    for p in root.subtree():\n        for s in p.b.split('\\n'):\n            if m := def_pat.match(s):\n                name = m.group(1)\n                if not name.startswith('__'):\n                    d [m.group(1)] = True"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20201015145257.1",
+   "h": "script: import legacy file",
+   "b": "import leo.core.leoImport as leoImport\nimport importlib\nimportlib.reload(leoImport)\ng.cls()\n# Change path as necessary.\npath = r'c:\\users\\edreamleo\\lsa.py'\nassert g.os_path_exists(path)\nx = leoImport.LegacyExternalFileImporter(c)\nx.import_file(path)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230720115916.1",
+   "h": "script: node-history",
+   "b": "g.cls()\nimport leo.commands.editFileCommands as efc\n\nx = efc.GitDiffController(c=c)\npath = g.os_path_finalize_join(g.app.loadDir, 'leoGlobals.py')\ngnxs = (\n    'ekr.20230626064652.1',  # EKR's replacement gnx\n    'tbrown.20140311095634.15188',  # Terry's original node.\n)\nx.node_history(path, gnxs, limit=60)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210630070717.1",
+   "h": "script: restore gnxs in leoserver.py (full version)",
+   "b": "\"\"\"\nSee #2025: https://github.com/leo-editor/leo-editor/issues/2025\n\nNote: I have chosen *not* to update the gnx's. Félix deserves the credit for the changes.\n\nA script to restore gnx's in sentinels in leoserver.py from the main branch to the felix-server2 branch.\n\nmain-leoserver.py: the version of leoserver.py from main\nfelix_server.py:    The version of leoserver.py from felix-server-2\nnew_server.py:      leoserver.py, with updated gnx's.\n\nAfter running this script, `kdiff3 main-leoserver.py new-leoserver.py` shows *only*\nthe expected changes to sentinel lines.\n\"\"\"\n\ng.cls()\nimport difflib\nimport os\nverbose = True\nekr_server = r'c:\\diffs\\main-leoserver.py'\nfelix_server = r'c:\\diffs\\felix-server2-leoserver.py'\nnew_server = r'c:\\diffs\\new-leoserver.py'\nassert os.path.exists(ekr_server), ekr_server\nassert os.path.exists(felix_server), felix_server\n#\n# The target (new!) version should be the ekr_server code.\n# With this convention:\n#   all '-' opcodes will refer to felix gnx's!\n#   These lines refer to lines that Félix *inserted* or *changed*\nwith open(felix_server) as f:\n    a1_s = f.read()\nwith open(ekr_server) as f:\n    b1_s = f.read()\nprint('len ekr', len(b1_s), 'len felix', len(a1_s))\n# ndiff compares *lists* of strings.\n# a and b are lists of @+node sentinels.\na_list = [z for z in g.splitLines(a1_s) if z.strip().startswith('#@+node:')]\nb_list = [z for z in g.splitLines(b1_s) if z.strip().startswith('#@+node:')]\nchanged, deleted, inserted = [], [], []\ndiff = list(difflib.ndiff(a_list, b_list))\ni = 0\nwhile i < len(diff):\n    progress = i\n    s = diff[i]\n    code = s[0]\n    line1 = s[2:]\n    if code == '-':  # Félix inserted or changed the node.\n        line2_s = diff[i+1] if i+1 < len(diff) else ''\n        line3_s = diff[i+2] if i+2 < len(diff) else ''\n        line2_code = line2_s[0] if line2_s else ''\n        line3 = line3_s[2:]\n        assert 'felix' in line1, s\n        if line2_code == '?':  # The line changed. Remember the first and third lines.\n            assert line2_s\n            assert line3_s\n            changed.append((line1, line3))\n            i += 4\n        else: # Félix inserted the node.\n            inserted.append(line1)\n            i += 1\n    elif code == '+':  # Félix deleted the node.\n        assert 'ekr' in line1, s\n        deleted.append(line1)\n        i += 1\n    else:\n        print(f\"{i:>3}: UNKNOWN CODE\")\n        print(f\"{i:>3}: {s!r}\")\n        print('')\n        for j, s in enumerate(diff[:i+1]):\n            print(f\"{j:>3}: {s!r}\")\n        break\n    assert i > progress\n#\n# Print the results.\nprint('')\nprint(f\"Inserted {len(inserted)} nodes\")\nif verbose:\n    print('')\n    for i, z in enumerate(inserted):\n        print(f\"{i:>3}: {z!r}\")\n    print('')\nprint(f\" Deleted {len(deleted)} nodes\")\nif verbose:\n    print('')\n    for i, z in enumerate(deleted):\n        print(f\"{i:>3}: {z!r}\")\n    print('')\nprint(f\" Changed {len(changed)} nodes\")\nif verbose:\n    print('')\n    for i, z in enumerate(changed):\n        a, b = z\n        print(f\"{i:>3}: felix: {a!r}\")\n        print(f\"{i:>3}:   ekr: {b!r}\")\n        print('')\n#\n# Change the leoserver.py, *not* the ekr file.\nresult = a1_s\nfor z in changed:\n    a, b = z\n    assert '#@+node:felix' not in b, repr(b)\n    result = result.replace(a, b)\nif 0:\n    g.printObj(g.splitLines(result), tag=result)\nif 0:\n    i, n = 0, 0\n    tag = '#@+node:felix'\n    while True:\n        i = result.find(tag, i)\n        if i == -1:\n            break\n        print(n, repr(result[i: i+50]))\n        i += len(tag)\n        n += 1\nif 1:\n    # Write the file.\n    with open(new_server, 'w') as f:\n        f.write(result)\n    print(f\"wrote {new_server}\")\n    \n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210701044426.1",
+   "h": "<< setup >>",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210701044513.1",
+   "h": "<< read into a1_s, b1_s >>",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210630103405.1",
+   "h": "script: restore gnxs in leoserver.py (simple version)",
+   "b": "g.cls()\nimport difflib, os, re\nekr_server = r'c:\\diffs\\main-leoserver.py'\nfelix_server = r'c:\\diffs\\felix-server2-leoserver.py'\nwith open(ekr_server) as f:\n    a1_s = f.read()\nwith open(felix_server) as f:\n    b1_s = f.read()\n# a and b are lists of @+node sentinel lines.\na_list = [z.lstrip() for z in g.splitLines(a1_s) if z.strip().startswith('#@+node:')]\nb_list = [z.lstrip() for z in g.splitLines(b1_s) if z.strip().startswith('#@+node:')]\n# Show the diffs.\ndiff = difflib.ndiff(a_list, b_list)\nfor i, s in enumerate(diff):\n    print(f\"{i:<3}: {s.rstrip()}\")\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20200222083959.1",
+   "h": "script: start loggin",
+   "b": "import logging\nrootLogger = logging.getLogger('')\nrootLogger.setLevel(logging.DEBUG)\nsocketHandler = logging.handlers.SocketHandler(\n    'localhost',\n    logging.handlers.DEFAULT_TCP_LOGGING_PORT,\n)\nrootLogger.addHandler(socketHandler)\nlogging.info('-' * 20)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20211014103433.1",
+   "h": "script: web-to-outline",
+   "b": "\"\"\"\nConvert the TeX sources, assumed to be in ~/tex.web, to an outline.\n\nhttps://mirror.las.iastate.edu/tex-archive/systems/knuth/dist/tex/tex.web\n\n\"\"\"\ng.cls()\nimport os\nimport re\n# Read\npath = os.path.expanduser('~/tex.web')\nwith open(path) as f:\n    contents = f.read()\n# Create root.\nlast = c.lastTopLevel()\nif last.h == 'tex.web':\n    last.doDelete()\nlast = c.lastTopLevel()\nroot = last.insertAfter()\nroot.h = 'tex.web'\nroot.b = '@language tex'\nprefix = root.insertAsLastChild()\nprefix.h = 'prefix'\n# Patterns\nat_star_pat = re.compile(r'^@\\*(.*?)$')\nat_space_pat = re.compile(r'^@ (.*?)$')\nat_p_pat = re.compile(r'^@p (.*?)$')\nat_sec_pat = re.compile(r'^@<(.*?)@>=(.*?)$')\n@others  # Define handlers and helpers.\ntable = (\n    (at_star_pat, do_at_star),\n    (at_space_pat, do_at_space),\n    (at_p_pat, do_p),\n    (at_sec_pat, do_sec),\n)\ncount = 0\nparents = [('prefix', prefix)]  # Tuples: (kind, p)\nfor i, s in enumerate(g.splitLines(contents)):\n    for pattern, helper in table:\n        if m := pattern.match(s):\n            helper(i, m, s)  # m not used at present.\n            count += 1\n    else:\n        parent = parents[-1][1]\n        parent.b += s\n# Finish\nroot.expand()\nc.redraw(root)\nprint(f\"done: {count} pattern{g.plural(count)}\")"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20211014112513.1",
+   "h": "Handlers",
+   "b": "def do_at_star(i, m, s):\n    global parents\n    print(s.rstrip())  # A good progress indicator.\n    parent = root.insertAsLastChild()\n    parent.h = s.strip()\n    parents = [('@*', parent)]  # Always prune the stack.\n\ndef do_at_space(i, m, s):\n    new_node('@ ', s)\n    \ndef do_p(i, m, s):\n    new_node('@p', s)\n\ndef do_sec(i, m, s):\n    new_node('@<', s)\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20211014120710.1",
+   "h": "new_node",
+   "b": "def new_node(kind, h):\n    \"\"\"Create a new node as the last child of an '@*' node.\"\"\"\n    global parents\n    kind = parents[-1][0]\n    if kind == '@*':\n        parent = parents[-1][1]\n    else:\n        # Prune the stack back to the '@*' entry.\n        parent_tuple = parents[0]\n        assert parent_tuple[0] == '@*', parents\n        parents = [parent_tuple]\n        parent = parent_tuple[1]\n    child = parent.insertAsLastChild()\n    child.h = h.strip()\n    parents.append(('@ ', child))\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20200222151754.1",
+   "h": "script: yoton \"other end\"",
+   "b": "import yoton\n\n# Create another context and a sub channel\nct2 = yoton.Context()\nsub = yoton.SubChannel(ct2, 'chat')\n\n# Connect\nct2.connect('publichost:test')\n\n# Receive\nwhile True:\n    i = int(sub.recv())\n    print(i)\n    if i == 10:\n        break\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20220904210247.1",
+   "h": "@enabled-plugins",
+   "b": "# This is a copy of the @enabled-plugins node from leoSettings.leo,\n# ensuring that the @enabled-plugins node in myLeoSettings.leo has no effect.\n\n# Standard plugins...\n\nplugins_menu.py     # Adds 'Plugins' menu.\nmod_scripting.py    # Support for @button and @command.\nnav_qt.py           # Forward/back buttons & goto-next/prev-history-node\nqt_layout.py        # Creates qt_layout menu in the Plugins menu.\n\n# viewrendered.py     # (Or viewrendered3.py) Plugins menu support.\n\n# Disabled standard menus...\n\n# contextmenu.py      # Required by the vim.py and xemacs.py plugins.\n# mod_autosave.py   # Creates .bak files.\n# nodetags.py       # Supports tags via uA's.\n# quicksearch.py    # Nav pane.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "EKR.20040430162943",
+   "h": "The attic",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20170302123956.1",
+   "h": "@file ../doc/leoAttic.txt",
+   "b": ""
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20031218072017.2406",
+   "h": "Code",
+   "b": "# This file contains almost all of Leo's sources.\n# See the \"About this file\" node for important notes.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20140902032918.18591",
+   "h": "About this file",
+   "b": "@language rest\n@wrap\n\nLeo uses a model/view/controller architecture.\n\n- Controller: The Commands class and its helpers in leoCommands.py and leoEditCommands.py.\n\n- Model: The VNode and Position classes in leoNodes.py.\n\n- View: The gui-independent base classes are in the node \"Gui Base Classes\". The Qt-Specific subclasses are in the node \"Qt gui\".\n\n**Important**: The general organization of these classes have changed hardly at all in Leo's 20+ year history.  The reason is that what each class does is fairly obvious.  How the gets the job done may have changed drastically, but *that's an internal implementation detail of the class itself*.  This is the crucial design principle that allows Leo's code to remain stable.  *Classes do not know or meddle in the internal details of other classes*.  As a result, nobody, including EKR, needs to remember internal details.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140831085423.18630",
+   "h": "Terminology",
+   "b": "This outline contains all of Leo's core source code.\n\nLeo's code uses the following conventions throughout:\n\nc:  a commander.\nch: a character.\nd:  a dict.\nf:  an open file.\nfn: a file name.\ng:  the leoGlobals module.\ni, j, k: indices into a string.\np:  a Position.\ns:  a string.\nt:  a text widget.\nu:  an undoer.\nw:  a gui widget.\nv:  a Vnode\nz:  a local temp.\n\nIn more limited contexts, the following conventions apply:\n\nsi:     a g.ShortcutInfo object.\nks:     a g.KeyStroke object\nstroke: a KeyStroke object.\n\nbtw:    leoFrame.BaseTextWrapper\nstw:    leoGui.StringTextWrapper\n\nbqtw:   qt_text.BaseQTextWrapper\nlqtb:   qt_text.LeoQTextBrowser\nqhlw:   qt_text.QHeadlineWrapper\nqmbw:   qt_text.QMinibufferWrapper\nqlew:   qt_text.QLineEditWrapper\nqsciw:  qt_text.QScintiallaWrapper\nqtew:   qt_text.QTextEditWrapper"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140831085423.18631",
+   "h": "Official ivars",
+   "b": "The following 'official' ivars will always exist:\n\nc.frame                 The frame containing the log,body,tree, etc.\nc.frame.body            The body pane.\nc.frame.body.widget     The gui widget for the body pane.\nc.frame.body.wrapper    The high level interface for the body widget.\nc.frame.iconBar         The icon bar.\nc.frame.log             The log pane.\nc.frame.log.widget      The gui widget for the log pane.\nc.frame.log.wrapper     The high-level interface for the log pane.\nc.frame.tree            The tree pane.\n\nThe following were official ivars that no longer exist:\n\nc.frame.body.bodyCtrl   Use c.frame.body.wrapper instead.\nc.frame.log.logCtrl     Use c.frame.log.wrapper instead.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20031218072017.2604",
+   "h": "Core classes",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20250329033400.1",
+   "h": "@file leoAPI.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.2608",
+   "h": "@file leoApp.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20141012064706.18389",
+   "h": "@file leoAst.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150323150718.1",
+   "h": "@file leoAtFile.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20161026193447.1",
+   "h": "@file leoBackground.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150521115018.1",
+   "h": "@file leoBeautify.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20070227091955.1",
+   "h": "@file leoBridge.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20070317085508.1",
+   "h": "@file leoChapters.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20100208065621.5894",
+   "h": "@file leoCache.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.2794",
+   "h": "@file leoColor.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140827092102.18574",
+   "h": "@file leoColorizer.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.2810",
+   "h": "@file leoCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180212072657.2",
+   "h": "@file leoCompare.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20130925160837.11429",
+   "h": "@file leoConfig.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20130302121602.10208",
+   "h": "@file leoDebugger.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160306114544.1",
+   "h": "@file leoExternalFiles.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3018",
+   "h": "@file leoFileCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3093",
+   "h": "@file leoGlobals.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514154159.1",
+   "h": "@file leoHistory.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3206",
+   "h": "@file leoImport.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20241022090855.1",
+   "h": "@file leoJupytext.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20190515070742.1",
+   "h": "@file leoMarkup.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260907120000.1",
+   "h": "@file leoPluginRegistry.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3320",
+   "h": "@file leoNodes.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260905130000.1",
+   "h": "@file leoOutline.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260908130000.1",
+   "h": "@file ../leolib/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260906100000.1",
+   "h": "@file ../leolib/api.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260906150000.1",
+   "h": "@file ../leolib/language_data.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260908160000.1",
+   "h": "@file ../leolib/state.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260908140000.1",
+   "h": "@file ../leolib/util.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260905210000.1",
+   "h": "@file ../tui/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260905210100.1",
+   "h": "@file ../tui/model.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260905210200.1",
+   "h": "@file ../tui/screen.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sa.20260905210300.1",
+   "h": "@file ../tui/__main__.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140821055201.18331",
+   "h": "@file leoPersistence.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3439",
+   "h": "@file leoPlugins.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150419124739.1",
+   "h": "@file leoPrinting.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20061024060248.1",
+   "h": "@file leoPymacs.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140810053602.18074",
+   "h": "@file leoQt.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140526082700.18440",
+   "h": "@file leoRope.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20090502071837.3",
+   "h": "@file leoRst.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20120420054855.14241",
+   "h": "@file leoSessions.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20080708094444.1",
+   "h": "@file leoShadow.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180121041003.1",
+   "h": "@file leoTips.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3603",
+   "h": "@file leoUndo.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131109170017.16504",
+   "h": "@file leoVim.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20150514035207.1",
+   "h": "Command classes",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514035236.1",
+   "h": "@file ../commands/abbrevCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514035943.1",
+   "h": "@file ../commands/baseCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514035559.1",
+   "h": "@file ../commands/bufferCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20161021090740.1",
+   "h": "@file ../commands/checkerCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20171123135539.1",
+   "h": "@file ../commands/commanderEditCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20171123095353.1",
+   "h": "@file ../commands/commanderFileCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20171124073126.1",
+   "h": "@file ../commands/commanderHelpCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20171124080430.1",
+   "h": "@file ../commands/commanderOutlineCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040100.1",
+   "h": "@file ../commands/controlCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160316095222.1",
+   "h": "@file ../commands/convertCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040118.1",
+   "h": "@file ../commands/debugCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514035813.1",
+   "h": "@file ../commands/editCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514041209.1",
+   "h": "@file ../commands/editFileCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150624112334.1",
+   "h": "@file ../commands/gotoCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040138.1",
+   "h": "@file ../commands/helpCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040140.1",
+   "h": "@file ../commands/keyCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040142.1",
+   "h": "@file ../commands/killBufferCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040146.1",
+   "h": "@file ../commands/rectangleCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20150514040239.1",
+   "h": "@file ../commands/spellCommands.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20031218072017.3625",
+   "h": "Gui base classes",
+   "b": "See info issue #1585\nhttps://github.com/leo-editor/leo-editor/issues/1585\n@language python\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20060123151617",
+   "h": "@file leoFind.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3655",
+   "h": "@file leoFrame.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3719",
+   "h": "@file leoGui.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20061031131434",
+   "h": "@file leoKeys.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20031218072017.3749",
+   "h": "@file leoMenu.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180225010644.1",
+   "h": "Other files",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20260809041420.1",
+   "h": "--- (do not delete) In .github/workflows",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260804062205.1",
+   "h": "@clean ../../.github/workflows/ci.yml",
+   "b": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: [\"3.10\", \"3.11\", \"3.12\", \"3.13\"]\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: ${{ matrix.python-version }}\n          cache: pip\n      - run: pip install \"ruff==0.16.4\"\n      - run: ruff check leo --output-format=github\n      - run: ruff format --check leo\n\n  test:\n    runs-on: ubuntu-latest\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: [\"3.10\", \"3.11\", \"3.12\", \"3.13\"]\n    env:\n      # No display in CI; run Qt headless instead of pulling in xvfb.\n      QT_QPA_PLATFORM: offscreen\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: ${{ matrix.python-version }}\n          cache: pip\n      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends\n          libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1\n      - run: pip install asttokens Pygments \"PyQt6>=6.6\" PyQt6-QScintilla\n      - run: python run_ci_unit_tests.py\n\n  test-no-qt:\n    # Leo's core must import and pass its unit tests with no Qt installed.\n    # Nothing here installs PyQt6 or any Qt system library: that is the point.\n    runs-on: ubuntu-latest\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: [\"3.10\", \"3.11\", \"3.12\", \"3.13\"]\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: ${{ matrix.python-version }}\n          cache: pip\n      - run: pip install asttokens Pygments\n      - run: python -c \"from leo.core import leoApp, leoBridge, leoGui\"\n      - run: python run_ci_unit_tests.py\n\n  leo-sync:\n    # Catch LeoPyRef.leo getting out of sync with its external files.\n    # See check_leo_sync.py.\n    runs-on: ubuntu-latest\n    env:\n      QT_QPA_PLATFORM: offscreen\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends\n          libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1\n      - run: pip install \"PyQt6>=6.6\" PyQt6-QScintilla\n      - run: python -m leo.scripts.check_leo_sync\n\n  docs:\n    # Catch LeoDocs.leo failing to build into Sphinx HTML.\n    # See leo/scripts/build_docs.py.\n    runs-on: ubuntu-latest\n    env:\n      QT_QPA_PLATFORM: offscreen\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends\n          libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1\n      - run: pip install \"PyQt6>=6.6\" PyQt6-QScintilla docutils sphinx sphinx-book-theme\n      - run: python -m leo.scripts.build_docs\n\n  ty:\n    runs-on: ubuntu-latest\n    env:\n      TY_OUTPUT_FORMAT: github\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.14\"\n          cache: pip\n      # Install optional packages that Leo's devs should have installed,\n      # so ty resolves their imports the same way it does on devs' machines.\n      - run: pip install \"ty==0.0.73\"\n          \"PyQt6>=6.6\" PyQt6-QScintilla PyQt6-WebEngine\n          black Jinja2 Pygments docutils pyenchant jedi nbformat nbconvert\n          \"mypy<2\" lxml PyYAML\n      - run: ty check leo\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260809041303.1",
+   "h": "@clean ../../.github/workflows/publish.yml",
+   "b": "name: Publish\n\non:\n  release:\n    types: [published]\n  workflow_dispatch:\n    inputs:\n      tag:\n        description: 'Existing release tag to build and upload assets for (e.g. v6.8.5)'\n        required: true\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.inputs.tag || github.event.release.tag_name }}\n\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n          cache: pip\n\n      - name: Set version and release date from release tag\n        run: |\n          VERSION=\"${{ github.event.inputs.tag || github.event.release.tag_name }}\"\n          VERSION=\"${VERSION#v}\"\n          sed -i \"s/^version = .*/version = \\\"$VERSION\\\"/\" pyproject.toml\n          echo \"Set version to $VERSION\"\n\n          RELEASE_DATE=\"$(date -u +'%B %-d, %Y')\"\n          sed -i \"s/^static_date = .*/static_date = '$RELEASE_DATE'/\" leo/core/leoVersion.py\n          echo \"Set static_date to $RELEASE_DATE\"\n\n      - run: python -m pip install --upgrade build\n      - run: python -m build\n      - run: ls -la dist/\n\n      - uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n\n  github-release:\n    needs: build\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          name: dist\n          path: dist\n\n      - env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: |\n          TAG=\"${{ github.event.inputs.tag || github.event.release.tag_name }}\"\n          gh release upload \"$TAG\" dist/*.whl dist/*.tar.gz \\\n            --clobber --repo ${{ github.repository }}\n\n  pypi:\n    needs: build\n    runs-on: ubuntu-latest\n    environment: pypi\n    permissions:\n      id-token: write\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          name: dist\n          path: dist\n\n      - uses: pypa/gh-action-pypi-publish@release/v1\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260811072323.1",
+   "h": "@clean ../../.github/workflows/publish-docs.yml",
+   "b": "name: Publish docs\n\n# Manually rebuilds Leo's documentation from leo/doc/LeoDocs.leo (see\n# leo/scripts/build_docs.py). No generated HTML is ever committed to git:\n#\n# - Every run uploads the built site as a plain workflow artifact, so it\n#   can be downloaded and reviewed before anything goes live.\n# - Re-running with the \"publish\" input checked additionally deploys the\n#   same build straight to GitHub Pages via actions/deploy-pages.\n#\n# The \"publish\" path requires the repo's Pages source (Settings > Pages >\n# Build and deployment) to be set to \"GitHub Actions\" -- it will fail\n# clearly if that hasn't been switched from the legacy branch-based source.\n\non:\n  workflow_dispatch:\n    inputs:\n      publish:\n        description: 'Deploy to GitHub Pages (requires Pages source = \"GitHub Actions\"). Leave unchecked to just build a reviewable artifact.'\n        type: boolean\n        default: false\n\npermissions:\n  contents: read\n  pages: write\n  id-token: write\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    env:\n      QT_QPA_PLATFORM: offscreen\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends\n          libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1\n      - run: pip install \"PyQt6>=6.6\" PyQt6-QScintilla docutils sphinx sphinx-book-theme\n      - run: python -m leo.scripts.build_docs --out built-docs\n\n      - name: Upload reviewable artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: leo-docs-html\n          path: built-docs/\n\n      - name: Package for Pages\n        if: ${{ inputs.publish }}\n        uses: actions/upload-pages-artifact@v3\n        with:\n          path: built-docs/\n\n  deploy:\n    if: ${{ inputs.publish }}\n    needs: build\n    runs-on: ubuntu-latest\n    environment:\n      name: github-pages\n      url: ${{ steps.deployment.outputs.page_url }}\n    steps:\n      - id: deployment\n        uses: actions/deploy-pages@v4\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180225010707.1",
+   "h": "--- (do not delete) In leo-editor",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260813051101.1",
+   "h": "--- (do not delete) leo-editor: build files",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240317061516.1",
+   "h": "@clean ../../MANIFEST.in",
+   "b": "@language python\n\n# Order matters!\n\n# Include *everything* in the leo folder.\ngraft leo\n\nglobal-exclude *.py[cod] *.__pycache__ *.so\nglobal-exclude *mypy_cache *.mypy_cache, *.mypy_stubs, *.gitattributes, *.htmlcov\n\n# Add files in the top-level leo-editor folder.\n\ninclude *.py\ninclude *.TXT\n\n# No longer required.\n# obscure pip bug fix https://github.com/pypa/setuptools/issues/1694\n#include pyproject.toml\n\n# Tweaks\n\nprune leo/unittests/htmlcov\nprune leo/doc/html\ninclude leo/doc/html/conf.py\n\n# #3853.\ninclude leo/doc/_static\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240206161713.1",
+   "h": "@clean ../../setup.cfg ",
+   "b": "@language ini\n\n[bdist_wheel]\n\n# Leo only supports Python 3, so universal should be zero.\nuniversal=0\n\n[metadata]\n\n# Becomes the home-page in `pip show leo`.\nurl = https://leo-editor.github.io/leo-editor/\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20260821134304.1",
+   "h": "@clean ../../ty.toml",
+   "b": "# Config for `ty`: https://github.com/astral-sh/ty\n# See the `ty` job in .github/workflows/ci.yml\n\n[src]\ninclude = [\"leo\"]\nexclude = [\n\n<< ty.toml: exludes >>\n\n[analysis]\nstrict-equality-semantics = true\n\n[rules]\n\n<< ty.toml: rules >>\n"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20260902044618.1",
+   "h": "<< ty.toml: exludes >>",
+   "b": "    # Mirrors the [mypy] exclude list in .mypy.ini.\n    \"leo/doc\",\n    \"leo/dist\",\n    \"leo/editpane\",\n    \"leo/examples\",\n    \"leo/extensions\",\n    \"leo/external\",\n    \"leo/modes\",\n    \"leo/plugins/obsolete\",\n    \"leo/scripts\",\n    \"leo/themes\",\n    \"leo/unittests\",\n    \"leo/www\",\n    \"leo/plugins/QNCalendarWidget.py\",\n    \"leo/plugins/freewin.py\",\n    \"leo/plugins/xdb_pane.py\",\n    \"leo/test/scriptFile.py\",\n    \"leo/plugins/beautify_node.py\",\n    \"leo/plugins/viewrendered3*\",\n    \"leo/plugins/leo_pdf*\",\n    \"leo/plugins/leo_to_rtf*\",\n    \"leo/plugins/mnplugins*\",\n    \"leo/plugins/mod_speedups*\",\n    \"leo/plugins/settings_finder*\",\n    \"leo/plugins/stickynotes_plus*\",\n    \"leo/plugins/qt_main*\",\n]\n"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20260902044553.1",
+   "h": "<< ty.toml: rules >>",
+   "b": "\n# Like `disable_error_code=attr-defined` in .mypy.ini.\nunresolved-attribute = \"ignore\"\n\n# Like `ignore_missing_imports = True` in .mypy.ini.\nunresolved-import = \"ignore\"\n\n# Warn about unused suppressions.\nunused-ignore-comment = \"ignore\"  # Python 3.14 and 3.150rc2 differ.\nunused-type-ignore-comment = \"ignore\"  # Python 3.14 and 3.150rc2 differ.\n\n# Ignore warnings about overridden methods.\ninvalid-method-override = \"ignore\"\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240227064614.1",
+   "h": "@file ../../pyproject.toml",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240406013108.1",
+   "h": "@file ../../ruff.toml",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260813051203.1",
+   "h": "--- (do not delete) leo-editor: workflow scripts",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20181009072707.1",
+   "h": "@file ../../run_ci_unit_tests.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20181014073705.1",
+   "h": "@file ../../run_pytest_tests.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260813051148.1",
+   "h": "--- (do not delete) leo-editor: other scripts",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20210302164046.1",
+   "h": "@edit ../../launchLeo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20150304125314.4",
+   "h": "@file ../../leo_to_html.xsl",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20150304130753.4",
+   "h": "leo-viewer/leo_to_html.xsl",
+   "b": "@language xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xsl:stylesheet version=\"1.0\"\nxmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\">\n\n<xsl:output method=\"html\" version=\"1.0\" encoding=\"UTF-8\" indent=\"yes\"/>\n\n<!-- The default setting. Not needed unless there is a strip-space element. -->\n  <!-- <xsl:preserve-space elements='leo_file nodes t'/> -->\n\n<xsl:template match ='leo_file'>\n<html>\n  <head>\n    <<style>>\n    <<scripts>>\n  </head>\n  <body>\n    <xsl:apply-templates select='tnodes'/>\n    <div class=\"outlinepane\">\n      <xsl:apply-templates select='vnodes'/>\n    </div>\n    <div class=\"bodypane\">\n      <h1>Body Pane</h1>\n      <pre class=\"body-text\">body</pre>\n    </div>\n  </body>\n</html>\n</xsl:template>\n\n<xsl:template match = 'tnodes'>\n<div class=\"tnodes\">\n  <xsl:for-each select = 't'>\n    <div class=\"tnode\">\n      <xsl:attribute name=\"id\"><xsl:value-of select='@tx'/></xsl:attribute>\n      <xsl:value-of select='.'/>\n    </div>\n  </xsl:for-each>\n</div>\n</xsl:template>\n\n<xsl:template match = 'vnodes'>\n  <xsl:for-each select = 'v'>\n    <xsl:apply-templates select ='.'/>\n  </xsl:for-each>\n</xsl:template>\n\n<xsl:template match='v'>\n  <div class=\"node\">\n    <xsl:attribute name=\"id\"><xsl:value-of select='@t'/></xsl:attribute>\n    <h1><xsl:value-of select='vh'/></h1>\n    <xsl:if test ='./v' >\n      <xsl:apply-templates select = 'v'/>\n    </xsl:if>\n  </div>\n</xsl:template>\n\n</xsl:stylesheet>\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260813051733.1",
+   "h": "--- (do not delete) leo-editor: user top-level files",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20231108150521.1",
+   "h": "@edit ../../CONTRIBUTING.md",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240206153029.1",
+   "h": "@edit ../../README.md",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180225010913.1",
+   "h": "In leo/core",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210202110241.1",
+   "h": "@file leoclient.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20031218072017.2605",
+   "h": "@file runLeo.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "felix.20210621233316.1",
+   "h": "@file leoserver.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230203163544.1",
+   "h": "@file tracing_utils.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180225010743.1",
+   "h": "In leo/external",
+   "b": "@nosearch"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20190607124533.1",
+   "h": "@nopylint",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20220823195205.1",
+   "h": "@clean ../external/leoftsindex.py",
+   "b": "\"\"\"\nStand alone GUI free index builder for Leo's full text search system::\n\n  python leoftsindex.py <file1> <file2> <file3>...\n\nIf the file name starts with @ it's a assumed to be a simple\ntext file listing files to be indexed.\n\nIf <file> does not contain '#' it's assumed to be a .leo file\nto index, and is indexed.\n\nIf <file> does contain '#' it's assumed to be a .leo file\ncontaining a list of .leo files to index, with the list in\nthe node indicated by the UNL after the #, e.g.::\n\n   path/to/myfile.leo#Lists-->List of outlines\n\nIn the latter case, if the node identified by the UNL has children,\nthe list of files to scan is built from the first line of the body\nof each child node of the identified node (works well with bookmarks.py).\nIf the node identified by the UNL does not have children, the\nnode's body is assumed to be a simple text listing of paths to .leo files).\n\n.. note::\n\n    It may be necessary to quote the \"file\" on the command line,\n    as the '#' may be interpreted as a comment delimiter::\n\n        python leoftsindex.py \"workbook.leo#Links\"\n\n\n\"\"\"\n\nimport sys\n\n# add folder containing 'leo' folder to path\n# sys.path.append(\"/home/tbrown/Package/leo/bzr/leo.repo/trunk\")\nimport leo.core.leoBridge as leoBridge\nimport leo.plugins.leofts as leofts\n\ncontroller = leoBridge.controller(\n    gui='nullGui',\n    loadPlugins=False,  # True: attempt to load plugins.\n    readSettings=False,  # True: read standard settings files.\n    silent=False,  # True: don't print signon messages.\n    verbose=False,\n)\ng = controller.globals()\n\n# list of \"files\" to process\nfiles = sys.argv[1:]\n\n# set up leofts\nleofts.set_leo(g)\ng._gnxcache = leofts.GnxCache()\nfts = leofts.get_fts()\n\nfn2c = {}  # cache to avoid loading same outline twice\ndone = set()  # outlines scanned, to avoid repetition repetition\n\ntodo = list(files)\n\nwhile todo:\n    item = todo.pop(0)\n\n    print(\"INDEX: %s\" % item)\n\n    if '#' in item:\n        fn, node = item.split('#', 1)\n    else:\n        fn, node = item, None\n\n    if node:\n        c = fn2c.setdefault(fn, controller.openLeoFile(fn))\n        found, dummy, p = g.recursiveUNLSearch(node.split('-->'), c)\n        if not found:\n            print(\"Could not find '%s'\" % item)\n            break\n        if not p:\n            p = c.p\n        if p.hasChildren():\n            # use file named in first node of each child\n            files = [chl.b.strip().split('\\n', 1)[0].strip() for chl in p.children()]\n        else:\n            # use all files listed in body\n            files = [i.strip() for i in p.b.strip().split('\\n')]\n\n    elif fn.startswith('@'):\n        todo.extend(open(fn[1:]).read().strip().split('\\n'))\n        files = []\n\n    else:\n        files = [fn]\n\n    for fn in files:\n        # file names may still have '#' if taken from a node list\n        real_name = fn.split('#', 1)[0]\n        if real_name in done:\n            continue\n        done.add(real_name)\n\n        if len(files) != 1:\n            print(\" FILE: %s\" % real_name)\n\n        c = fn2c.setdefault(real_name, controller.openLeoFile(fn))\n        fts.drop_document(real_name)\n        fts.index_nodes(c)\n@language python\n@tabwidth -4\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20160123142722.1",
+   "h": "@clean ../external/make_stub_files.cfg",
+   "b": "# An example configuration file for make_stub_files.py.\n# By default, this is ~/stubs/make_stub_files.cfg.\n# Can be changed using the --config=path command-line option.\n\n[Global]\n\nfiles:\n\n    # Files to be used *only* if no files are given on the command line.\n    # glob.glob wildcards are supported.\n\n    # c:/Repos/leo-editor/leo/core/leoAst.py\n    # c:/Repos/leo-editor/leo/core/*.py\n    # c:/Repos/leo-editor/plugins/*.py\n\noutput_directory: ~/stubs\n\nprefix_lines:\n    # Lines to be inserted at the start of each stub file.\n    from collections.abc import Iterable\n    from typing import TypeVar\n    T = TypeVar('T', int, float, complex)\n\n[Def Name Patterns]\n\n[General Patterns]\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20180708145905.1",
+   "h": "@clean ../external/py2cs_theory.md",
+   "b": "@language rest\n@wrap\n\nThis is the theory of operation document for py2cs.py. The most interesting aspect of this script is the TokenSync class. This class provides a reliable way of associating tokenizer tokens with ast nodes.\n\n@others\n"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20180708152000.1",
+   "h": "The problem",
+   "b": "\n### The problem\n\nThe initial version of py2cs.py (the script) used only tokens. This solved all token-related problems, but made parsing difficult. Alas, it is [difficult](http://stackoverflow.com/questions/16748029/how-to-get-source-corresponding-to-a-python-ast-node) to associate tokens with ast nodes.\n\nThe script needs the following token-related data:\n\n- The **ignored lines** (comment lines and blank lines) that precede any statement.\n\n- The **trailing comment** strings that might follow any line.\n\n- Optionally, the **line breaks** occurring within lines. At present, this script does not preserve such breaks, and it's probably not worth doing. Indeed, automatically breaking long lines seems more useful, especially considering that coffeescript lines may be substantially shorter than the corresponding python lines.\n\n- The **exact spelling** of all strings.\n\nThe [ast_utils module](\nhttps://bitbucket.org/plas/thonny/src/3b71fda7ac0b66d5c475f7a668ffbdc7ae48c2b5/thonny/ast_utils.py?at=master) purports to solve this problem with convoluted adjustments to the col_offset field. This approach is subject to subtle Python bugs, and subtle differences between Python 2 and Python 3. There is a better way...\n"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20180708152018.1",
+   "h": "Design",
+   "b": "\n### Design\n\nThe main idea is to use *only* the ast.lineno fields and the tokenizer module to recreate token data. The design assumes only that both the ast.lineno field and Python's tokenizer module are solid. This is a much more reasonable assumption than assuming that the col_offset field always tells the truth. In short, this design *ignores* the ast.col_offset field.\n\nAt startup, the TokenSync ctor assigns all the incoming tokens to various lists.  These lists are indexed by lineno:\n\n    ts.line_tokens[i]: all the tokens on line i\n    ts.string_tokens[i]: all string tokens on line i\n    st.ignored_lines: the blank or comment line on line i\n\nIt is very easy to create these lists. The code does not depend on any arcane details.\n\n#### Recovering the exact spelling of stings.\n\nts.synch_string returns the *next* string on the line. Here it is, stripped of defensive code:\n\n    def sync_string(self, node):\n        '''Return the spelling of the string at the given node.'''\n        tokens = self.string_tokens[node.lineno-1]\n        token = tokens.pop(0)\n        self.string_tokens[node.lineno-1] = tokens\n        return self.token_val(token)\n\nStripped of defensive code, the do_Str visitor is just:\n\n    def do_Str(self, node):\n        '''A string constant, including docstrings.'''\n        return self.sync_string(node)\n\n#### Recovering otherwise ignored nodes\n\n**ts.leading_lines(node)** returns a list of otherwise ignored lines that\nprecede the node's line that have not already been returned.\n**ts.leading_string(node)** is a convenience method that returns ''.join(ts.leading_lines(node)). The visitors of the CoffeeScriptTraverser class show how to use these methods.\n"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20180708145905.6",
+   "h": "Using TokenSync class",
+   "b": "\n### Using the TokenSync class\n\nThe present code is driven by ast trees, but each visitor of the CoffeeScriptTraverser class takes care to preserve **otherwise-ignored tokens**. These are tokens that would otherwise be ignored: namely blank lines and comments, both entire-line comments and trailing comments.\n\nThe visitor for each statement intersperses otherwise ignored tokens using calls to the TokenSync class.  The simplest cases are like this:\n\n    def do_Break(self, node):\n        head = self.leading_string(node)\n        tail = self.trailing_comment(node)\n        return head + self.indent('break') + tail\n\nThe leading_string and trailing_comment methods simply redirect to the corresponding methods in the TokenSync class.  Saves a bit of typing. Compound statements are a bit more bother, but not overly so. For example:\n\n    def do_If(self, node):\n\n        result = self.leading_lines(node)\n        tail = self.trailing_comment(node)\n        s = 'if %s:%s' % (self.visit(node.test), tail)\n        result.append(self.indent(s))\n        for z in node.body:\n            self.level += 1\n            result.append(self.visit(z))\n            self.level -= 1\n        if node.orelse:\n            tail = self.tail_after_body(node.body, node.orelse, result)\n            result.append(self.indent('else:' + tail))\n            for z in node.orelse:\n                self.level += 1\n                result.append(self.visit(z))\n                self.level -= 1\n        return ''.join(result)\n\nThe line:\n\n        tail = self.tail_after_body(node.body, node.orelse, result)\n\nis a hack needed to compensate for the lack of an actual ast.Else node.\n"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20180708145905.7",
+   "h": "Summary",
+   "b": "\n### Summary\n\nThe TokenSync class is, a new, elegant, unexpected and happy development. It is a relatively easy-to-use helper that allows parser-based code to preserve data that is not easily accessible in parse trees.\n\nThe TokenSync class avoids [problems with the col_offset field](\nhttp://stackoverflow.com/questions/16748029/how-to-get-source-corresponding-to-a-python-ast-node) in ast nodes. The TokenSync class depends only on the ast.lineno field and the tokenize module. We can expect it to be rock solid.\n\nEdward K. Ream\nFebruary 20 to 25, 2016\n\n\n\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20110310091639.14254",
+   "h": "@file ../external/codewise.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20130805134749.12436",
+   "h": "@file ../external/edb.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20120519121124.9919",
+   "h": "@file ../external/leosax.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20170429161422.1",
+   "h": "@file ../external/log_broadcast.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20170429153135.1",
+   "h": "@file ../external/log_listener.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ville.20091010232339.6117",
+   "h": "@file ../external/lproto.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20160317054700.1",
+   "h": "@file ../external/make_stub_files.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20180628055640.1",
+   "h": "@file ../external/pdb_listener.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20160316091132.1",
+   "h": "@file ../external/py2cs.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180225010850.1",
+   "h": "In leo/modes",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20250330145834.1",
+   "h": "@edit ../modes/tex.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20221129095254.1",
+   "h": "@file ../modes/batch.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20250330150257.1",
+   "h": "@file ../modes/c.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20250121105007.1",
+   "h": "@file ../modes/cweb.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20250110042632.1",
+   "h": "@file ../modes/doxygen.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20150326145530.1",
+   "h": "@file ../modes/forth.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230419050031.1",
+   "h": "@file ../modes/html.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240227082119.1",
+   "h": "@file ../modes/ini.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230419052236.1",
+   "h": "@file ../modes/javascript.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210223151922.1",
+   "h": "@file ../modes/julia.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20241030151621.1",
+   "h": "@file ../modes/jupytext.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20241030152835.1",
+   "h": "@file ../modes/md.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240202211600.1",
+   "h": "@file ../modes/nim.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210219115553.109",
+   "h": "@file ../modes/python.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "swot.20260501212006.1",
+   "h": "@file ../modes/pug.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20231103124615.1",
+   "h": "@file ../modes/rust.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20231012163843.1",
+   "h": "@file ../modes/scheme.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20221204070905.1",
+   "h": "--- (do not delete) In leo/scripts",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240321122705.1",
+   "h": "--- build scripts",
+   "b": "# Here are Leo's distribution-related scripts.\n\n# Info item #3837 contains full documentation for all these scripts.\n# https://github.com/leo-editor/leo-editor/issues/3837"
+  },
+  {
+   "level": 4,
+   "gnx": "mhw.20190808083008.1",
+   "h": "@file ../scripts/add-desktop-links.leox",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240321123226.1",
+   "h": "@file ../scripts/install_leo_from_pypi.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240321123214.1",
+   "h": "@file ../scripts/install_leo_locally.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240322173731.1",
+   "h": "@file ../scripts/pip_uninstall_all.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240321123224.1",
+   "h": "@file ../scripts/run_installed_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240321123225.1",
+   "h": "@file ../scripts/uninstall_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20260414092941.1",
+   "h": "@file ../scripts/update_leo_tools.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20260818055843.1",
+   "h": "@clean ../scripts/build_docs.py",
+   "b": "\"\"\"\nbuild_docs.py: Regenerate Leo's documentation from leo/doc/LeoDocs.leo.\n\nTwo-stage pipeline, both stages driven headlessly (no Leo GUI needed):\n\n1. Run Leo's rst3 command over the LeoDocs.leo outline. This writes the\n   reStructuredText intermediate files (leo/doc/html/*.html.txt and\n   leo/doc/html/slides/**/*.html.txt) from the bodies of its @rst nodes.\n   readSettings=True so the outline's own @settings tree is honored --\n   in particular @bool rst3_call_docutils = False, which keeps this stage\n   from invoking docutils itself; Sphinx does that in stage 2.\n2. Run sphinx-build over leo/doc/html (using its conf.py/Makefile config)\n   to turn those intermediates into final HTML.\n\nUsage:\n    python -m leo.scripts.build_docs [--out DIR]\n\"\"\"\n\nimport argparse\nimport glob\nimport os\nimport subprocess\nimport sys\n\nos.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n\nleo_editor_dir = os.path.abspath(os.path.join(__file__, '..', '..', '..'))\nos.chdir(leo_editor_dir)\nsys.path.insert(0, leo_editor_dir)\n\nfrom leo.core import leoBridge  # noqa: E402\n\n\ndef run_rst3() -> int:\n    \"\"\"Regenerate the .html.txt intermediates from LeoDocs.leo. Return the count written.\"\"\"\n    leo_path = os.path.join(leo_editor_dir, 'leo', 'doc', 'LeoDocs.leo')\n    bridge = leoBridge.controller(\n        gui='nullGui',\n        loadPlugins=False,\n        readSettings=True,\n        silent=True,\n        verbose=False,\n    )\n    c = bridge.openLeoFile(leo_path)\n    # rst3() only searches the subtree of the current position (see\n    # g.findRootsWithPredicate), and @rst trees are scattered across many\n    # top-level nodes in LeoDocs.leo -- not gathered under one parent.\n    # Run it once per top-level tree so every @rst node gets picked up.\n    total = 0\n    for p in c.rootPosition().self_and_siblings(copy=False):\n        c.selectPosition(p)\n        total += c.rstCommands.rst3()\n    return total\n\n\ndef run_sphinx(out_dir: str) -> int:\n    html_dir = os.path.join(leo_editor_dir, 'leo', 'doc', 'html')\n    cmd = ['sphinx-build', '-b', 'html', html_dir, out_dir]\n    print(' '.join(cmd))\n    return subprocess.call(cmd)\n\n\ndef main() -> int:\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\n        '--out',\n        default=os.path.join(leo_editor_dir, 'leo', 'doc', 'html', '_build', 'html'),\n        help='Directory to write the built HTML to.',\n    )\n    args = parser.parse_args()\n\n    n = run_rst3()\n    print(f\"rst3: wrote {n} changed intermediate file(s)\")\n    # n only counts files that *changed*; on a no-op rebuild it's legitimately 0.\n    # Check existence instead, as a sanity gate before handing off to sphinx-build.\n    html_dir = os.path.join(leo_editor_dir, 'leo', 'doc', 'html')\n    existing = glob.glob(os.path.join(html_dir, '*.html.txt'))\n    if not existing:\n        print(\"ERROR: no .html.txt intermediates found -- check LeoDocs.leo\", file=sys.stderr)\n        return 1\n\n    rc = run_sphinx(args.out)\n    if rc == 0:\n        print(f\"sphinx-build OK -> {args.out}\")\n    return rc\n\n\nif __name__ == '__main__':\n    sys.exit(main())\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20240321122614.1",
+   "h": "--- test scripts",
+   "b": "# These are Leo's test scripts.\n\n# Run these scripts from the leo-editor folder.\n\n# Info item #3867 describes these scripts:\n# https://github.com/leo-editor/leo-editor/issues/2867\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240323050520.1",
+   "h": "@file ../scripts/beautify_all_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20251129060454.1",
+   "h": "@file ../scripts/check_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240323051724.1",
+   "h": "@file ../scripts/full_test_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240406061929.1",
+   "h": "@file ../scripts/ruff_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20240322162616.1",
+   "h": "@file ../scripts/run_test_leo.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20260809120840.1",
+   "h": "@file ../scripts/ty_leo.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20110605121601.17862",
+   "h": "Qt gui",
+   "b": "# These files are true plugins, but it is more convenient to put them here.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20161223152017.1",
+   "h": "@edit ../plugins/qt_quicksearch.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20161223152353.1",
+   "h": "@edit ../plugins/qt_quicksearch_sub.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140907085654.18699",
+   "h": "@file ../plugins/qt_gui.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20221019064053.1",
+   "h": "@file ../plugins/pane_commands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20110605121601.17996",
+   "h": "@file ../plugins/qt_commands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140907103315.18766",
+   "h": "@file ../plugins/qt_events.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140907123524.18774",
+   "h": "@file ../plugins/qt_frame.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140907103315.18777",
+   "h": "@file ../plugins/qt_idle_time.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "tom.20240923194438.1",
+   "h": "@file ../plugins/qt_layout.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140907123524.18777",
+   "h": "@file ../plugins/qt_quickheadlines.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140831085423.18598",
+   "h": "@file ../plugins/qt_text.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140907131341.18707",
+   "h": "@file ../plugins/qt_tree.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20110605121601.18002",
+   "h": "@file ../plugins/qtGui.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20171031111403.1",
+   "h": "Leo Edit Pane",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115144.8",
+   "h": "@file ../plugins/editpane/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171029210211.1",
+   "h": "@file ../plugins/editpane/clicky_splitter.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20211210102459.1",
+   "h": "@file ../plugins/editpane/csvedit.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115144.6",
+   "h": "@file ../plugins/editpane/editpane.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115144.5",
+   "h": "@file ../plugins/editpane/leotextedit.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115144.4",
+   "h": "@file ../plugins/editpane/markdownview.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115144.2",
+   "h": "@file ../plugins/editpane/plaintextedit.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115144.1",
+   "h": "@file ../plugins/editpane/plaintextview.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115143.3",
+   "h": "@file ../plugins/editpane/vanillascintilla.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20171028115541.1",
+   "h": "@file signal_manager.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20201012111545.1",
+   "h": "Plugins",
+   "b": "@language python\n@tabwidth -4\n@pagewidth 80\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20090430075506.3",
+   "h": "@file ../plugins/leoPluginNotes.txt",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "EKR.20040517090508",
+   "h": "Enable plugins using @enabled-plugins nodes",
+   "b": "@nocolor-node\n\nEnable plugins by creating@enabled-plugins nodes in leoSettings files,\ntypically myLeoSettings.leo.See the node\n\nUsers Guide-- > Chapter 8: Customizing Leo-- >@rst\nhtml\\customizing.html-- > Specifying settings-- > Complex settings nodes\n\nin LeoDocs.leo for full details.\n\n**Important**: Leo no longer uses pluginsManager.txt to enable or disable plugins.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20050303051035",
+   "h": "Templates",
+   "b": "@nocolor-node\n\nThe following nodes show recommended style when writing plugins."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20041114102139",
+   "h": "Notes for plugin writers",
+   "b": "@nocolor\n\nComments\n--------\n\nMost of the comments in the style guide are comments*about*the style guide.\nYou would replace these comments with your own, or eliminate them entirely in\nyour plugin.\n\nDocstrings\n----------\n\nSeveral plugins show the docstring, so please take care to do a good job of\ndescribing what the plugin does and how to use it.\n\nDirectives\n----------\n\nPlease put the following at the end of the plugin's top-level node.\n\n    @language python\n    @tabwidth-4\n\nImports\n-------\n\n-Do* not*assume that modules like Qt are always available.\n\n-Do* not*use from m import*\n\n-Your code should test whether modules have been imported only if those modules\n  may not be available on all platforms.\n\n-To fail gracefully if the Qt gui is not in effect, put the following at\n  the top level::\n\n      # Fail fast, right after all imports.\n      g.assertUi('qt')  # May raise g.UiTypeException, caught by the plugins manager.\n\nExceptions\n----------\n\nIt is usually best* not*to catch exceptions in plugins: doHook catches all\nexceptions and disables further calls to plugins.\n\nIf a plugin catches exceptions during startup it should do either raise the\nexception again or provide an init function at the top level that reports the\nfailure by returning False.\n\nUse separate nodes\n------------------\n\n**Please**define each class, function or method in a separate node!To\nmake this work, just put@others in the root of your plugin as shown.Note\nthat@others may be nested, as shown in class myClass.\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20050306071629",
+   "h": "Template for plugins that override commander methods",
+   "b": "\"\"\"\nA docstring describing your plugin and how to use it.\nIf it's long, you might put it in a separate section.\n\"\"\"\n<< imports >>\n@others\n@language python\n@tabwidth-4"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050306071629.1",
+   "h": "<< docstring >>",
+   "b": "\"\"\"\nThis docstring should be a clear, concise description of what the plugin does\nand how to use it.\n\"\"\"\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050306071629.3",
+   "h": "<< imports >>",
+   "b": "from leo.core import leoGlobals as g\n\n# Whatever other imports your plugins uses.\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050306071629.4",
+   "h": "init",
+   "b": "def init():\n    \"\"\"Return True if the plugin has loaded successfully.\"\"\"\n    ok=True # This might depend on imports, etc.\n    if ok:\n        g.registerHandler('start2',onStart2)\n    return ok"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050306071540",
+   "h": "onStart2",
+   "b": "def onStart2(tag, keywords):\n    \"\"\"\n    A global hook that affects all commanders.\n    \"\"\"\n\n    log=c.frame.log.__class__\n\n    # Replace frame.put with newPut (not shown).\n    g.funcToMethod(newPut,log,\"put\")"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20050303051035.2",
+   "h": "Template for plugins with per-commander controller class",
+   "b": "\"\"\"\nA docstring describing your plugin and how to use it.\nIf it's long, you might put it in a separate section.\n\"\"\"\n<< imports >>\n@others\n@language python\n@tabwidth-4\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050303051035.5",
+   "h": "<< imports >>",
+   "b": "from leo.core import leoGlobals as g\n\n# Whatever other imports your plugins uses.\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050303051101",
+   "h": "init",
+   "b": "def init():\n    \"\"\"Return True if the plugin has loaded successfully.\"\"\"\n    ok=g.app.gui.guiName() in('qt','qttabs')\n    if ok:\n        if 1: # Use this if you want to create the commander class before the frame is fully created.\n            g.registerHandler('before-create-leo-frame',onCreate)\n        else: # Use this if you want to create the commander class after the frame is fully created.\n            g.registerHandler('after-create-leo-frame',onCreate)\n    return ok"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050303051150",
+   "h": "onCreate",
+   "b": "def onCreate(tag, keys):\n\n    c=keys.get('c')\n    if not c: return\n\n    thePluginController=pluginController(c)\n"
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20050303051222",
+   "h": "class pluginController",
+   "b": "class pluginController:\n\n    @others"
+  },
+  {
+   "level": 5,
+   "gnx": "ekr.20050303051222.1",
+   "h": "__init__",
+   "b": "def __init__(self,c):\n\n    self.c=c\n    # Warning: hook handlers must use keywords.get('c'), NOT self.c.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20100103093121.5365",
+   "h": "Auto completion",
+   "b": "# These are experimental plugins.\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20091118065749.5261",
+   "h": "@file ../plugins/ctagscompleter.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "edream.110203113231.667",
+   "h": "Commands & directives",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.741",
+   "h": "@file ../plugins/add_directives.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110084839.5682",
+   "h": "@file ../plugins/bzr_qcommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517080049.1",
+   "h": "@file ../plugins/empty_leo_file.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.669",
+   "h": "@file ../plugins/import_cisco_config.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110092851.5812",
+   "h": "@file ../plugins/initinclass.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110091234.5700",
+   "h": "@file ../plugins/leo_interface.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040419105219",
+   "h": "@file ../plugins/lineNumbers.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040916084945",
+   "h": "@file ../plugins/macros.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.724",
+   "h": "@file ../plugins/mod_autosave.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20050301083306",
+   "h": "@file ../plugins/mod_read_dir_outline.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.727",
+   "h": "@file ../plugins/mod_timestamp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "TL.20090225102340.32",
+   "h": "@file ../plugins/nodeActions.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.720",
+   "h": "@file ../plugins/outline_export.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "danr7.20060912105041.1",
+   "h": "@file ../plugins/paste_as_headlines.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20081214160729.1",
+   "h": "@file ../plugins/setHomeDirectory.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ajones.20070122160142",
+   "h": "@file ../plugins/textnode.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "danr7.20061010105952.1",
+   "h": "@file ../plugins/word_count.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "edream.110203113231.729",
+   "h": "Debugging",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110091234.5689",
+   "h": "@file ../plugins/debugger_pudb.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.730",
+   "h": "@file ../plugins/dump_globals.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.732",
+   "h": "@file ../plugins/enable_gc.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.734",
+   "h": "@file ../plugins/quit_leo.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.735",
+   "h": "@file ../plugins/trace_gc_plugin.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.738",
+   "h": "@file ../plugins/trace_tags.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20041030092101",
+   "h": "Dyna plugins by e",
+   "b": "@Notes by EKR: The dyna plugin is a remarkable body of work by 'e'. Have fun with it.\n\nYou may download the latest version at: http: // rclick.netfirms.com / dyna_menu.py.html\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20040722141148",
+   "h": "Examples",
+   "b": "@nocolor-node\n@\n\nYou would typically not enable any of the following \"plugins\".\n\nThese plugins contain example code only.\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040828105233",
+   "h": "@file ../plugins/examples/chinese_menu.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517080202.3",
+   "h": "@file ../plugins/examples/french_fm.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.916",
+   "h": "@file ../plugins/examples/override_classes.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.919",
+   "h": "@file ../plugins/examples/override_commands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20060621123339",
+   "h": "@file ../plugins/examples/print_cp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.921",
+   "h": "@file ../plugins/examples/redefine_put.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180119164431.1",
+   "h": "@file ../plugins/patch_python_colorizer.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210329114352.1",
+   "h": "@file ../plugins/example_rst_filter.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20101110150056.9457",
+   "h": "Experimental/Obsolete",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20081223111325.3",
+   "h": "@file ../plugins/backlink.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20090704103932.5160",
+   "h": "@file ../plugins/leo_pdf.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "danr7.20060902083957",
+   "h": "@file ../plugins/leo_to_rtf.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040205071616",
+   "h": "@file ../plugins/mnplugins.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110094759.5843",
+   "h": "@file ../plugins/mod_speedups.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20070117104409",
+   "h": "@file ../plugins/quickMove.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040910070811.1",
+   "h": "@file ../plugins/run_nodes.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20100103093121.5339",
+   "h": "@file ../plugins/stickynotes_plus.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040331071919",
+   "h": "Leo to AsciiDoc",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20101110093449.5822",
+   "h": "@file ../plugins/mod_leo2ascd.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20101110150056.9445",
+   "h": "@file ../plugins/mod_leo2ascd.txt",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "EKR.20040517075715",
+   "h": "External programs",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20110125103904.12504",
+   "h": "@file ../plugins/gitarchive.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517080049.4",
+   "h": "@file ../plugins/open_shell.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20090503124249.1",
+   "h": "@file ../plugins/tomboy_import.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517075715.10",
+   "h": "@file ../plugins/vim.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517075715.12",
+   "h": "@file ../plugins/xemacs.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517075715.13",
+   "h": "Word export",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "EKR.20040517075715.14",
+   "h": "@file ../plugins/word_export.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "EKR.20040517075715.20",
+   "h": "@edit ../plugins/word_export.ini",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "edream.110203113231.872",
+   "h": "Files and nodes",
+   "b": "@nocolor-node\n\nThese plugins create new kinds of nodes, some of which affect the file system."
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20080613095157.2",
+   "h": "@file ../plugins/active_path.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.873",
+   "h": "@file ../plugins/at_folder.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040915085351",
+   "h": "@file ../plugins/at_produce.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ktenney.20041211072654.1",
+   "h": "@file ../plugins/at_view.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170619151859.2",
+   "h": "@file ../plugins/auto_colorize2_0.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20070322113635",
+   "h": "@file ../plugins/bookmarks.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20060807103814.1",
+   "h": "@file ../plugins/datenodes.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ajones.20070122153625",
+   "h": "@file ../plugins/expfolder.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040915105758.13",
+   "h": "@file ../plugins/FileActions.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20110110105526.5463",
+   "h": "@file ../plugins/ftp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20091214233510.5347",
+   "h": "@file ../plugins/geotag.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20100228141752.5691",
+   "h": "@file ../plugins/leocursor.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20120503224623.3574",
+   "h": "@file ../plugins/leomylyn.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110092851.5742",
+   "h": "@file ../plugins/leoOPML.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "dan.20090217132953.1",
+   "h": "@file ../plugins/mime.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "mork.20041018204908.1",
+   "h": "@file ../plugins/multifile.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040331151007",
+   "h": "@file ../plugins/niceNosent.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.876",
+   "h": "@file ../plugins/read_only_nodes.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040828103325",
+   "h": "@file ../plugins/startfile.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20130808211520.15893",
+   "h": "@file ../plugins/timestamp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20110428144124.29061",
+   "h": "@file ../plugins/xml_edit.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "mork.20041010095009",
+   "h": "@file ../plugins/xsltWithNodes.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20181030041436.1",
+   "h": "Gui",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "peckj.20150428142633.1",
+   "h": "@file ../plugins/python_terminal.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140723122936.17925",
+   "h": "Importer plugins",
+   "b": "# Leo loads these plugins automatically.  Do not add them to @enabled-plugins nodes.\n\n# These plugins now contain the importer code for all kinds of @auto nodes.\n# Each plugin must define a top-level importer_dict dictionary describing the plugin.\n@language python\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18139",
+   "h": "@file ../plugins/importers/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230529075138.1",
+   "h": "@file ../plugins/importers/base_importer.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.17926",
+   "h": "@file ../plugins/importers/c.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20160505094722.1",
+   "h": "@file ../plugins/importers/coffeescript.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18140",
+   "h": "@file ../plugins/importers/csharp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20200619141135.1",
+   "h": "@file ../plugins/importers/cython.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20141116100154.1",
+   "h": "@file ../plugins/importers/dart.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18141",
+   "h": "@file ../plugins/importers/elisp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18138",
+   "h": "@file ../plugins/importers/html.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18142",
+   "h": "@file ../plugins/importers/ini.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18143",
+   "h": "@file ../plugins/importers/java.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18144",
+   "h": "@file ../plugins/importers/javascript.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18151",
+   "h": "@file ../plugins/importers/leo_rst.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170530024520.2",
+   "h": "@file ../plugins/importers/lua.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140725190808.18066",
+   "h": "@file ../plugins/importers/markdown.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18146",
+   "h": "@file ../plugins/importers/org.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18150",
+   "h": "@file ../plugins/importers/otl.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18147",
+   "h": "@file ../plugins/importers/pascal.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20161027100313.1",
+   "h": "@file ../plugins/importers/perl.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18148",
+   "h": "@file ../plugins/importers/php.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20250501.100",
+   "h": "@file ../plugins/importers/pug.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20211209153303.1",
+   "h": "@file ../plugins/importers/python.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20200316100818.1",
+   "h": "@file ../plugins/importers/rust.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20231012140553.1",
+   "h": "@file ../plugins/importers/scheme.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170615153639.2",
+   "h": "@file ../plugins/importers/tcl.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180201203240.2",
+   "h": "@file ../plugins/importers/treepad.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18152",
+   "h": "@file ../plugins/importers/typescript.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140723122936.18137",
+   "h": "@file ../plugins/importers/xml.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180504192522.1",
+   "h": "leo_babel",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230624114517.1",
+   "h": "@clean ../plugins/leo_babel/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180504191650.36",
+   "h": "examples",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "bob.20170716135108.2",
+   "h": "@file ../plugins/leo_babel/examples/slowOut.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "bob.20170716135108.3",
+   "h": "@file ../plugins/leo_babel/examples/slowOutNoFlush.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180504191650.42",
+   "h": "tests",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20180504191650.68",
+   "h": "@clean ../plugins/leo_babel/tests/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "bob.20180206123613.1",
+   "h": "@file ../plugins/leo_babel/tests/idle_time.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "bob.20180205135005.1",
+   "h": "@file ../plugins/leo_babel/tests/lib_test.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "bob.20180125160225.1",
+   "h": "@file ../plugins/leo_babel/tests/tests.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20041001210557",
+   "h": "Scripting",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20100226095909.12777",
+   "h": "@file ../plugins/leoscreen.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20140806084727.30174",
+   "h": "@file ../plugins/livecode.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20060328125248",
+   "h": "@file ../plugins/mod_scripting.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.925",
+   "h": "@file ../plugins/script_io_to_body.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20120309073937.9878",
+   "h": "Searching",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220823200700.1",
+   "h": "@file ../plugins/leofts.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20120309073748.9872",
+   "h": "@file ../plugins/bigdash.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "peckj.20140804114520.9427",
+   "h": "@file ../plugins/nodetags.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "peckj.20131130132659.5964",
+   "h": "@file ../plugins/nodewatch.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20050111122605",
+   "h": "Servers & web stuff",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170925083314.1",
+   "h": "@file ../plugins/leo_cloud.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170925083853.1",
+   "h": "@file ../plugins/leo_cloud_server.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20110206142055.10640",
+   "h": "@file ../plugins/leofeeds.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20110125222411.10536",
+   "h": "@file ../plugins/leomail.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20091009202416.10040",
+   "h": "@file ../plugins/leoremote.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517080250.1",
+   "h": "@file ../plugins/mod_http.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20131004162848.11444",
+   "h": "@file ../plugins/rss.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "peckj.20140811080604.9496",
+   "h": "@file ../plugins/sftp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210223152423.1",
+   "h": "@file ../plugins/anki.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20101004082701.5674",
+   "h": "Slideshows, screencasts & screenshots",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170128213103.1",
+   "h": "@file ../plugins/demo.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20211021200745.1",
+   "h": "@file ../scripts/picture_viewer.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220126054240.1",
+   "h": "@file ../scripts/remove_duplicate_pictures.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20120913110135.10579",
+   "h": "@file ../plugins/screencast.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101121031443.5330",
+   "h": "@file ../plugins/screenshots.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20060831165821",
+   "h": "@file ../plugins/slideshow.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20071113084440",
+   "h": "Testing",
+   "b": "# These plugins are for testing Leo's own plugin loading logic.\n# There is no reason ever to enable these plugins."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20080214092357",
+   "h": "@file ../plugins/test/ekr_test.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20050130120433",
+   "h": "@@file ../plugins/test/failed_import.py",
+   "b": "\"\"\"A plugin to test import problems.\"\"\"\n\nfrom leo.core import leoGlobals as g\n\ndef onStart(tag,keywords):\n    pass\n\n# pylint: disable=unused-import\ntry:\n    import xyzzy\nexcept ImportError:\n    g.cantImport('xyzzy',pluginName='failed_import')\n\ndef init():\n    \"\"\"Return True if the plugin has loaded successfully.\"\"\"\n    g.registerHandler(\"start2\", onStart)\n    g.plugin_signon(__name__)\n    return True\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20071113085315",
+   "h": "@file ../plugins/test/failed_to_load_plugin.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20051016160700",
+   "h": "@file ../plugins/testRegisterCommand.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20050306081349",
+   "h": "Text formatting",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "timo.20050213160555",
+   "h": "@file ../plugins/bibtex.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20070119094733.1",
+   "h": "@file ../plugins/dtest.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "danr7.20060902215215.1",
+   "h": "@file ../plugins/leo_to_html.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20130930160706.23451",
+   "h": "@file ../plugins/markup_inline.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "vitalije.20180804172140.1",
+   "h": "@file ../plugins/md_docer.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "peckj.20140113150237.7083",
+   "h": "@file ../plugins/nodediff.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20170217164004.1",
+   "h": "@file ../plugins/tables.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20121126102050.10134",
+   "h": "Threading",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20121126095734.12418",
+   "h": "@file ../plugins/threadutil.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20040915073259",
+   "h": "User interface",
+   "b": "@nocolor-node\n\nThese plugins add buttons and other widgets to the icon area or\naffect Leo's panes and windows in various ways.\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110150056.9453",
+   "h": "Qt only plugins",
+   "b": "# Some of the most important recent plugins work only with the Qt gui.\n"
+  },
+  {
+   "level": 4,
+   "gnx": "tbrown.20091029123555.5319",
+   "h": "@file ../plugins/attrib_edit.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ville.20090310191936.10",
+   "h": "@file ../plugins/colorize_headlines.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20090701111504.5294",
+   "h": "@file ../plugins/contextmenu.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "tom.20210613135525.1",
+   "h": "@file ../plugins/freewin.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "tbrown.20090206153748.1",
+   "h": "@file ../plugins/graphcanvas.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ville.20090518182905.5419",
+   "h": "@file ../plugins/nav_qt.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20090622063842.5264",
+   "h": "@file ../plugins/projectwizard.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20160928073518.1",
+   "h": "@file ../plugins/pyplot_backend.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ville.20090314215508.4",
+   "h": "@file ../plugins/quicksearch.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "tbrown.20130420091241.44181",
+   "h": "@file ../plugins/screen_capture.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ville.20090815203828.5235",
+   "h": "@file ../plugins/spydershell.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20100103093121.5329",
+   "h": "@file ../plugins/stickynotes.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "tbrown.20100318101414.5990",
+   "h": "@file ../plugins/viewrendered.py",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "TomP.20191215195433.1",
+   "h": "@file ../plugins/viewrendered3.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20060328125925",
+   "h": "@file ../plugins/chapter_hoist.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20110115234843.8742",
+   "h": "@file ../plugins/dragdropgoodies.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "vitalije.20190928154420.1",
+   "h": "@file ../plugins/history_tracer.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20090513125417.5244",
+   "h": "@file ../plugins/interact.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "vitalije.20170727201534.1",
+   "h": "@file ../plugins/line_numbering.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20040915073259.1",
+   "h": "@file ../plugins/maximizeNewWindows.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110093301.5818",
+   "h": "@file ../plugins/mod_framesize.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "EKR.20040517080555.2",
+   "h": "@file ../plugins/plugins_menu.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20160519123329.1",
+   "h": "@file ../plugins/QNCalendarWidget.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "edream.110203113231.924",
+   "h": "@file ../plugins/redirect_to_log.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tom.20230424140347.1",
+   "h": "@file ../plugins/rpcalc.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ville.20110304230157.6513",
+   "h": "@file ../plugins/systray.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "tbrown.20141101114322.1",
+   "h": "@file ../plugins/wikiview.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20181004143535.1",
+   "h": "@file ../plugins/xdb_pane.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20101110095202.5882",
+   "h": "@file ../plugins/zenity_file_dialogs.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20140726091031.18071",
+   "h": "Writer plugins",
+   "b": "# Leo loads these plugins automatically.  Do not add them to @enabled-plugins nodes.\n\n# These plugins contain the write code for all kinds of special @auto nodes.\n# Each plugin must define a top-level writer_dict dictionary describing the plugin.\n@language python\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140726091031.18152",
+   "h": "@file ../plugins/writers/__init__.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140726091031.18143",
+   "h": "@file ../plugins/writers/basewriter.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20141116100154.2",
+   "h": "@file ../plugins/writers/dart.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140726091031.18080",
+   "h": "@file ../plugins/writers/leo_rst.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140726091031.18073",
+   "h": "@file ../plugins/writers/markdown.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140726091031.18079",
+   "h": "@file ../plugins/writers/org.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20140726091031.18078",
+   "h": "@file ../plugins/writers/otl.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180202053206.1",
+   "h": "@file ../plugins/writers/treepad.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20080730161153.8",
+   "h": "Testing",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20201129023817.1",
+   "h": "@file leoTest2.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20201202144529.1",
+   "h": "leo/unittests",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20210912064148.1",
+   "h": "in unittests/commands",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210904022712.2",
+   "h": "@file ../unittests/commands/test_checkerCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230710105542.1",
+   "h": "@file ../unittests/commands/test_commanderFileCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20211013081056.1",
+   "h": "@file ../unittests/commands/test_convertCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20201202144422.1",
+   "h": "@file ../unittests/commands/test_editCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230705083159.1",
+   "h": "@file ../unittests/commands/test_editFileCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230802060212.1",
+   "h": "@file ../unittests/commands/test_gotoCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20260512145309.1",
+   "h": "@file ../unittests/commands/test_leoAbbrev.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20221113062857.1",
+   "h": "@file ../unittests/commands/test_outlineCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230916141635.1",
+   "h": "@file ../unittests/commands/test_spellCommands.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20210912064205.1",
+   "h": "in unittests/core",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210901170451.1",
+   "h": "@file ../unittests/core/test_leoApp.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210902073413.1",
+   "h": "@file ../unittests/core/test_leoAst.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210901172411.1",
+   "h": "@file ../unittests/core/test_leoAtFile.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210903153138.1",
+   "h": "@file ../unittests/core/test_leoBridge.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210905151702.1",
+   "h": "@file ../unittests/core/test_leoColorizer.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210903162431.1",
+   "h": "@file ../unittests/core/test_leoCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230714131540.1",
+   "h": "@file ../unittests/core/test_leoCompare.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210910073303.1",
+   "h": "@file ../unittests/core/test_leoConfig.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210911052754.1",
+   "h": "@file ../unittests/core/test_leoExternalFiles.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210910065135.1",
+   "h": "@file ../unittests/core/test_leoFileCommands.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210829124658.1",
+   "h": "@file ../unittests/core/test_leoFind.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210903161742.1",
+   "h": "@file ../unittests/core/test_leoFrame.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210902164946.1",
+   "h": "@file ../unittests/core/test_leoGlobals.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220822082042.1",
+   "h": "@file ../unittests/core/test_leoImport.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210903155556.1",
+   "h": "@file ../unittests/core/test_leoKeys.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20201203042030.1",
+   "h": "@file ../unittests/core/test_leoNodes.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "sa.20260905150000.1",
+   "h": "@file ../unittests/core/test_leoOutline.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "sa.20260905210400.1",
+   "h": "@file ../unittests/misc_tests/test_tui.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "sa.20260906110000.1",
+   "h": "@file ../unittests/leolib/test_leolib_boundary.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "sa.20260908150000.1",
+   "h": "@file ../unittests/leolib/test_leolib_util.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210908171733.1",
+   "h": "@file ../unittests/core/test_leoPersistence.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220911163718.1",
+   "h": "@file ../unittests/core/test_leoQt6.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210902055206.1",
+   "h": "@file ../unittests/core/test_leoRst.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210820203000.1",
+   "h": "@file ../unittests/core/test_leoserver.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210902092024.1",
+   "h": "@file ../unittests/core/test_leoShadow.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230722095455.1",
+   "h": "@file ../unittests/core/test_leoTest2.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210906141410.1",
+   "h": "@file ../unittests/core/test_leoUndo.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210910072917.1",
+   "h": "@file ../unittests/core/test_leoVim.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20240204082420.1",
+   "h": "in unittests/misc_tests",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210926044012.1",
+   "h": "@file ../unittests/misc_tests/test_doctests.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210901140718.1",
+   "h": "@file ../unittests/misc_tests/test_syntax.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20250109055422.1",
+   "h": "@file ../unittests/misc_tests/test_modes.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20230506095312.1",
+   "h": "@file ../unittests/misc_tests/test_design.py",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20240204082924.1",
+   "h": "in unittests/plugins",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20220812224747.1",
+   "h": "@file ../unittests/plugins/test_writers.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210907081548.1",
+   "h": "@file ../unittests/plugins/test_plugins.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210904064440.2",
+   "h": "@file ../unittests/plugins/test_importers.py",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20210910084607.1",
+   "h": "@file ../unittests/plugins/test_gui.py",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20090802181029.5988",
+   "h": "Version",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20090717092906.12765",
+   "h": "@file leoVersion.py",
+   "b": ""
+  }
+ ]
+}

@@ -261,6 +261,7 @@ dependencies = [
  "once_cell",
  "quick-xml",
  "regex",
+ "serde_json",
  "tempfile",
 ]
 

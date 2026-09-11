@@ -507,3 +507,25 @@ fn a_file_that_read_cleanly_can_still_be_written() {
     let text = fs::read_to_string(dir.path().join("sample.py")).unwrap();
     assert!(text.contains("x = 2\n"), "{text}");
 }
+
+/// Rewriting a file keeps its permissions. The temporary file it is renamed
+/// from used to take the default mode, so an executable script lost `+x`.
+#[cfg(unix)]
+#[test]
+fn replacing_a_file_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("run.sh");
+    fs::write(&path, "echo 0\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    let p = path.to_string_lossy().to_string();
+    assert!(external::replace_file(&p, "echo 1\n", "utf-8").unwrap());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "echo 1\n");
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o755, "mode is {mode:o}");
+    let names: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec!["run.sh"], "a temporary file was left behind");
+}

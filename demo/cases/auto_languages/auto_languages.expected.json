@@ -1,0 +1,84 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto a.py",
+   "b": "import os\n\n\n@others\n@language python\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "function: f",
+   "b": "def f():\n    return 1\n\n\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "class C",
+   "b": "class C:\n    @others\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "C.m",
+   "b": "def m(self):\n    return 2\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@auto b.js",
+   "b": "@others\n@language javascript\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "function f",
+   "b": "function f() {\n    return 1;\n}\n\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "function g",
+   "b": "function g() {\n    return 2;\n}\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.3",
+   "h": "@auto c.md",
+   "b": "@language md\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "Title",
+   "b": "\nText.\n\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "Section",
+   "b": "\nMore text.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.4",
+   "h": "@auto d.org",
+   "b": "@language org\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "Heading",
+   "b": "Text.\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "Sub",
+   "b": "More.\n"
+  }
+ ]
+}

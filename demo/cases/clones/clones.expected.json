@@ -1,0 +1,42 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file clones.py",
+   "b": "@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "shared",
+   "b": "def shared():\n    return 1\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.3",
+   "h": "other",
+   "b": "def other():\n    @others\n    return 2\n"
+  },
+  {
+   "level": 2,
+   "gnx": "corpus.20260911000000.2",
+   "h": "shared",
+   "b": "def shared():\n    return 1\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.4",
+   "h": "outside the file",
+   "b": "A clone of `shared`, outside clones.py.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "shared",
+   "b": "def shared():\n    return 1\n"
+  }
+ ]
+}

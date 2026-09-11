@@ -475,13 +475,16 @@ impl<'a> AtWrite<'a> {
         } else {
             matches_at(s, k, &format!("{}@", self.start_comment))
         };
-        // #2996: an @verbatim sentinel would break the @clean algorithm.
+        // Only with sentinels: without them the sentinel is suppressed but its
+        // indent was written anyway, so every such line in an @auto or
+        // @nosent file gained its own indentation twice.
         //
-        // The `self.sentinels` test is not in Leo, and fixes a bug: without
-        // it the indent is written even when the sentinel that follows it is
-        // suppressed, so every such line in an @auto or @nosent file gains
-        // its own indentation twice.
-        if self.sentinels && looks_like_sentinel && !self.root.is_at_clean_node(self.o) {
+        // @clean included. Leo's #2996 left @clean out, but reading an @clean
+        // file compares it against this very text, written with sentinels:
+        // without @verbatim, each line that only looks like a sentinel was
+        // taken for one, kept, and inserted again as text, so reading the
+        // file doubled it. leo-editor removed #2996 for the same reason.
+        if self.sentinels && looks_like_sentinel {
             let ws_len = k - i;
             self.put_indent(ws_len as i32);
             self.put_sentinel("@verbatim");

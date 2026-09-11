@@ -1,0 +1,180 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "sta.20260909214154.2",
+   "h": "demo",
+   "b": "@language python\n"
+  },
+  {
+   "level": 1,
+   "gnx": "sta.20260909214201.1",
+   "h": "@auto okr.py",
+   "b": "\"\"\"\nAn OKR consists of an **Objective**, which tells you where to go. \nSeveral **Key Results**, which are the measurable results you need to achieve\nto get to your Objective. And **Initiatives**, which are all the projects and\ntasks that will help you achieve your Key Results.\n\"\"\"\n\nfrom typing import List, Optional\n\nfrom sqlalchemy import ForeignKey, String, create_engine\nfrom sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,\n                            relationship)\n\n\n@others\n\nif __name__ == '__main__':\n    test()\n@language python\n@tabwidth -4\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "class Base",
+   "b": "class Base(DeclarativeBase):\n    @others\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": null,
+   "h": "Base.idx",
+   "b": "@property\ndef idx(self):\n    return self.__class__.__name__.lower()[0] + str(self.id)\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "class Objective",
+   "b": "class Objective(Base):\n    @others\n\n\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": null,
+   "h": "Objective.__repr__",
+   "b": "__tablename__ = \"objective\"\n\nid: Mapped[int] = mapped_column(primary_key=True)\nname: Mapped[str] = mapped_column(String(30))\nkeyresults: Mapped[List[\"KeyResult\"]] = relationship(\n    back_populates=\"objective\", cascade=\"all, delete-orphan\"\n)\n\ndef __repr__(self) -> str:\n    return f\"Objective(id={self.id!r}, name={self.name!r})\"\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "class KeyResult",
+   "b": "class KeyResult(Base):\n    @others\n\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": null,
+   "h": "KeyResult.__repr__",
+   "b": "__tablename__ = \"keyresult\"\n\nid: Mapped[int] = mapped_column(primary_key=True)\nname: Mapped[str]\nobjective_id: Mapped[int] = mapped_column(ForeignKey(\"objective.id\"))\nobjective: Mapped[\"Objective\"] = relationship(back_populates=\"keyresults\")\ninitiatives: Mapped[List[\"Initiative\"]] = relationship(\n    back_populates=\"keyresult\", cascade=\"all, delete-orphan\"\n)\n\ndef __repr__(self) -> str:\n    return f\"KeyResult(id={self.id!r}, name={self.name!r})\"\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "class Initiative",
+   "b": "class Initiative(Base):\n    @others\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": null,
+   "h": "Initiative.__repr__",
+   "b": "__tablename__ = \"initiative\"\n\nid: Mapped[int] = mapped_column(primary_key=True)\nname: Mapped[str]\nkeyresult_id: Mapped[int] = mapped_column(ForeignKey(\"keyresult.id\"))\nkeyresult: Mapped[\"KeyResult\"] = relationship(back_populates=\"initiatives\")\n\ndef __repr__(self) -> str:\n    return f\"Initiative(id={self.id!r}, name={self.name!r})\"\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "function: mk_graph",
+   "b": "def mk_graph(*objectives):\n    import graphviz\n    g = graphviz.Digraph('okr', comment='objectives / keyresults', node_attr=dict(\n            style=\"rounded,filled\", shape='box'\n        ), graph_attr=dict(rankdir=\"LR\"))\n    for obj in objectives:\n        g.node(obj.idx, obj.name, fillcolor=\"aqua\")\n        for kr in obj.keyresults:\n            g.node(kr.idx, kr.name, fillcolor=\"gainsboro\")\n            g.edge(kr.idx, obj.idx)\n            for initiative in kr.initiatives:\n                g.node(initiative.idx, initiative.name, fillcolor=\"aliceblue\")\n                g.edge(initiative.idx, kr.idx)\n    g.render(directory='graph', view=True)\n\n\n\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "function: test",
+   "b": "def test():\n    engine = create_engine(\"sqlite://\", echo=True)\n    Base.metadata.create_all(engine)\n    with Session(engine) as session:\n        obj1 = Objective(name=\"Crush the competition through acquisitions\")\n        kr1 = KeyResult(name=\"Acquire 3 small players in our industry\")\n        in1 = Initiative(name=\"Secure M&A financing approval from banks\")\n        kr1.initiatives = [in1]\n        obj1.keyresults = [kr1]\n        session.add_all([obj1, kr1, in1])\n        session.commit()\n        mk_graph(obj1)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "sta.20260910090127.2",
+   "h": "@file fsm.py",
+   "b": "@first #!/usr/bin/env python3\n\n\"\"\" Generic finite state machine class\n    Initialise the class with a list of tuples - or by adding transitions\n    Tony Flury - November 2012\n    Released under an MIT License - free to use so long as the author and other contributers are credited.\n\"\"\"\n\n@others\n\n\n# Example code - showing population of the state machine in the constructor\n# the Machine could also be constructed by multiple calls to addTransition method\n# Example code is a simple tokeniser \n# Machine transitions back to the Start state whenever the end of a token is detected\nif __name__ == \"__main__\":\n    t = tokenList()\n\n    fs = fsm( [ (\"Start\",\"Start\",lambda x: x.isspace() ),\n                (\"Start\",\"Identifier\",str.isalpha, t.StartToken ),\n                (\"Identifier\",\"Identifier\", str.isalnum, t.addCharacter ),\n                (\"Identifier\",\"Start\",lambda x: not x.isalnum(), t.EndToken ),\n                (\"Start\",\"Operator\", lambda x: x in \"=+*/-()\", t.StartToken ),\n                (\"Operator\",\"Start\", True, t.EndToken),\n                (\"Start\",\"Number\",str.isdigit, t.StartToken ),\n                (\"Number\",\"Number\",lambda x: x.isdigit() or x == \".\", t.addCharacter ),\n                (\"Number\",\"Start\",lambda x: not x.isdigit() and x != \".\", t.EndToken ),\n                (\"Start\",\"StartQuote\",lambda x: x == \"\\'\"),\n                (\"StartQuote\",\"String\", lambda x: x != \"\\'\", t.StartToken),\n                (\"String\",\"String\",lambda x: x != \"\\'\", t.addCharacter ),\n                (\"String\",\"EndQuote\", lambda x: x == \"\\'\", t.EndToken ),\n                (\"EndQuote\",\"Start\", True ) ] )\n\n    fs.start(\"Start\")\n\n    a = \"    x123=MyString+123.65-'hello'*value\"\n    c = 0 \n    while c < len(a):\n        ret = fs.event(a[c])\n        # Make sure a transition back to start (from something else) does not consume the character.\n        if ret[0] != \"Start\" or (ret[0] == \"Start\" and ret[1] == False):\n            c += 1\n    ret = fs.event(\"\")\n\n    print(t.tokenList)\n@language python\n@tabwidth -4\n"
+  },
+  {
+   "level": 2,
+   "gnx": "sta.20260910090127.3",
+   "h": "class fsm",
+   "b": "class fsm(object):\n    \"\"\" A simple to use finite state machine class.\n        Allows definition of multiple states, condition functions from state to state and optional callbacks\n    \"\"\"\n    @others\n\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.6",
+   "h": "fsm.__init__",
+   "b": "def __init__(self, states=[]):\n    self._states=states\n    self.currentState = None\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.7",
+   "h": "fsm.start",
+   "b": "def start(self,startState=None):\n    \"\"\" Start the finite state machine\n    \"\"\"\n    if not startState or not (startState in [x[0] for x in self._states]):\n        raise ValueError(\"Not a valid start state\")\n    self.currentState = startState\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.8",
+   "h": "fsm.stop",
+   "b": "def stop(self):\n    \"\"\" Stop the finite state machine\n    \"\"\"\n    self.startState = None\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.9",
+   "h": "fsm.addTransition",
+   "b": "def addTransition(self,fromState, toState, condition, callback=None):\n    \"\"\" Add a state transition to the list, order is irellevant, loops are undetected \n        Can only add a transition if the state machine isn't started.\n    \"\"\"\n    if not self.currentState:\n        raise ValueError(\"StateMachine already Started - cannot add new transitions\")\n\n    # add a transition to the state table\n    self._states.append( (fromState, toState,condition, callback))\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.10",
+   "h": "fsm.event",
+   "b": "def event(self, value):\n    \"\"\" Trigger a transition - return a tuple (<new_state>, <changed>)\n        Raise an exception if no valid transition exists.\n        Callee needs to determine if the value will be consumed or re-used\n    \"\"\"\n    if not self.currentState:\n        raise ValueError(\"StateMachine not Started - cannot process event\")\n\n    # get a list of transitions which are valid       \n    self.nextStates = [ x for x in self._states\\\n                        if x[0] == self.currentState \\\n                        and (x[2]==True or (callable(x[2]) and x[2](value))) ] \n\n    if not self.nextStates: \n        raise ValueError(\"No Transition defined from state {0} with value '{1}'\".format(self.currentState, value))\n    elif len(self.nextStates) > 1:\n        raise ValueError(\"Ambiguous transitions from state {0} with value '{1}' ->  New states defined {2}\".format(self.currentState, value, [x[0] for x in self.nextStates]))\n    else:\n        if len(self.nextStates[0]) == 4:\n            current, next, condition, callback = self.nextStates[0]\n        else:\n            current, next, condition = self.nextStates[0]\n            callback = None\n\n        self.currentState, changed = (next,True) \\\n                if self.currentState != next else (next, False)\n            \n        # Execute the callback if defined\n        if callable(callback):\n            callback(self, value)\n\n        return self.currentState, changed\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.11",
+   "h": "fsm.CurrentState",
+   "b": "def CurrentState(self):\n    \"\"\" Return the current State of the finite State machine\n    \"\"\"\n    return self.currentState\n"
+  },
+  {
+   "level": 2,
+   "gnx": "sta.20260910090127.4",
+   "h": "class token",
+   "b": "# -------------------------------------------------------------------------------------------------\n# Example classes to demonstrate the use of the Finite State Machine Class\n# They implement a simple lexical tokeniser.\n# These classes are not neccesary for the FSM class to work.\n# -------------------------------------------------------------------------------------------------\n\n# Simple storage object for each token\nclass token(object):\n    @others\n\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.12",
+   "h": "token.__init__",
+   "b": "def __init__(self, type):\n    self.tokenType = type\n    self.tokenText = \"\"\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.13",
+   "h": "token.addCharacter",
+   "b": "def addCharacter(self, char):\n    self.tokenText += char\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.14",
+   "h": "token.__repr__",
+   "b": "def __repr__(self):\n    return \"{0}<{1}>\".format(self.tokenType, self.tokenText)\n"
+  },
+  {
+   "level": 2,
+   "gnx": "sta.20260910090127.5",
+   "h": "class tokenList",
+   "b": "# Token list object - demonstrating the definition of state machine callbacks\nclass tokenList(object):\n    @others\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.15",
+   "h": "tokenList.__init__",
+   "b": "def __init__(self):\n    self.tokenList = []\n    self.currentToken = None\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.16",
+   "h": "tokenList.StartToken",
+   "b": "def StartToken(self, fss, value):\n    self.currentToken = token(fss.CurrentState())\n    self.currentToken.addCharacter(value)\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.17",
+   "h": "tokenList.addCharacter",
+   "b": "def addCharacter(self, fss, value):\n    self.currentToken.addCharacter(value)\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20260910090127.18",
+   "h": "tokenList.EndToken",
+   "b": "def EndToken(self, fss, value):\n    self.tokenList.append(self.currentToken)\n    self.currentToken = None\n"
+  }
+ ]
+}

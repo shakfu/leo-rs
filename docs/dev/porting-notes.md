@@ -30,7 +30,9 @@ Four deliberate departures:
 
 **Every import is checked before it is kept.** An `@auto` file is regenerated from its tree, so an importer that lost a line would overwrite the user's source with something shorter. `read_one_at_auto_node` writes the tree back and compares it with what the importer read; on a mismatch the whole file goes into the node's body and the read reports an error. Leo does not check, and two files in leo-editor itself fail this test -- one contains the literal text `@others`, the other loses the trailing blanks of a whitespace-only line through `move_blank_lines`. Both produce a wrong file in Leo.
 
-**The `@verbatim` indent no longer leaks.** `at.putCodeLine` writes the indentation of an `@verbatim` sentinel before writing the sentinel itself, which `putSentinel` then suppresses when sentinels are off. Every line resembling a sentinel in an `@auto` or `@nosent` file therefore gained its indentation twice. Leo guards the case for `@clean` only (#2996); the guard here is on `at.sentinels`, which covers all three.
+**The `@verbatim` indent no longer leaks.** `at.putCodeLine` writes the indentation of an `@verbatim` sentinel before writing the sentinel itself, which `putSentinel` then suppresses when sentinels are off. Every line resembling a sentinel in an `@auto` or `@nosent` file therefore gained its indentation twice. The guard here is on `at.sentinels`, which covers `@auto`, `@nosent` and the `@clean` file itself.
+
+**`@clean` gets `@verbatim` in the text it is read against.** Leo's #2996 left `@clean` out of `@verbatim` altogether. But reading an `@clean` file compares it against the tree written *with* sentinels, and without `@verbatim` there each line that only looks like a sentinel was taken for one, kept, and inserted again as text: reading such a file doubled those lines, even when it had not changed. This port and leo-editor both dropped #2996; the corpus case `demo/cases/sentinel_lookalikes` holds it.
 
 **TypeScript headlines.** Leo's TypeScript table is `(group_number, pattern)` pairs, but `find_blocks` reads the first element as the block's *kind*, so its headlines come out as `1 class Config` and `2 async`. The name is taken from the pattern's last group here, giving `class Config` and the function's own name. Bodies are unaffected, so an `@auto` TypeScript file still round-trips.
 
@@ -54,7 +56,7 @@ Four deliberate departures:
 
 Leo has six writers under `leo/plugins/writers` and falls back to a sentinel-free tangle for every other language. Only the four line-oriented formats need one, because their readers consume the structure lines they see; `importers/lines.rs` holds those four and the fallback is `atfile_write::write_to_string` with `allow_undefined_refs`.
 
-Leo's writers cannot run without a window at all: `BaseWriter.__init__` reads `c.atFileCommands`, and `c` is `None` when leolib drives. So an `@auto-org` node cannot be written by headless Leo, and can be here.
+Leo's writers could not run without a window: `BaseWriter.__init__` read `c.atFileCommands`, and `c` was `None` when leolib drove. leo-editor now builds them with the outline when no commander is acting, so both implementations write every `@auto` kind headless, and the corpus's `auto_languages` case checks the Markdown and Org files byte for byte on both sides.
 
 ## Fold and mark state
 

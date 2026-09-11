@@ -1,0 +1,66 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file file.py",
+   "b": "@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "f",
+   "b": "def f():\n    return 1\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.3",
+   "h": "@clean clean.py",
+   "b": "@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.4",
+   "h": "g",
+   "b": "def g():\n    return 2\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.5",
+   "h": "@nosent nosent.py",
+   "b": "x = 1\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.6",
+   "h": "@edit edit.txt",
+   "b": "@nocolor\nText for @edit.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.7",
+   "h": "@asis asis.txt",
+   "b": "First part, as is.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.8",
+   "h": "more",
+   "b": "Second part.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.9",
+   "h": "@auto auto.py",
+   "b": "import os\n\n\n@others\n@language python\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "function: f",
+   "b": "def f():\n    return 1\n"
+  }
+ ]
+}

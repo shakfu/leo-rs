@@ -1,0 +1,3 @@
+# demo/ is the conformance corpus, and must keep its exact bytes: one case is
+# a pair of CRLF files, another is latin-1.
+demo/** -text

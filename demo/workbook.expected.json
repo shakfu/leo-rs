@@ -1,0 +1,696 @@
+{
+ "read_external": false,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "ekr.20131030071311.17125",
+   "h": "Startup",
+   "b": "By convention, a Startup node contains settings, scripts, etc.\nthat mostly one wants to have hidden.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131030071311.18741",
+   "h": "@button make-sphinx",
+   "b": "@language python\nimport os\ntrace = True\ng.cls()\nc.setComplexCommand('make-sphinx')\nc.save()\naList = c.rstCommands.rst3()\nif aList:\n    path = g.os_path_finalize_join(g.app.loadDir,'..','doc','html')\n    os.chdir(path)\n    if len(aList) > 1: g.execute_shell_commands('make clean',trace=trace)\n    g.execute_shell_commands('make html',trace=trace)\n    fn = aList[0].h.strip() if len(aList) == 1 else 'leo_toc.html'\n    fn = g.os_path_finalize_join(path,'_build','html',g.os_path_basename(fn))\n    if g.os_path_exists(fn):\n        # Don't wait for this command to exit!\n        g.execute_shell_commands(['&%s' % (fn)],trace=trace)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131030071311.17126",
+   "h": "@settings",
+   "b": "**Important**: to take effect, all settings must be descendants of this\n@settings node.\n\n**Note**: This file colors text as reStructuredText by default because of\nthe setting::\n\n    @string target_language = rest\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20181015143002.1",
+   "h": "@bool body_pane_wraps = True",
+   "b": "True: Wrap body text.\n\n"
+  },
+  {
+   "level": 2,
+   "gnx": "mhw.20181210130732.1",
+   "h": "@bool put-expansion-bits-in-leo-files = False",
+   "b": "True (recommended):\n    Write \"E\" attribute bits in <v> elements.\n    Leo outlines will record the expansion state of all nodes.\n    \nFalse: (Good for files like unitTest.leo)\n    Suppress \"E\" attribute bits in <v> elements.\n    Only the ancestors of the presently selected node will\n    be expanded when Leo opens an outline."
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131030071311.18671",
+   "h": "@string target_language = rest",
+   "b": "The default language if no @language or @comment is in effect.\n\nValid values are (case is ignored):\n\nactionscript,c,csharp,css,cweb,elisp,html,java,latex,\npascal,perl,perlpod,php,plain,plsql,python,rapidq,rebol,shell,tcltk."
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131030071311.17128",
+   "h": "For rst3 command",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20131030071311.17127",
+   "h": "@bool rst3_call_docutils = True",
+   "b": "# Use False when using Sphinx"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20131030071311.17129",
+   "h": "@bool rst3_write_intermediate_file = True",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20131030071311.18669",
+   "h": "@string rst3_write_intermediate_extension = .txt",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "sta.20241206180108.1",
+   "h": "Windows",
+   "b": "Options that require pixel values can be any Python expression that yields an int.\nWarning: the number of pixels per inch varies..."
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.2",
+   "h": "@data fixedWindowPosition",
+   "b": "# Must be four entries: width,height,left,top.\n# Put this in myLeoSettings.leo, **not** in individual .leo files.\n# This setting has no effect unless @bool fixed_window = True\n\n1200\n800\n50\n50"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.3",
+   "h": "Body pane options",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.4",
+   "h": "@bool cursor-stay-on-paste = True",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.5",
+   "h": "@bool select-all-text-when-editing-headlines = False",
+   "b": "True: (legacy) Select all headline text when editing a headline.\nFalse: Put the cursor at the end of the headline text."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.6",
+   "h": "@bool autoindent-in-nocolor-mode = True",
+   "b": "True:  auto-indent regardless of how text is colored.\nFalse: suppress auto-indenting if in range @nocolor or @kill."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.7",
+   "h": "@bool body-gmt-time = False",
+   "b": "True:  use gmt time.\nFalse: use local time."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.8",
+   "h": "@bool body-pane-wraps = True",
+   "b": "True: Wrap body text.\n\n"
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.9",
+   "h": "@bool enable-autocompleter-initially = False",
+   "b": "True:  enable autocompletion initially.\nFalse: disable autocomopletion initially.\n\nYou can use the enable-autocompleter and disable-autocompleter\ncommands to enable or disable autocompletion at any time.\n\nNote: The 'initially' prefix is needed to distinguish this setting from\nenable-autocompleter command. Otherwised they would get 'munged' to the same\nconfiguration value."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.10",
+   "h": "@bool enable-calltips-initially = False",
+   "b": "True:  enable calltip expansion initially.\nFalse: disable calltip expansion initially.\n\nYou can use the enable-calltips and disable-calltips\ncommands to enable or disable autocompletion at any time.\n\nNote: The 'initially' prefix is needed to distinguish this setting from\nenable-calltips command. Otherwised they would get 'munged' to the same\nconfiguration value."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.11",
+   "h": "@bool smart-auto-indent = False",
+   "b": "True:  auto-indent aligns with open ({[ brackets\n\nFalse: auto-indent increases indentation by one tab for Python only."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.12",
+   "h": "@bool smart-tab = True",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.13",
+   "h": "@@@int additional_body_text_border = 0",
+   "b": "Additional border in body text pane, in pixels."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.14",
+   "h": "@string body-time-format-string = %m/%d/%Y %H:%M:%S",
+   "b": "The format string used when creating the Time/Date string for the Insert Time/Date command.\nSee the Python documentation for time.strftime for full details.\n\nExamples:\n\n1/30/2003 8:31:55\n%m/%d/%y %H:%M:%S\n\nThu, 30 Jan 2003 16:57:12\n%a, %d %b %Y %H:%M:%S"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.15",
+   "h": "Icon bar options",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.16",
+   "h": "@bool show-iconbar = True",
+   "b": ""
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.17",
+   "h": "Log pane options",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.18",
+   "h": "@bool log-pane-wraps = False",
+   "b": "True: Wrap log text.\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.19",
+   "h": "Options for new windows",
+   "b": "These options apply only to windows opened with the New command.\n\n**Important**: When using the qttabs gui, these options have no effect.\nThat is, opening a new \"window\" means opening a new tab."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.20",
+   "h": "@@@bool big-outline-pane = False",
+   "b": "False (legacy): Top pane contains outline and log panes.\nTrue: Top pane contains only outline.  Bottom pane contains body and log panes."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.21",
+   "h": "@bool outline-pane-has-initial-focus = False",
+   "b": "True: Outline gets focus when a new window is opened.\nFalse Body pane gets focus when a new window is opened."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.22",
+   "h": "@ratio initial-horizontal-ratio = 0.4",
+   "b": "The ratio of tree pane size to body pane size when splitting primary panes horizontally.\n\nValid values: 0.0 to 1.0.\n\n**Important**: Leo **does** save this ratio when saving a .leo file, so Leo\nalways uses this ratio only when creating a new outline."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.23",
+   "h": "@ratio initial-horizontal-secondary-ratio = 0.8",
+   "b": "The ratio of outline (tree) pane size to log pane size when splitting the primary panes horizontally.\n\nValid values: 0.0 to 1.0.\n\n**Important**: Leo does not save this ratio when saving a .leo file, so Leo\nalways uses this ratio when opening a file that is being split horizontally."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.24",
+   "h": "@ratio initial-vertical-ratio = 0.5",
+   "b": "The ratio of tree pane size to body pane size when splitting primary panes vertically.\n\nValid values: 0.0 to 1.0.\n\n**Important**: Leo **does** save this ratio when saving a .leo file, so Leo\nalways uses this ratio only when creating a new outline."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.25",
+   "h": "@ratio initial-vertical-secondary-ratio = 0.65",
+   "b": "The ratio of outline (tree) pane size to log pane size when splitting the primary panes vertically.\n\nValid values: 0.0 to 1.0.\n\n**Important**: Leo does not save this ratio when saving a .leo file, so Leo\nalways uses this ratio when opening a file that is being split vertically."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.26",
+   "h": "@int initial-window-height = 600",
+   "b": "Height of window in pixels.\n    \n"
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.27",
+   "h": "@int initial-window-left =  20",
+   "b": "Distance from left of screen of window, in pixels.\n"
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.28",
+   "h": "@int initial-window-top = 20",
+   "b": "Distance from top of screen of window, in pixels."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.29",
+   "h": "@int initial-window-width = 800",
+   "b": "Width window in pixels.\n\n"
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.30",
+   "h": "Splitter options",
+   "b": ""
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.31",
+   "h": "@int split-bar-width = 6",
+   "b": "The width of the split bar, in pixels (must be an integer)."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.32",
+   "h": "@string initial-split-orientation = vertical",
+   "b": "horizontal: body pane to the right\nvertical: body pane on the botton\n\n# #1514: horizontal is now the default."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.33",
+   "h": "@string split-bar-relief = groove",
+   "b": "The -relief option for the split bar."
+  },
+  {
+   "level": 4,
+   "gnx": "sta.20241206180108.34",
+   "h": "@string status-line-split-sizes = 1 2",
+   "b": "Sizes for the status bar splitter. The status bar shows \"line: 1, col:\n35, fcol: 35\" on the left and the path to the current node on the right.\n\nThe default value \"1 2\" gives one third for the line number etc., and 2\nthirds for node path.  You may find \"1 4\" or \"1 5\" makes it easier to see\nall the relevant components of the node path without having to move the\nsplitter.\n\nThe string must be only two integers, separated by spaces and or commas.\n\nDev. note: this setting is new (201309) and can't be replaced by the\nstylesheet, the other settings in this group should probably be handled\nby the stylesheet and could be considered for removal."
+  },
+  {
+   "level": 3,
+   "gnx": "sta.20241206180108.35",
+   "h": "@bool outline-tabs-show-close = True",
+   "b": "True: Show the close box [x] on outline tabs.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16683",
+   "h": "===== Leo's cheat sheet",
+   "b": "This Cheat Sheet contains a summary of many of Leo's important features."
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16685",
+   "h": "Key bindings",
+   "b": "Here is a summary of Leo's key bindings."
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16686",
+   "h": "Selecting outline nodes",
+   "b": "When focus is in the outline pane::\n\n    Right-arrow (expand-and-go-right)\n    Left-arrow (contract-or-go-left)\n    Up-arrow (goto-prev-visible) \n    Down-arrow (goto-next-visible)\n    \nRegardless of focus::\n\n    Alt-Home (goto-first-visible-node) \n    Alt-End (goto-last-visible-node)\n    Alt-Right-arrow (expand-and-go-right)\n    Alt-Left-arrow (contract-or-go-left)\n    Alt-Up-arrow (goto-prev-visible) \n    Alt-Down-arrow (goto-next-visible)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16687",
+   "h": "Moving outline nodes",
+   "b": "When focus is in the outline::\n\n    Shift-Down-arrow (move-outline-down) \n    Shift-Left-arrow (move-outline-left) \n    Shift-Right-arrow (move-outline-right) \n    Shift-Up-arrow (move-outline-up)\n\nRegardless of focus::\n\n    Alt-Shift-Down-arrow (move-outline-down) \n    Alt-Shift-Left-arrow (move-outline-left) \n    Alt-Shift-Right-arrow (move-outline-right) \n    Alt-Shift-Up-arrow (move-outline-up)\n    Ctrl-D (move-outline-down)\n    Ctrl-L (move-outline-left) \n    Ctrl-R (move-outline-right)\n    Ctrl-U (move-outline-up)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16688",
+   "h": "Moving the cursor",
+   "b": "When focus is in any of Leo's text panes (body pane, log pane, headlines):\n\n    +-------------------+-----------------------+\n    | **Key**           | **Move Cursor**       |\n    +-------------------+-----------------------+\n    | Arrow keys        | one character         |\n    +-------------------+-----------------------+\n    | Ctrl-LeftArrow    | back one word         |\n    +-------------------+-----------------------+\n    | Ctrl-RightArrow   | forward one word      |\n    +-------------------+-----------------------+\n    | Home              | beginning of line     |\n    +-------------------+-----------------------+\n    | End               | end of line           |\n    +-------------------+-----------------------+\n    | Ctrl-Home         | beginning of the body |\n    +-------------------+-----------------------+\n    | Ctrl-End          | end of body           |\n    +-------------------+-----------------------+\n    | PageDown          | down one page         |\n    +-------------------+-----------------------+\n    | PageUp            | up one page           |\n    +-------------------+-----------------------+\n    \nAdding the Shift key modifier to any of the keys above\nmoves the cursor and extends the selected text.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20160401160027.1",
+   "h": "Executing minibuffer commands",
+   "b": "Alt-X puts focus in the minibuffer. Ctrl-G escapes from the minibuffer.\n\nOnce there, you can use tab completion to reduce typing. For example, <Alt-X>open<tab> shows all commands that start with open.\n\nHit <Enter> to run a complete command.\n\nCtrl-P (repeat-complex-command) repeat the last command entered from the minibuffer.\n\nLeo maintains a **command history list** of all minibuffer commands you have entered.\n\nWhen focus is in the minibuffer, UpArrow shows the previous minibuffer command, and DnArrow show the commands before that.\n\nThe body text of an @data history-list *setting node* preloads commands into the command history list, ignoring lines starting with '#'. For example::\n\n    run-pylint\n    beautify-tree\n    cff\n    sort-lines\n    # show-data\n    check-clones\n    expand-log-pane\n    contract-log-pane"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16689",
+   "h": "Frequently used commands",
+   "b": "For much more information, see Leo's Commands Reference: http://leoeditor.com/commands.html\n\nCopy/Paste (text)::\n\n    Ctrl-C (copy-text)\n    Ctrl-K (kill)\n    Ctrl-V (paste-text)\n    Ctrl-X (cut-text)\n    Ctrl-Y (yank)\n    Alt-Y  (yank-pop)\n    kill-...\n\nFiles::\n\n    Ctrl-N (new) \n    Ctrl-O (open-outline)\n    Ctrl-S (save-file) \n    Ctrl-Q (exit-leo)\n\nFocus::\n\n    Alt-T (focus-to-tree) \n    Ctrl-T (toggle-active-pane)\n    Ctrl-Tab (tab-cycle-next)\n    \nHelp::\n\n    Alt-0 (vr-toggle)\n    F1 (help) \n    F11 (help-for-command) \n    F12 (help-for-python)\n    print-bindings\n    print-settings\n    help-for-...\n\nFind/Replace::\n\n    Ctrl-F (search-with-present-options) \n    Shift-Ctrl-R (replace-string)\n    Ctrl-minus (replace-then-find) \n    F3 (find-next) \n    F2 (find-previous)\n    \nMinibuffer::\n\n    Alt-X (full-command)\n    Ctrl-G (keyboard-quit)\n\nNodes::\n\n    Ctrl-I or Insert (insert-node)\n    Ctrl-H (edit-headline)\n    <Return> (when editing a headline) (end-edit-headline)\n    Ctrl-Shift-C (copy-node)\n    Ctrl-Shift-X (cut-node) \n    Ctrl-Shift-V (paste-node) \n    Ctrl-{ (promote)\n    Ctrl-} (demote)\n    Ctrl-M (mark) \n\nUndo::\n\n    Ctrl-Z (undo)\n    Ctrl-Shift-Z (redo)\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16690",
+   "h": "Leo directives",
+   "b": "Directives starting with '@ in the leftmost column\n    \nFor full details, see Leo's Directives reference: http://leoeditor.com/directives.html\n\n    @                       # starts doc part\n    @c                      # ends doc part\n    @color\n    @doc                    # starts doc part\n    @killcolor\n    @nocolor\n    @language python\n    @language c\n    @language rest          # restructured text\n    @language plain         # plain text: no syntax coloring.\n    @lineending lineending\n    @pagewidth 100\n    @raw, @end_raw          # @file only.\n    @tabwidth -4            # use spaces\n    @tabwidth 8             # use tabs\n    @nowrap\n    @wrap\n    \nLeading whitespace is allowed (and significant) for::\n\n    @all\n    @others\n    "
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16691",
+   "h": "Settings",
+   "b": "For documentation see node: \"About this file\" in leoSettings.leo.\n\n- Key bindings:     @shortcuts\n- Visual settings:  @data qt-gui-plugin-style-sheet\n- Enabling plugins: @enabled-plugins\n\nTo disable a binding for a key, bind it to do-nothing::\n\n    do-nothing = Insert\n    \nThis overrides the following default binding in leoSettings.leo::\n\n    insert-node = Insert\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131031101712.19298",
+   "h": "Node types",
+   "b": "Supported by Leo's core:\n\n- @chapters, @chapter\n- @rst, @rst-no-head, @rst-ignore, @rst-ignore-tree\n- @settings\n- @test, @testsetup, @testclass\n- @url\n\nWithin @settings trees:\n\n- @bool, @color, @directory, @encoding, @int\n- @float, @font, @ratio, @path, @string\n- @enabled-plugins\n- @buttons, @commands\n- @menus, @menu, @menuat, @item\n- @openwith, @shortcuts\n\nSupported by plugins:\n\n- bookmarks.py: @bookmarks, @bookmark\n- at_folder.py: @folder\n- at_produce.py: @produce\n- at_view.py: @clip, @strip, @view\n- expfolder.py: @expfolder\n- mod_scripting.py: @button, @command, @script\n- viewrendered.py: @graphics-script, @image, @html, @md, @movie and @svg\n- rss.py: @feed\n\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16692",
+   "h": "Notable Plugins",
+   "b": "See the docstring of these plugins for more details:\n\n- bookmarks.py: Manages URL's used as bookmarks.\n- contextmenu.py: Brings up context menu when user right-clicks a headline.\n- mod_scripting.py: Supports @button and @command nodes.\n- quicksearch.py: Adds Nav tab for searching.\n- todo.py: Manages to-do lists and simple project management.\n- valuespace.py: Creates an outline-oriented spreadsheet.\n- viewrendered.py: Creates a rendering pane. Automatically loaded by Leo's help commands.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16693",
+   "h": "External files (@<file> nodes)",
+   "b": "@<file> nodes create external files:\n\n    @asis <filename>        write only, no sentinels, exact line endings\n    @auto <filename>        recommended\n    @clean <filename>       recommended\n    @edit <filename>        @edit node contains entire file\n    @file <filename>        recommended\n    @nosent <filename>      write only, no sentinels\n\nThis table summarizes the differences between @<file> nodes:\n\n                             Sections &   File data in\n    @<file> kind  Sentinels?  @others?    .leo file?    Notes             \n    ------------  ---------- -----------  ------------  -----\n    @asis            no         no           yes\n    @auto            no         yes          no         1, 2\n    @auto-xx         no         yes          no         1, 2\n    @clean           no         yes          yes     \n    @edit            no         no           no    \n    @file            yes        yes          no\n    @nosent          no         yes          yes\n    \n**Note 1**: @auto nodes read files using language-specific importers.\nBy default, the file's extension determines the importer:\n\n    Extensions                  Importer\n    ----------                  --------\n    .c, .cc, .c++, .cpp,.cxx    C\n    .cs', .c#'                  C Sharp\n    .el                         Elisp\n    .h, .h++                    C\n    .html, .htm                 HTML\n    .ini                        Config file\n    .ipynb                      Jupyter notebook\n    .java                       Java\n    .js                         JavaScript\n    .md                         Markdown\n    .org                        Org Mode\n    .otl                        Vim outline\n    .pas                        Pascal\n    .php                        PHP\n    .py, .pyi, .pyw             Python\n    .rest, .rst                 reStructuredText\n    .ts                         TypeScript\n    .xml                        XML\n    \n**Note 2**: You can also specify importers *explicitly* as follows:\n\n    @auto-xxx           Importer\n    ---------           --------\n    @auto-ctext         ctext\n    @auto-markdown      markdown\n    @auto-md            markdown\n    @auto-org           org-mode\n    @auto-org-mode      org-mode\n    @auto-otl           vimoutline\n    @auto-vim-outline   vimoutline\n    @auto-rst           reStructuredText\n    \nFor full details, see Leo's Directives reference:\nhttp://leoeditor.com/directives.html\n    "
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20160410111255.1",
+   "h": "Path expressions",
+   "b": "Within @path and @<file> paths, Leo evaluates ``{{exp}}`` with the the following symbols defined: ``c``, ``g``, ``p``, ``os`` and ``sys``.  For example::\n\n    @file {{os.path.abspath(os.curdir)}}/abc.py\n    \nrefers to the file abc.py in (absolute path of) the current directory.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20160410111226.1",
+   "h": "Sections",
+   "b": "**Section names** have the form::\n\n    << any text, except double closing angle brackets >>\n    \n**Section-definition nodes** have headlines starting with a section name.\n\nLeo performs **expansions** for all @<file> nodes except @asis.\n\nExpansion of @all:\n\n- Leo replaces @all by the *unexpanded* body text of *all* nodes.\n\nExpansion of section names and @others:\n\n- Leo replaces section names in body text by the *expanded*\n  text of the corresponding section definition node.\n  \n- Leo replaces @others with the *expanded* text of all nodes\n  that *aren't* section-definition nodes.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131019184243.16694",
+   "h": "Scripting",
+   "b": "This section lists the ivars, properties, functions and methods most\ncommonly used in Leo scripts.\n\n**Very important**: use Alt-1 (toggle-autocompleter) and Alt-2\n(toggle-calltips) to recreate these lists as you type.\n\nAs an alternative to this chapter, Jacob Peck has written a more informal scripting tutorial:\nhttp://blog.suspended-chord.info/2014/01/28/intro-to-leo-scripting/"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16695",
+   "h": "Pre-defined symbols",
+   "b": "execute-script predefines::\n\n    c: The commander of the present outline.\n    g: The leo.core.leoGlobals module.\n    p: The presently selected position, c.p.\n    \n@test scripts predefine all the above, plus::\n\n    self: The instance of unittest.TestCase\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20170315015836.1",
+   "h": "LeoApp class",
+   "b": "Ivars:\n\n    g.app                   A LeoApp instance.\n    g.app.gui               A LeoGui instance. \n    g.app.pluginsController A LeoPluginsController instance.\n    g.app.*                 Leo's global variables.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16697",
+   "h": "Commands class",
+   "b": "Ivars:\n\n    c.config                c's configuration object\n    c.frame                 c's outer frame, a leoFrame instance.\n    c.undoer                c's undo handler.\n    c.user_dict             A temporary dict for use of scripts and plugins.\n    \nSubCommanders:\n\n    # in leo/core...\n    c.atFileCommands\n    c.chapterController\n    c.fileCommands\n    c.findCommands\n    c.importCommands\n    c.keyHandler = c.k\n    c.persistenceController\n    c.printingController\n    c.rstCommands\n    c.shadowController\n    c.tangleCommands\n    c.testManager\n    c.vimCommands\n\n    # In leo/commands...\n    c.abbrevCommands\n    c.controlCommands\n    c.convertCommands\n    c.debugCommands\n    c.editCommands\n    c.editFileCommands\n    c.gotoCommands\n    c.helpCommands\n    c.keyHandlerCommands\n    c.killBufferCommands\n    c.rectangleCommands\n    c.spellCommands\n    \nFor example, c.k is an instance of the LeoKeys class in leo/core/leoKeys.py.\n    \nGenerators:\n\n    c.all_positions()\n    c.all_unique_positions()\n    \nNew in Leo 5.5: All generators yield distinct positions.\n    \nMost useful methods:\n\n    c.isChanged()\n    c.deletePositionsInList(aList, callback=None)\n                            # safely deletes all the positions in aList.\n    c.positionExists(p)\n    c.redraw(p=None)        # Redraw the screen. Select p if given.\n    c.redraw_later()        # Ensure that Leo redraws the outline.\n    c.save()                # Save the present outline.\n    c.selectPosition()      # Select the position, without redrawing the screen.\n    \nSuppressing screen flash when redrawing the outline:\n\n    try:\n        c.disable_redraw()\n        << Code that might otherwise update the outline >>\n    finally:\n        c.enable_redraw()\n        c.redraw()\n    \n**Official ivars** of any leoFrame f:\n\n    f.c                     is the frame’s commander.\n    f.body                  is a leoBody instance.\n    f.body.bodyCtl          is a leoQTextEditWidget instance.\n    f.body.bodyCtrl.widget  is a LeoQTextBrowser(QTextBrowser) instance.\n    f.log                   is a leoLog instance.\n    f.tree                  is a leoQtTree instance.\n    f.tree.treeWidget       is a LeoQTreeWidget (a QTreeWidget) instance.\n    \nUse autocompletion to explore these objects!\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20190101084845.1",
+   "h": "Undoing commands",
+   "b": "If you want to make a command undoable, you must create \"before\" and \"after\" snapshots of the parts of the outline that may change. Here are some examples.  Leo's source code contains many other examples.\n\n    "
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20190101092126.1",
+   "h": "Undoably changing body text",
+   "b": "To undo a single change to body text::\n\n    command = 'my-command-name'\n    b = c.undoer.beforeChangeNodeContents(p, oldYScroll=ypos)\n    # Change p's body text.\n    c.undoer.afterChangeNodeContents(p,\n        command=command, bunch=b, dirtyVnodeList=[])\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20190101092129.1",
+   "h": "Undoably changing multiple nodes",
+   "b": "If your command changes multiple nodes, the pattern is::\n\n    u, undoType = c.undoer, 'command-name'\n    u.beforeChangeGroup(c.p, undoType)\n    dirtyVnodeList = []\n    changed = False\n    # For each change, do something like the following:\n    for p in to_be_changed_nodes:\n        # Change p.\n        dirtyVnodeList.append(p.v)\n        u.afterChangeNodeContents(p, undoType, bunch)\n        changed = True\n    if changed:\n        u.afterChangeGroup(c.p, undoType,\n            reportFlag=False,\n            dirtyVnodeList=dirtyVnodeList)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16698",
+   "h": "VNode class",
+   "b": "**Properties**:\n\n    v.b:    v's body text.\n    v.gnx:  v's gnx.\n    v.h:    v's headline text.\n    v.u:    v.unknownAttributes, a persistent Python dictionary.\n    \nv.u (uA's or unknownAttributes or userAttributes) allow plugins or scripts\nto associate persistent data with vnodes. For details see:\nhttp://leoeditor.com/customizing.html#adding-extensible-attributes-to-nodes-and-leo-files\n\n*Important*: Generally speaking, vnode properties are fast, while the\ncorresponding position properties are much slower. Nevertheless, scripts\nshould usually use *position* properties rather than *vnode* properties\nbecause the position properties handle recoloring and other details.\nScripts should use *vnode* properties only when making batch changes to\nvnodes.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16699",
+   "h": "Position class",
+   "b": "**Properties**:\n\n    p.b: same as p.v.b. *Warning*: p.b = s is expensive.\n    p.h: same as p.v.h. *Warning*: p.h = s is expensive.\n    p.u: same as p.v.u.\n    \n**Generators**:\n\n    p.children()\n    p.parents()\n    p.self_and_parents()\n    p.self_and_siblings()\n    p.following_siblings()\n    p.subtree()\n    p.self_and_subtree()\n    \nNew in Leo 5.5: All generators yield distinct positions.\n\n**Getters**:\n\n    p.back()\n    p.children()\n    p.firstChild()\n    p.hasBack()\n    p.hasChildren()\n    p.hasNext()\n    p.hasParent()\n    p.hasThreadBack()\n    p.hasThreadNext()\n    p.isAncestorOf(p2)\n    p.isAnyAtFileNode()\n    p.isAt...Node()\n    p.isCloned()\n    p.isDirty()\n    p.isExpanded()\n    p.isMarked()\n    p.isRoot()\n    p.isVisible()\n    p.lastChild()\n    p.level()\n    p.next()\n    p.nodeAfterTree()\n    p.nthChild()\n    p.numberOfChildren()\n    p.parent()\n    p.parents()\n    p.threadBack()\n    p.threadNext()\n    p.visBack()\n    p.visNext()\n    \n**Setters**:\n\n    p.setDirty() *Warning*: p.setDirty() is expensive.\n    p.setMarked()\n\n**Operations on nodes**:\n\n    p.clone()\n    p.contract()\n    p.doDelete(new_position)\n    p.expand()\n    p.insertAfter()\n    p.insertAsNthChild(n)\n    p.insertBefore()\n    p.moveAfter(p2)\n    p.moveToNthChildOf(parent,n)\n    p.moveToRoot()\n        \n**Moving positions**:\n\nThe following move positions *themselves*: they change the node to which a\nposition refers. They do *not* change outline structure in any way! Use\nthese when generators are not flexible enough::\n\n    p.moveAfter(p2)\n    p.moveToBack()\n    p.moveToFirstChild()\n    p.moveToFirstChildOf(p2)\n    p.moveToLastChild()\n    p.moveToLastChildOf(p2)\n    p.moveToLastNode()\n    p.moveToNext()\n    p.moveToNodeAfterTree(p2)\n    p.moveToNthChild()\n    p.moveToNthChildOf(p2)\n    p.moveToParent()\n    p.moveToRoot()\n    p.moveToThreadBack()\n    p.moveToThreadNext()\n    p.moveToVisBack(c)\n    p.moveToVisNext(c)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131019184243.16700",
+   "h": "The leoGlobals module",
+   "b": "For full details, see @file leoGlobals.py in LeoPyRef.leo.\n\n**g vars**:\n\n    g.app\n    g.app.gui\n    g.app.windowlist\n    g.unitTesting\n    g.user_dict  # a temporary dict for use of scripts and plugins.\n    \n**g decorator**:\n\n    @g.command(command-name)\n    \n**g functions** (the most interesting: there are many more in leoGlobals.py):\n    \n    g.angleBrackets()\n    g.app.commanders()\n    g.app.gui.guiName()\n    g.es(*args,**keys)\n    g.es_print(*args,**keys)\n    g.es_exception()\n    g.getScript(c,p,\n        useSelectedText=True,\n        forcePythonSentinels=True,\n        useSentinels=True)\n    g.openWithFileName(fileName,old_c=None,gui=None)\n    g.os_path_... # Wrappers for os.path methods.\n    g.pdb(message='')\n    g.toEncodedString(s,encoding='utf-8',reportErrors=False)\n    g.toUnicode(s, encoding='utf-8',reportErrors=False)\n    g.trace(*args,**keys)\n    g.warning(*args,**keys)\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20170311121717.1",
+   "h": "Test driven development",
+   "b": "- Use imp.reload to reload all changed modules.\n- Make sure to *instantiate* any changed objects.\n- See \"Unit testing with Leo\" for full details.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20170403190104.1",
+   "h": "Performance gotchas",
+   "b": "**Warning**: The p.b and p.h setters and p.setDirty() are *very* expensive:\n\n- p.b = s calls c.setBodyString(p, s) which will recolor body text and update the node's icon.\n- p.h = s calls c.setHeadString(p, s) which calls p.setDirty().\n- p.setDirty() changes the icons of all ancestor @file nodes.\n\nIn contrast, the corresponding p.v.b and p.v.b setters and p.v.setDirty() are extremely fast.\n\nUsually, code *should* use the p.b and p.h setters and p.setDirty(), despite their cost, because they update Leo's outline pane properly. Calling c.redraw() is *not* enough.\n\nThese performance gotchas become important for repetitive commands, like cff, replace-all and recursive import. In such situations, code should use p.v.b and p.v.h setters instead of p.b and p.h setters.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180503073939.1",
+   "h": "Prompting for command arguments",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180503073954.1",
+   "h": "Example 1: Prompt for one arg",
+   "b": "@language python\n\n# To see this in action (from this file):\n# - Ctrl-B to define the command.\n# - Execute the i1 command\n\n@g.command('i1')\ndef i1_command(event):\n    c = event.get('c')\n    if not c: return\n        \n    def callback(args, c, event):\n        g.trace(args)\n        c.bodyWantsFocus()\n\n    c.interactive(callback, event, prompts=['Prompt: '])"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180503074530.1",
+   "h": "Example 2: Prompt for 2 args",
+   "b": "@language python\n\n# To see this in action (from this file):\n# - Ctrl-B to define the command.\n# - Execute the i2 command.\n\n@g.command('i2')\ndef i2_command(event):\n    c = event.get('c')\n    if not c: return\n        \n    def callback(args, c, event):\n        g.trace(args)\n        c.bodyWantsFocus()\n\n    c.interactive(callback, event,\n        prompts=['Find: ', ' Replace: '])\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180503132659.1",
+   "h": "Example 3: Prompt for 3 args",
+   "b": "@language python\n\n# To see this in action (from this file):\n# - Ctrl-B to define the command.\n# - Execute the i3 command\n\n@g.command('i3')\ndef i3_command(event):\n    c = event.get('c')\n    if not c: return\n        \n    def callback(args, c, event):\n        g.trace(args)\n        c.bodyWantsFocus()\n\n    c.interactive(callback, event,\n        prompts=['One: ', ' Two: ', ' Three: '])\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20181015142534.3",
+   "h": "Naming conventions in Leo's core",
+   "b": "LeoPyRef.leo contains all of Leo's core source code.\n\nLeo's code uses the following conventions throughout:\n\nc:  a commander.\nch: a character.\nd:  a dialog or a dict.\nf:  an open file.\nfn: a file name.\ng:  the leoGlobals module.\ni, j, k: indices into a string.\np:  a Position.\ns:  a string.\nt:  a text widget.\nu:  an undoer.\nw:  a gui widget.\nv:  a Vnode\nz:  a local temp.\n\nIn more limited contexts, the following conventions apply:\n\nsi:     a g.ShortcutInfo object.\nks:     a g.KeyStroke object\nstroke: a KeyStroke object.\n\nbtw:    leoFrame.BaseTextWrapper\nstw:    leoFrame.StringTextWrapper\n\nbqtw:   qt_text.BaseQTextWrapper\nlqtb:   qt_text.LeoQTextBrowser\nqhlw:   qt_text.QHeadlineWrapper\nqmbw:   qt_text.QMinibufferWrapper\nqlew:   qt_text.QLineEditWrapper\nqsciw:  qt_text.QScintiallaWrapper\nqtew:   qt_text.QTextEditWrapper\n\nNames defined in Leo's core are unlikely to change, especially names used outside their defining module. This includes virtually everything in leoGlobals.py, and many names in leoCommands.py and other files. "
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20181015142534.4",
+   "h": "Official ivars",
+   "b": "The following 'official' ivars (instance vars) will always exist:\n\nc.frame                 The frame containing the log,body,tree, etc.\nc.frame.body            The body pane.\nc.frame.body.widget     The gui widget for the body pane.\nc.frame.body.wrapper    The high level interface for the body widget.\nc.frame.iconBar         The icon bar.\nc.frame.log             The log pane.\nc.frame.log.widget      The gui widget for the log pane.\nc.frame.log.wrapper     The high-level interface for the log pane.\nc.frame.tree            The tree pane.\n\nThe following were official ivars that no longer exist:\n\nc.frame.body.bodyCtrl   Use c.frame.body.wrapper instead.\nc.frame.log.logCtrl     Use c.frame.log.wrapper instead.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20181015142534.2",
+   "h": "Widgets and wrappers",
+   "b": "A **widget** is an actual Qt widget. Leo's core seldom accesses widgets directly.  Instead, a  **wrapper class** defines a standard api that hides the details of the underlying gui **text** widgets.\n\nLeo's core uses the wrapper api almost exclusively. That is, Leo's core code treats wrappers *as if* they were only text widgets there are!\n\nA back door exists for special cases. All wrapper classes define an official ``widget`` ivar, so core or plugin code can gain access to the real Qt widget using wrapper.widget. Searching for wrapper.widget will find all gui-dependent snippets of code in Leo's core.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20170311122518.1",
+   "h": "Command line options",
+   "b": "@nowrap\n\nUsage: launchLeo.py [options] file1, file2, ...\n\nOptions:\n  -h, --help            show this help message and exit\n  --debug               enable debug mode\n  --diff                use Leo as an external git diff\n  --fullscreen          start fullscreen\n  --ipython             enable ipython support\n  --fail-fast           stop unit tests after the first failure\n  --gui=GUI             gui to use (qt/qttabs/console/null)\n  --listen-to-log       start log_listener.py on startup\n  --load-type=LOAD_TYPE\n                        @<file> type for loading non-outlines from command\n                        line\n  --maximized           start maximized\n  --minimized           start minimized\n  --no-cache            disable reading of cached files\n  --no-plugins          disable all plugins\n  --no-splash           disable the splash screen\n  --screen-shot=SCREENSHOT_FN\n                        take a screen shot and then exit\n  --script=SCRIPT       execute a script and then exit\n  --script-window=SCRIPT_WINDOW\n                        open a window for scripts\n  --select=SELECT       headline or gnx of node to select\n  --session-restore     restore previously saved session tabs at startup\n  --session-save        save session tabs on exit\n  --silent              disable all log messages\n  --trace-binding=BINDING\n                        trace key bindings\n  --trace-focus         trace changes of focus\n  --trace-plugins       trace imports of plugins\n  --trace-setting=SETTING\n                        trace where setting is set\n  --trace-shutdown      trace shutdown logic\n  -v, --version         print version number and exit\n  --window-size=WINDOW_SIZE\n                        initial window size (height x width)"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20180405105738.1",
+   "h": "Learning to be a Leo developer",
+   "b": ""
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20160315141648.1",
+   "h": "Code academy",
+   "b": "Leo's Code Academy posts discuss how to do useful things in Leo. The following are distilled from online discussions about Leo's scripting."
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160315141648.3",
+   "h": "CA: uA's",
+   "b": "uA's (user Attributes) associate arbitrary data with any vnode. uA's are dictionaries of dictionaries--an **outer dictionary** and zero or more **inner dictionaries**. The outer dictionary associates plugin names (or Leo's core) with inner dictionaries. The inner dictionaries carry the actual data.\n\nThe v.u or p.v properties get and set uA's. You can think of p.u as a synonym for p.v.unknownAttributes on both sides of an assignment. For example::\n\n    plugin_name = 'test_plugin'\n    d = p.u.get(plugin_name,{})\n    d ['n'] = 8\n    p.u [plugin_name] = d\n\np.u is the outer dictionary. p.u.get.(plugin_name, {}) is the inner dictionary. The last line is all that is needed to update the outer dictionary!\n\nIt is easy to search for particular uA's. The following script prints all the keys in the outer-level uA dictionaries:\n\n    for p in c.all_unique_positions():\n        if p.u:\n            print(p.h, sorted(p.u.keys()))\n\nThis is a typical usage of Leo's generators.  Generators visit each position (or node) quickly. Even if you aren't going to program much, you should be aware of how easy it is to get and set the data in each node. In fact, now would be a great time to read Leo's Scripting Tutorial again :-) This will allow you to \"dream bigger\" with Leo.\n\nThe following script creates a list of all positions having an icon, that is, an outer uA dict with a 'icon' key.\n\n    aList = [p.copy() for p in c.all_unique_positions() if 'icon' in p.u]\n    print('\\n'.join([p.h for p in aList]))\n\n*Important*: If you don't understand these lines, please study Python's list comprehensions.  They are incredibly useful. '\\n'.join(aList) is a great idiom to know.  str.join is one of python's most useful string methods. It converts between lists and strings.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160315141648.4",
+   "h": "CA: icons",
+   "b": "@language rest\n\nThis script inserts three icons in the current outline node. Running the script again will insert three more::\n\n@language python\n\n    table = (\n        'edittrash.png',\n        'connect_no.png',\n        'error.png',\n    )\n    for icon in table:\n        fn = g.os_path_finalize_join(g.app.loadDir,\n            '..', 'Icons', 'Tango', '16x16', 'status', icon)\n        if g.os_path_exists(fn):\n            c.editCommands.insertIconFromFile(path=fn)\n        \n@language rest\n        \nThis deletes all icons of the node at position p::\n\n    c.editCommands.deleteNodeIcons(p=p)\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160315141648.5",
+   "h": "CA: using git",
+   "b": "Using Leo’s latest sources from GitHub is highly recommended. Once git is installed, the following gets the latest Leo sources::\n\n    git clone https://github.com/leo-editor/leo-editor.git\n\nThereafter, you can update Leo's sources with::\n\n    git pull\n\nGit is great in tracking history and reverting unwanted changes. And it has many other benefits.\n\nUsing git is very similar to using bzr or hg or any other SCCS.  To change Leo, you add files, you commit files, and you push files.  That's about it.\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20160315141648.6",
+   "h": "CA: finding nodes with c.cloneFindByPredicate",
+   "b": "@language rest\n\nc.cloneFindByPredicate is a powerful new addition to Leo.  Here is its docstring:\n\n    Traverse the tree given using the generator, cloning all positions for\n    which predicate(p) is True. Undoably move all clones to a new node, created\n    as the last top-level node. Returns the newly-created node. Arguments:\n\n    generator,      The generator used to traverse the tree.\n    predicate,      A function of one argument p returning true if p should be included.\n    failMsg=None,   Message given if nothing found. Default is no message.\n    flatten=False,  True: Move all node to be parents of the root node.\n    iconPath=None,  Full path to icon to attach to all matches.\n    redraw=True,    True: redraw the screen.\n    undo_type=None, The undo/redo name shown in the Edit:Undo menu.\n                    The default is 'clone-find-predicate'\n                    \nFor example, clone-find-all-marked command is essentially:\n    \n@language python\n\n    @cmd('clone-find-all-marked')\n    def cloneFindMarked(self, flatten):\n        \n        def isMarked(p):\n            return p.isMarked()\n            \n        self.cloneFindByPredicate(\n            generator = self.all_unique_positions,\n            predicate = isMarked,\n            failMsg = 'nothing found',\n            flatten = flatten,\n            undoType = 'clone-find-marked',\n        )\n        \n@language rest\n\nThe predicate could filter on an attribute or *combination* of attributes. For example, the predicate could return p has attributes A and B but *not* attribute C. This instantly gives Leo full database query capabilities. If we then hoist the resulting node we see *all and only* those nodes satisfying the query.\n\nThese following position methods make it easy to skip @ignore trees or @<file> trees containing @all::\n        \n    p.is_at_all()          True if p is an @<file> node containing an @all directive.\n    p.in_at_all()          True if p is in an @<file> tree whose root contains @all.\n    p.is_at_ignore()       True if p is an @ignore node\n    p.in_at_ignore_tree()  True if p is in an @ignore tree.\n\nFor example, here is how to gather only those marked nodes that lie outside any @ignore tree::\n\n@language python\n\n    def isMarked(p):\n        return p.isMarked() and not p.in_at_ignore_tree()\n      \n    c.cloneFindByPredicate(\n        generator = self.all_unique_positions,\n        predicate = isMarked,\n        flatten = flatten,\n        undoType = 'gather-marked',\n    )\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093138.1",
+   "h": "Leo University",
+   "b": "Leo University is a project devoted to help people become Leo developers.\n\nHere is the main page.  It contains links to individual lessons.\nhttps://github.com/leo-editor/leo-editor/issues/816\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20181015142534.1",
+   "h": "Architecture",
+   "b": "Leo uses a model/view/controller architecture.\n\n- Controller: The Commands class and its helpers in leoCommands.py and leoEditCommands.py.\n\n- Model: The VNode and Position classes in leoNodes.py.\n\n- View: The gui-independent base classes are in the node \"Gui Base Classes\". The Qt-Specific subclasses are in the node \"Qt gui\".\n\n**Important**: The general organization of these classes have changed hardly at all in Leo's 20+ year history.  The reason is that what each class does is fairly obvious.  How the gets the job done may have changed drastically, but *that's an internal implementation detail of the class itself*.  This is the crucial design principle that allows Leo's code to remain stable.  *Classes do not know or meddle in the internal details of other classes*.  As a result, nobody, including EKR, needs to remember internal details.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20131030071311.18723",
+   "h": "The rst3 tutorial",
+   "b": "Here is an expanded version of the example from\nhttp://leoeditor.com/tutorial-rst3.html\n\nControl-click the URL above to open the page in your browser.\n\nNotes:\n\n1. The Startup node in this file contains the settings for the rst3\n   command. If you use sphinx, **set @bool rst3_call_docutils = False**.\n   \n2. Leo will not create ~/myDocument.html automatically. Only the rst3\n   command does that.\n   \n3. Executing the make-sphinx command will do everything needed to make\n   myDocument.html. The @button make-sphinx node (a child of the Startup\n   node) creates the make-sphinx command.\n   \n4. The node myDocument.html.txt is the intermediate file produced by the\n   rst3 command.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131030071311.18732",
+   "h": "@rst ~/myDocument.html",
+   "b": "#############\nWar and Peace\n#############\n\n        by Leo Tolstoy/Tolstoi\n        \n        BOOK ONE: 1805\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131030071311.18733",
+   "h": "Chapter I",
+   "b": "\"Well, Prince, so Genoa and Lucca are now just family estates of the\nBuonapartes. But I warn you, if you don't tell me that this means war, if\nyou still try to defend the infamies and horrors perpetrated by that\nAntichrist--I really believe he is Antichrist--I will have nothing more to\ndo with you and you are no longer my friend, no longer my 'faithful slave',\nas you call yourself! But how do you do? I see I have frightened you--sit\ndown and tell me all the news.\"\n\nIt was in July, 1805, and the speaker was the well-known Anna Pavlovna\nScherer, maid of honor and favorite of the Empress Marya Fedorovna. With\nthese words she greeted Prince Vasili Kuragin, a man of high rank and\nimportance, who was the first to arrive at her reception. Anna Pavlovna had\nhad a cough for some days. She was, as she said, suffering from la grippe;\ngrippe being then a new word in St. Petersburg, used only by the elite.\n\n...stuff happens..."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20131030071311.18734",
+   "h": "@rst-ignore",
+   "b": "You can make whatever notes \nto yourself you like here, \nas these lines won't appear \nin the output files. :)\n\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131030071311.18735",
+   "h": "@rst-ignore-tree Chapter 2+",
+   "b": "Neither this node nor any descendant node will appear in the output file."
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20131030071311.18736",
+   "h": "Chapter II",
+   "b": "TL;DR\n\n...la femme la plus seduisante de Petersbourg,* ..."
+  },
+  {
+   "level": 4,
+   "gnx": "ekr.20131030071311.18737",
+   "h": "translation",
+   "b": "*The most fascinating woman in Petersburg."
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131030071311.18738",
+   "h": "Chapter XII",
+   "b": "From the time the law of Copernicus was discovered and proved, the mere\nrecognition of the fact that it was not the sun but the earth that moves\nsufficed to destroy the whole cosmography of the ancients.\n\n...\n"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20131030071311.18739",
+   "h": "@rst-no-head The End",
+   "b": "..  and now we skip to the end of last chapter, while demonstrating use of an\n..  organizer node (a node whose name does not appear in the output document),\n..  and that rst comments appear as html comments (try 'View Source' on\n..  output.html)\n\nIn the first case it was necessary to renounce the consciousness of an\nunreal immobility in space and to recognize a motion we did not feel; in\nthe present case it is similarly necessary to renounce a freedom that does\nnot exist, and to recognize a dependence of which we are not conscious.\n   \n--- The End ---\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20131102044158.16563",
+   "h": "~/myDocument.html.txt",
+   "b": ".. rst3: filename: ~/myDocument.html\n\n#############\nWar and Peace\n#############\n\n        by Leo Tolstoy/Tolstoi\n        \n        BOOK ONE: 1805\n\nChapter I\n+++++++++\n\n\"Well, Prince, so Genoa and Lucca are now just family estates of the\nBuonapartes. But I warn you, if you don't tell me that this means war,\nif you still try to defend the infamies and horrors perpetrated by\nthat Antichrist--I really believe he is Antichrist--I will have\nnothing more to do with you and you are no longer my friend, no longer\nmy 'faithful slave,' as you call yourself! But how do you do? I see\nI have frightened you--sit down and tell me all the news.\"\n\n...stuff happens...\n\nChapter XII\n+++++++++++\n\nFrom the time the law of Copernicus was discovered and proved, the\nmere recognition of the fact that it was not the sun but the earth\nthat moves sufficed to destroy the whole cosmography of the\nancients.\n\n...\n\n.. and now we skip to the end of last chapter, while demonstrating use of an\n    organizer node (a node whose name does not appear in the output document),\n    and that rst comments appear as html comments (try 'View Source' on\n    output.html)\n\nIn the first case it was necessary to renounce the consciousness\nof an unreal immobility in space and to recognize a motion we did\nnot feel; in the present case it is similarly necessary to renounce\na freedom that does not exist, and to recognize a dependence of\nwhich we are not conscious.\n   \n--- The End ---\n\n"
+  },
+  {
+   "level": 0,
+   "gnx": "ekr.20180405093127.1",
+   "h": "Rendering examples",
+   "b": "Here are some demos of Leo's rendering capabilities.\n\nTo see these examples:\n\n1. enable Leo's viewrendered.py (VR) plugin.\n\n2. Show the VR pane with Alt-0, vr-toggle."
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.9",
+   "h": "@html display Leo tree using css",
+   "b": "<!DOCTYPE html>\n<html>\n<head>\n<style>\nul.leo-tree-example  {\n    background-color: #ffffec;\n    zoom: 75%; # blurs icons a bit.\n}\nul.leo-tree-example li {\n    background-repeat: no-repeat;\n    background-position: 0px 5px;\n    padding-left: 27px;\n}\nli {\n    background-image:\nurl('https://raw.github.com/vivainio/leo/master/leo/Icons/box00.GIF');\n    background-repeat: no-repeat;\n    background-position: 0px 5px;\n    padding-left: 27px;\n}\nli.selected {\n    background-color: lightgrey;\n}\nli.leaf {\n    list-style-type: none;\n}\nli.plus {\n  list-style-image: url('http://leoeditor.com/plusnode.gif')\n}\nli.minus {\n  list-style-image: url('http://leoeditor.com/minusnode.gif')\n}\nli.leaf {\n  background-image: url('http://leoeditor.com/box00.GIF')\n}\nli.body {\n  background-image: url('http://leoeditor.com/box01.GIF')\n}\nli.mark {\n  background-image: url('http://leoeditor.com/box02.GIF')\n}\nli.mark-body {\n  background-image: url('http://leoeditor.com/box03.GIF')\n}\nli.clone {\n  background-image: url('http://leoeditor.com/box04.GIF')\n}\nli.clone-body {\n  background-image: url('http://leoeditor.com/box05.GIF')\n}\nli.clone-mark {\n  background-image: url('http://leoeditor.com/box06.GIF')\n}\nli.clone-mark-body {\n  background-image: url('http://leoeditor.com/box07.GIF')\n}\nli.dirty {\n  background-image: url('http://leoeditor.com/box08.GIF')\n}\nli.dirty-body {\n  background-image: url('http://leoeditor.com/box09.GIF')\n}\nli.dirty-mark {\n  background-image: url('http://leoeditor.com/box10.GIF')\n}\nli.dirty-mark-body {\n  background-image: url('http://leoeditor.com/box11.GIF')\n}\nli.dirty-clone {\n  background-image: url('http://leoeditor.com/box12.GIF')\n}\nli.dirty-clone-body {\n  background-image: url('http://leoeditor.com/box13.GIF')\n}\nli.dirty-clone-mark {\n  background-image: url('http://leoeditor.com/box14.GIF')\n}\n</style>\n</head>\n<body>\n<ul class=\"leo-tree-example\">\n<li class='plus clone-mark'>\ntest\n</li>\n<ul>\n  <li class='plus clone-body'>\n  child\n  </li>\n  <ul>\n    <li class='leaf body'>\n    grandchild\n    </li>\n  </ul>\n  <li class='plus clone-body'>\n  child\n  </li>\n  <ul>\n    <li class='leaf body'>\n    grandchild\n    </li>\n  </ul>\n</ul>\n</ul>\n</body>\n</html>"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.11",
+   "h": "@image LeoSplash",
+   "b": "../Icons/Leosplash.GIF\n\nThis is a comment"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.12",
+   "h": "@image splash screen",
+   "b": "c:\\leo.repo\\leo-editor\\leo\\Icons\\SplashScreen.ico\n\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.22",
+   "h": "@svg bubbles from sources",
+   "b": "@nocolor-node\n<?xml version=\"1.0\" standalone=\"no\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.0//EN\" \"http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd\">\n<svg width=\"20cm\" height=\"15cm\" viewBox=\"0 0 800 600\"\n     xmlns=\"http://www.w3.org/2000/svg\"\n     xmlns:xlink=\"http://www.w3.org/1999/xlik/\"\n     baseProfile=\"tiny\" version=\"1.2\">\n   <title>Spheres</title>\n   <desc>Semi-transparent bubbles on a colored background.</desc>\n     <defs>\n       <!-- Create radial gradients for each bubble. -->\n       <radialGradient id=\"blueBubble\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" stop-opacity=\"1\" />\n         <stop offset=\"25%\" stop-color=\"#cdcdff\" stop-opacity=\".65\" />\n         <stop offset=\"100%\" stop-color=\"#cdaacd\" stop-opacity=\".75\" />\n       </radialGradient>\n       <radialGradient id=\"redBubble\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" stop-opacity=\"1\" />\n         <stop offset=\"25%\" stop-color=\"#ffcdcd\" stop-opacity=\".65\" />\n         <stop offset=\"100%\" stop-color=\"#bbbb99\" stop-opacity=\".75\" />\n       </radialGradient>\n       <radialGradient id=\"greenBubble\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" stop-opacity=\"1\" />\n         <stop offset=\"25%\" stop-color=\"#cdffcd\" stop-opacity=\".65\" />\n         <stop offset=\"100%\" stop-color=\"#99aaaa\" stop-opacity=\".75\" />\n       </radialGradient>\n       <radialGradient id=\"yellowBubble\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" stop-opacity=\"1\" />\n         <stop offset=\"25%\" stop-color=\"#ffffcd\" stop-opacity=\".65\" />\n         <stop offset=\"100%\" stop-color=\"#bbbbaa\" stop-opacity=\".75\" />\n       </radialGradient>\n       <radialGradient id=\"background\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"400\" fx=\"250\" fy=\"250\">\n         <stop offset=\"0%\" stop-color=\"#ffffee\" />\n         <stop offset=\"100%\" stop-color=\"#ccccaa\" />\n       </radialGradient>\n       <linearGradient id=\"surface\" gradientUnits=\"userSpaceOnUse\"\n                       x1=\"-100\" y1=\"200\" x2=\"400\" y2=\"200\">\n         <stop offset=\"0%\" stop-color=\"#ffffcc\" />\n         <stop offset=\"100%\" stop-color=\"#bbbb88\" />\n       </linearGradient>\n\n       <!-- Create radial gradients for each circle to make them look like\n            spheres. -->\n       <radialGradient id=\"blueSphere\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" />\n         <stop offset=\"75%\" stop-color=\"blue\" />\n         <stop offset=\"100%\" stop-color=\"#222244\" />\n       </radialGradient>\n       <radialGradient id=\"redSphere\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" />\n         <stop offset=\"75%\" stop-color=\"red\" />\n         <stop offset=\"100%\" stop-color=\"#442222\" />\n       </radialGradient>\n       <radialGradient id=\"greenSphere\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" />\n         <stop offset=\"75%\" stop-color=\"green\" />\n         <stop offset=\"100%\" stop-color=\"#113311\" />\n       </radialGradient>\n       <radialGradient id=\"yellowSphere\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"-50\">\n         <stop offset=\"0%\" stop-color=\"white\" />\n         <stop offset=\"75%\" stop-color=\"yellow\" />\n         <stop offset=\"100%\" stop-color=\"#444422\" />\n       </radialGradient>\n       <radialGradient id=\"shadowGrad\" gradientUnits=\"userSpaceOnUse\"\n                       cx=\"0\" cy=\"0\" r=\"100\" fx=\"-50\" fy=\"50\">\n         <stop offset=\"0%\" stop-color=\"black\" stop-opacity=\"1.0\" />\n         <stop offset=\"100%\" stop-color=\"black\" stop-opacity=\"0.0\" />\n       </radialGradient>\n\n       <!-- Define a shadow for each sphere. -->\n       <circle id=\"shadow\" fill=\"url(#shadowGrad)\" cx=\"0\" cy=\"0\" r=\"100\" />\n       <g id=\"bubble\">\n         <circle fill=\"black\" cx=\"0\" cy=\"0\" r=\"50\" />\n         <circle fill=\"#a6ce39\" cx=\"0\" cy=\"0\" r=\"33\" />\n         <path fill=\"black\" d=\"M 37,50 L 50,37 L 12,-1 L 22,-11 L 10,-24 L -24,10\n                               L -11,22 L -1,12 Z\" />\n         <circle cx=\"0\" cy=\"0\" r=\"100\" />\n       </g>\n     </defs>\n   <g>\n     <rect fill=\"url(#background)\" x=\"0\" y=\"0\" width=\"800\" height=\"600\" />\n   </g>\n\n   <g transform=\"translate(200,700)\">\n     <use xlink:href=\"#bubble\" fill=\"url(#blueBubble)\" />\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"1s\" dur=\"10s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(315,700)\">\n     <g transform=\"scale(0.5,0.5)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#redBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"3s\" dur=\"7s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(80,700)\">\n     <g transform=\"scale(0.65,0.65)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#greenBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"5s\" dur=\"9s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(255,700)\">\n     <g transform=\"scale(0.3,0.3)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#yellowBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"2s\" dur=\"6s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(565,700)\">\n     <g transform=\"scale(0.4,0.4)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#blueBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"4s\" dur=\"8s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(715,700)\">\n     <g transform=\"scale(0.6,0.6)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#redBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"1s\" dur=\"4s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(645,700)\">\n     <g transform=\"scale(0.375,0.375)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#greenBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"0s\" dur=\"11s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(555,700)\">\n     <g transform=\"scale(0.9,0.9)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#yellowBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"3s\" dur=\"7.5s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n\n   <g transform=\"translate(360,700)\">\n     <g transform=\"scale(0.5,0.5)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#blueBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"3s\" dur=\"6s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(215,700)\">\n     <g transform=\"scale(0.45,0.45)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#redBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"5.5s\" dur=\"7s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(420,700)\">\n     <g transform=\"scale(0.75,0.75)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#greenBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"1s\" dur=\"9s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n   <g transform=\"translate(815,700)\">\n     <g transform=\"scale(0.6,0.6)\">\n       <use xlink:href=\"#bubble\" fill=\"url(#yellowBubble)\" />\n     </g>\n     <animateTransform attributeName=\"transform\" type=\"translate\" additive=\"sum\"\n         values=\"0,0; 0,-800\" begin=\"2s\" dur=\"9.5s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n   </g>\n\n   <g transform=\"translate(225,375)\" >\n     <g transform=\"scale(1.0,0.5)\" >\n       <path d=\"M 0 0 L 350 0 L 450 450 L -100 450 z\"\n             fill=\"url(#surface)\" stroke=\"none\" />\n     </g>\n   </g>\n     <g transform=\"translate(200,0)\" >\n     <g transform=\"translate(200,490) scale(2.0,1.0) rotate(45)\" >\n       <rect fill=\"#a6ce39\" x=\"-69\" y=\"-69\" width=\"138\" height=\"138\" />\n       <circle fill=\"black\" cx=\"0\" cy=\"0\" r=\"50\" />\n       <circle fill=\"#a6ce39\" cx=\"0\" cy=\"0\" r=\"33\" />\n       <path fill=\"black\" d=\"M 37,50 L 50,37 L 12,-1 L 22,-11 L 10,-24 L -24,10\n                             L -11,22 L -1,12 Z\" />\n       <animateTransform attributeName=\"transform\"  type=\"rotate\" additive=\"sum\" values=\"0; 360\"\n                  begin=\"0s\" dur=\"10s\" fill=\"freeze\" repeatCount=\"indefinite\" />\n     </g>\n     <g transform=\"translate(200,375)\">\n       <use xlink:href=\"#shadow\" transform=\"translate(25,55) scale(1.0,0.5)\" />\n       <circle fill=\"url(#blueSphere)\" cx=\"0\" cy=\"0\" r=\"100\" />\n     </g>\n     <g transform=\"translate(315,440)\">\n       <g transform=\"scale(0.5,0.5)\">\n         <use xlink:href=\"#shadow\" transform=\"translate(25,55) scale(1.0,0.5)\" />\n         <circle fill=\"url(#redSphere)\" cx=\"0\" cy=\"0\" r=\"100\" />\n       </g>\n     </g>\n     <g transform=\"translate(80,475)\">\n       <g transform=\"scale(0.65,0.65)\">\n         <use xlink:href=\"#shadow\" transform=\"translate(25,55) scale(1.0,0.5)\" />\n         <circle fill=\"url(#greenSphere)\" cx=\"0\" cy=\"0\" r=\"100\" />\n       </g>\n     </g>\n     <g transform=\"translate(255,525)\">\n       <g transform=\"scale(0.3,0.3)\">\n         <use xlink:href=\"#shadow\" transform=\"translate(25,55) scale(1.0,0.5)\" />\n         <circle fill=\"url(#yellowSphere)\" cx=\"0\" cy=\"0\" r=\"100\" />\n       </g>\n     </g>\n   </g>\n</svg>"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.23",
+   "h": "@svg bubbles.svg from a link",
+   "b": "..\\Icons\\bubbles.svg\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.31",
+   "h": "Markdown example",
+   "b": "@language md\n\n# Title\n\nThis is **bold** and *italics*.\n\nControl-clicks follow url's in body text.<br>\nPlain clicks follow url's in the VR pane.\n\nHere is [Leo's home page](<http://leoeditor.com/).\n\n### Section\n\n- Bullet list\n- Another item\n- Third item.\n\nHere is some python code:\n\n    def spam():\n        pass\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405105451.1",
+   "h": "pyplot examples",
+   "b": "These will work only if numpy and pyplot are installed."
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180405093127.14",
+   "h": "@pyplot barchar_demo",
+   "b": "#!/usr/bin/env python\n# a bar plot with errorbars\nimport numpy as np\nimport matplotlib.pyplot as plt\n\nN = 5\nmenMeans = (20, 35, 30, 35, 27)\nmenStd = (2, 3, 4, 1, 2)\n\nind = np.arange(N)  # the x locations for the groups\nwidth = 0.35       # the width of the bars\n\nfig, ax = plt.subplots()\n\nrects1 = ax.bar(ind, menMeans, width, color='r', yerr=menStd)\n\nwomenMeans = (25, 32, 34, 20, 25)\nwomenStd = (3, 5, 2, 3, 3)\nrects2 = ax.bar(ind + width, womenMeans, width, color='y', yerr=womenStd)\n\n# add some text for labels, title and axes ticks\nax.set_ylabel('Scores')\nax.set_title('Scores by group and gender')\nax.set_xticks(ind + width)\nax.set_xticklabels(('G1', 'G2', 'G3', 'G4', 'G5'))\n\nax.legend((rects1[0], rects2[0]), ('Men', 'Women'))\n\n\ndef autolabel(rects):\n    # attach some text labels\n    for rect in rects:\n        height = rect.get_height()\n        ax.text(rect.get_x() + rect.get_width()/2., 1.05*height,\n                '%d' % int(height),\n                ha='center', va='bottom')\n\nautolabel(rects1)\nautolabel(rects2)\n\nplt.ion()\n    # sets interactive mode. Prevents this message:\n    # QCoreApplication::exec: The event loop is already running\nplt.show()"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180405093127.15",
+   "h": "@pyplot basic_example",
+   "b": "# http://matplotlib.org/1.5.1/examples/animation/basic_example.html\nif 0:\n    import numpy as np\n    import matplotlib.pyplot as plt\n    import matplotlib.animation as animation\n\n@others\n\nif 0:\n    plt.ion()\n    # sets interactive mode. Prevents this message:\n    # QCoreApplication::exec: The event loop is already running\nplt.show()"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180405093127.16",
+   "h": "Figure 1",
+   "b": "if 1:\n    \n    def update_line(num, data, line):\n        line.set_data(data[..., :num])\n        return line, # a tuple.\n\n    fig1 = plt.figure()\n    data = np.random.rand(2, 25)\n    l, = plt.plot([], [], 'r-')\n    plt.xlim(0, 1)\n    plt.ylim(0, 1)\n    plt.xlabel('x')\n    plt.title('test')\n    line_ani = animation.FuncAnimation(fig1, update_line, 25,\n        fargs=(data, l),\n        interval=50,\n        blit=True)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180405093127.17",
+   "h": "Figure 2",
+   "b": "fig2 = plt.figure()\nx = np.arange(-9, 10)\ny = np.arange(-9, 10).reshape(-1, 1)\nbase = np.hypot(x, y)\nims = []\nfor add in np.arange(15):\n    ims.append((plt.pcolor(x, y, base + add, norm=plt.Normalize(0, 30)),))\nanimation.ArtistAnimation(fig2, ims,\n    interval=50,\n    repeat_delay=3000,\n    blit=True)\n#im_ani.save('im.mp4', metadata={'artist':'Guido'})"
+  },
+  {
+   "level": 2,
+   "gnx": "ekr.20180405093127.18",
+   "h": "@pyplot matplotlib animate_decay",
+   "b": "# http://matplotlib.org/1.5.1/examples/animation/animate_decay.html\nimport numpy as np\nimport matplotlib.pyplot as plt\nimport matplotlib.animation as animation\n\n@others\n\n# global data.\nfig, ax = plt.subplots()\nline, = ax.plot([], [], lw=2)\nax.grid()\nxdata, ydata = [], []\nani = animation.FuncAnimation(\n    fig, run, data_gen, blit=False, interval=10,\n    repeat=False, init_func=init)\n\nplt.ion()\n    # sets interactive mode. Prevents this message:\n    # QCoreApplication::exec: The event loop is already running\nplt.show()"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180405093127.19",
+   "h": "data_gen",
+   "b": "def data_gen(t=0):\n    cnt = 0\n    while cnt < 1000:\n        cnt += 1\n        t += 0.1\n        yield t, np.sin(2*np.pi*t) * np.exp(-t/10.)\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180405093127.20",
+   "h": "init",
+   "b": "def init():\n    ax.set_ylim(-1.1, 1.1)\n    ax.set_xlim(0, 10)\n    del xdata[:]\n    del ydata[:]\n    line.set_data(xdata, ydata)\n    return line,\n"
+  },
+  {
+   "level": 3,
+   "gnx": "ekr.20180405093127.21",
+   "h": "run",
+   "b": "def run(data):\n    # update the data\n    t, y = data\n    xdata.append(t)\n    ydata.append(y)\n    xmin, xmax = ax.get_xlim()\n    if t >= xmax:\n        ax.set_xlim(xmin, 2*xmax)\n        ax.figure.canvas.draw()\n    line.set_data(xdata, ydata)\n    return line,"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.30",
+   "h": "reStructuredText docstring example",
+   "b": "@nowrap\n\n''' Creates a window for *live* rendering of rst, html, etc.  (Qt only).\n\nCommands\n========\n\nviewrendered.py creates the following (``Alt-X``) commands:\n\n``viewrendered``\n    opens a new window where the current body text is rendered as HTML\n    (if it starts with '<'), or otherwise reStructuredText.\n``viewrendered-big``\n    as above, but zoomed in, useful for presentations\n``viewrendered-html``\n    displays the html source generated from reStructuredText, useful for\n    debugging\n\n``viewrendered``\n   sets the process current directory (os.chdir()) to the path\n   to the node being rendered, to allow relative paths to work in\n``.. image::`` directives.\n\nreStructuredText errors and warnings may be shown.  For example, both::\n\n    Heading\n    -------\n\n    `This` is **really** a line of text.\n\nand::\n\n    <h1>Heading<h1>\n\n    <tt>This</tt> is <b>really</b> a line of text.\n\nwill look something like:\n\n**Heading**\n\n`This` is **really** a line of text.\n\nSettings\n========\n\n@string view-rendered-default-kind = rst\n----------------------------------------\n\nThe default kind of rendering.  One of (big,rst,html)\n    \n@bool view-rendered-auto-create = False\n---------------------------------------\n\nWhen True, the plugin will create a rendering pane automatically.\n\n'''\n"
+  },
+  {
+   "level": 1,
+   "gnx": "ekr.20180405093127.32",
+   "h": "reStructureText text example",
+   "b": "@language rest\n\n#####\nTitle\n#####\n\nThis is **bold** and *italics*.\n\nControl-clicks follow url's in body text.\n\nPlain clicks follow url's in the VR pane.\n\nMore info at `Leo's home page <http://leoeditor.com/>`_.\n\nSection\n=======\n\n- Bullet list\n- Another item\n- Third item.\n\nHere is some python code::\n\n    def spam():\n        '''This is a docstring.'''\n        pass"
+  }
+ ]
+}

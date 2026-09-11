@@ -1,18 +1,19 @@
 # leo-rs: leolib and its terminal front end.
 #
-# LEO_CORPUS points the corpus tests at a real .leo file. Without it they skip;
-# they are the only tests that need anything outside this repo.
+# The tests need nothing outside this repo: the conformance corpus is in
+# demo/. Checking its expected files against Python Leo needs a leo-editor
+# checkout, so `make corpus` asks for one:
+#
+#     make corpus LEO_EDITOR=~/projects/leo-editor
 
-CORPUS ?= $(HOME)/projects/personal/leo-editor/leo/core/LeoPyRef.leo
-CORPUS_DIR ?= $(HOME)/projects/personal/leo-editor/leo
-
-.PHONY: test test-corpus build release fmt lint check run dump clean
+.PHONY: test corpus build release fmt lint check run dump clean
 
 test:
 	cargo test --workspace
 
-test-corpus:
-	LEO_CORPUS=$(CORPUS) LEO_CORPUS_DIR=$(CORPUS_DIR) cargo test --workspace
+corpus:
+	@test -n "$(LEO_EDITOR)" || { echo "set LEO_EDITOR to a leo-editor checkout"; exit 1; }
+	python3 scripts/make_corpus.py --leo-editor $(LEO_EDITOR) --check
 
 build:
 	cargo build --workspace
@@ -27,7 +28,7 @@ lint:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
 
-check: lint test-corpus
+check: lint test
 
 run:
 	cargo run -p leotui -- $(FILE)

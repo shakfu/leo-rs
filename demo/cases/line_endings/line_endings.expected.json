@@ -1,0 +1,24 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file crlf.py",
+   "b": "@lineending crlf\n@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "f",
+   "b": "def f():\n    return 1\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.3",
+   "h": "@clean crlf.txt",
+   "b": "@lineending crlf\nline one\nline two\n"
+  }
+ ]
+}

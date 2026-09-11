@@ -1,0 +1,30 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file lookalike.py",
+   "b": "@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "f",
+   "b": "def f():\n    # @not a sentinel\n    s = \"\"\"\n#@+node:not-a-node\n# @others\n\"\"\"\n    return s\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.3",
+   "h": "@nosent lookalike_nosent.py",
+   "b": "def f():\n    # @not a sentinel\n    s = \"\"\"\n#@+node:not-a-node\n# @others\n\"\"\"\n    return s\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.4",
+   "h": "@clean lookalike_clean.py",
+   "b": "def f():\n    # @not a sentinel\n    s = \"\"\"\n#@+node:not-a-node\n# @others\n\"\"\"\n    return s\n"
+  }
+ ]
+}
