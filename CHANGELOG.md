@@ -4,11 +4,13 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## 0.2.1
 
-The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already contains every change below except the `quick-xml` upgrade and `make audit`.
+The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already contains every change below except the `quick-xml` and `ratatui` upgrades and `make audit`.
 
 ### Security
 
 - **`quick-xml` 0.37 to 0.42**, for [RUSTSEC-2026-0194](https://rustsec.org/advisories/RUSTSEC-2026-0194): the duplicate-attribute check ran in quadratic time, so a `.leo` file with many attributes on one element could stall the load. [RUSTSEC-2026-0195](https://rustsec.org/advisories/RUSTSEC-2026-0195) is fixed by the same version; it is in `NsReader`, which `leolib` does not use. The reader returns the same text as before: entity references are unescaped as 0.37 did, and `\r\n` in bodies and whitespace in attribute values are kept, not normalized.
+
+- **`ratatui` 0.29 to 0.30**, with `crossterm` 0.28 to 0.29 to match its backend. 0.29 pulled in `lru` 0.12, unsound under [RUSTSEC-2026-0253](https://rustsec.org/advisories/RUSTSEC-2026-0253) and [RUSTSEC-2026-0002](https://rustsec.org/advisories/RUSTSEC-2026-0002), and the unmaintained `paste`. No leotui code changed.
 
 ### Added
 
@@ -22,6 +24,8 @@ The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already co
 - An install section in the README.
 
 ### Changed
+
+- `rust-version` is 1.90, up from 1.75. The dependencies already needed it: `tree-sitter-language` 1.90, `ratatui` 0.30 1.88, `quick-xml` 0.42 1.86. One workspace value over per-crate values, though `leolib` alone needs only 1.86.
 
 - Both crates take `repository` and `readme` from `[workspace.package]`, so crates.io shows the README and links the repository. The README's screenshot link is absolute, as the image is in neither package.
 

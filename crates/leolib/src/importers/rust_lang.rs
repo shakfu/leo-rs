@@ -118,7 +118,7 @@ pub fn delete_comments_and_strings(lines: &[String]) -> Vec<String> {
                 } else {
                     skip_n!(j + 2);
                     let mut target = vec!['"'];
-                    target.extend(std::iter::repeat('#').take(j));
+                    target.extend(std::iter::repeat_n('#', j));
                     while i < s.len() {
                         if s[i..].starts_with(&target[..]) {
                             skip_n!(target.len());

@@ -19,8 +19,8 @@ leolib.workspace = true
 once_cell = "1"
 # Already in the build through leolib; `:s` compiles its pattern with it.
 regex = "1"
-crossterm = "0.28"
-ratatui = "0.29"
+crossterm = "0.29"
+ratatui = "0.30"
 
 # Colouring. Each grammar is a compiled parse table, about 1MB in the release
 # binary, so the list is the languages Leo outlines are actually written in
