@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 
+use quick_xml::escape::unescape;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -95,16 +96,19 @@ fn parse(contents: &str) -> Result<(Element, Element), LeoFileError> {
                     stack.last_mut().unwrap().children.push(el);
                 }
             }
+            // Raw text, not `xml_content()`: that normalizes `\r\n`, and the
+            // body must keep the bytes the file holds.
             Ok(Event::Text(e)) => {
-                let s = e
-                    .unescape()
-                    .map_err(|e| LeoFileError::Xml(e.to_string()))?
-                    .into_owned();
+                stack.last_mut().unwrap().text.push_str(&e);
+            }
+            // `&lt;`, `&#10;` and the like arrive apart from the text around them.
+            Ok(Event::GeneralRef(e)) => {
+                let r = format!("&{};", &*e);
+                let s = unescape(&r).map_err(|e| LeoFileError::Xml(e.to_string()))?;
                 stack.last_mut().unwrap().text.push_str(&s);
             }
             Ok(Event::CData(e)) => {
-                let s = String::from_utf8_lossy(e.as_ref()).into_owned();
-                stack.last_mut().unwrap().text.push_str(&s);
+                stack.last_mut().unwrap().text.push_str(&e);
             }
             _ => {}
         }
@@ -132,13 +136,13 @@ fn element_from_start<R: BufRead>(
     e: &quick_xml::events::BytesStart,
     _reader: &Reader<R>,
 ) -> Result<Element, LeoFileError> {
-    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+    let name = e.name().as_ref().to_owned();
     let mut attrs = Vec::new();
     for a in e.attributes() {
         let a = a.map_err(|e| LeoFileError::Xml(e.to_string()))?;
-        let key = String::from_utf8_lossy(a.key.as_ref()).into_owned();
-        let val = a
-            .unescape_value()
+        let key = a.key.as_ref().to_owned();
+        // Not `normalized_value()`: it turns newlines and tabs into spaces.
+        let val = unescape(&a.value)
             .map_err(|e| LeoFileError::Xml(e.to_string()))?
             .into_owned();
         attrs.push((key, val));
@@ -531,5 +535,35 @@ mod tests {
         o.set_headline(&child, "kept");
         let xml = outline_to_xml_string(&mut o);
         assert!(xml.contains("kept"));
+    }
+
+    fn read(t: &str) -> Result<Outline, LeoFileError> {
+        let xml = format!(
+            "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
+             <v t=\"a.1\"><vh>h &amp; &#x41;</vh></v></vnodes>\
+             <tnodes>{t}</tnodes></leo_file>\n"
+        );
+        let mut o = Outline::new("");
+        read_leo_string(&mut o, &xml)?;
+        Ok(o)
+    }
+
+    #[test]
+    fn references_and_line_ends_are_read_as_written() {
+        let o = read("<t tx=\"a.1\" str_k=\"x&#10;y\tz &lt;\">1 &lt; 2&#10;&#9;&gt;\r\n&apos;</t>")
+            .unwrap();
+        let p = &o.all_positions()[0];
+        assert_eq!(p.h(&o), "h & A");
+        assert_eq!(p.b(&o), "1 < 2\n\t>\r\n'");
+        let ua = &o.node(p.v).uas["str_k"];
+        assert_eq!(ua, &Ua::Text("x\ny\tz <".to_string()));
+    }
+
+    #[test]
+    fn an_unknown_entity_is_an_error() {
+        assert!(matches!(
+            read("<t tx=\"a.1\">&nope;</t>"),
+            Err(LeoFileError::Xml(_))
+        ));
     }
 }

@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/leolib", "crates/leotui"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
@@ -12,7 +12,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Keep in step with [workspace.package] version.
-leolib = { path = "crates/leolib", version = "0.2.0" }
+leolib = { path = "crates/leolib", version = "0.2.1" }
 
 [profile.release]
 lto = true

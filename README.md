@@ -253,4 +253,5 @@ make build      # cargo build --workspace
 make test       # cargo test --workspace
 make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Python Leo
 make lint       # rustfmt --check and clippy -D warnings
+make audit      # Cargo.lock against the RustSec advisories (cargo-audit)
 ```

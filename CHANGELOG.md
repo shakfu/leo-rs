@@ -2,9 +2,18 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
-## Unreleased
+## 0.2.1
+
+The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already contains every change below except the `quick-xml` upgrade and `make audit`.
+
+### Security
+
+- **`quick-xml` 0.37 to 0.42**, for [RUSTSEC-2026-0194](https://rustsec.org/advisories/RUSTSEC-2026-0194): the duplicate-attribute check ran in quadratic time, so a `.leo` file with many attributes on one element could stall the load. [RUSTSEC-2026-0195](https://rustsec.org/advisories/RUSTSEC-2026-0195) is fixed by the same version; it is in `NsReader`, which `leolib` does not use. The reader returns the same text as before: entity references are unescaped as 0.37 did, and `\r\n` in bodies and whitespace in attribute values are kept, not normalized.
 
 ### Added
+
+- **`make audit`** runs `cargo audit` against `Cargo.lock`. It is kept out of `make check`, as it fetches the advisory database.
+
 
 - **`Ctrl-w <` and `Ctrl-w >`**, vim's window-width keys, narrow and widen the pane that has focus. macOS takes `Ctrl-Left` and `Ctrl-Right` for Mission Control, so those never reached leotui there.
 

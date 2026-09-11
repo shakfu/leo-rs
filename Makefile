@@ -6,7 +6,7 @@
 #
 #     make corpus LEO_EDITOR=~/projects/leo-editor
 
-.PHONY: test corpus build release fmt lint check run dump clean
+.PHONY: test corpus build release fmt lint audit check run dump clean
 
 test:
 	cargo test --workspace
@@ -27,6 +27,11 @@ fmt:
 lint:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
+
+# Kept out of `check`: it fetches the RustSec advisory database.
+audit:
+	@cargo audit --version >/dev/null 2>&1 || { echo "cargo install cargo-audit --locked"; exit 1; }
+	cargo audit
 
 check: lint test
 
