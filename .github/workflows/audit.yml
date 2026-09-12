@@ -1,0 +1,25 @@
+# `cargo audit` against the committed Cargo.lock. Weekly, because the finding
+# is a new advisory rather than a change in this repository; `make check` does
+# not run it, as it fetches the RustSec database.
+name: audit
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - Cargo.lock
+      - .github/workflows/audit.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - run: make audit

@@ -20,6 +20,7 @@ pub mod rust_lang;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::error::{Error, Result};
 use crate::outline::Outline;
 use crate::position::Position;
 use crate::util;
@@ -472,9 +473,11 @@ pub fn import_string(
     parent: &Position,
     contents: &str,
     path: &str,
-) -> Result<ImportReport, String> {
-    let spec = spec_for(parent.h(o), path)
-        .ok_or_else(|| format!("no @auto importer for {}", util::short_file_name(path)))?;
+) -> Result<ImportReport> {
+    let spec = spec_for(parent.h(o), path).ok_or_else(|| Error::Import {
+        path: util::short_file_name(path),
+        detail: "no @auto importer for it".to_string(),
+    })?;
     let mut report = block::import(o, parent, contents, spec);
     report.round_trips = spec.line_importer.is_none();
     Ok(report)
@@ -486,7 +489,7 @@ pub fn import_string(
 /// sentinel-free tangle. The four line-oriented importers need their writer,
 /// because they consume the section lines they read; everything else is the
 /// fallback.
-pub fn write_string(o: &Outline, parent: &Position, path: &str) -> Result<String, String> {
+pub fn write_string(o: &Outline, parent: &Position, path: &str) -> Result<String> {
     match spec_for(parent.h(o), path).and_then(|spec| spec.line_importer) {
         Some(kind) => Ok(lines::write(o, parent, kind)),
         // Leo 5.6: allow undefined section references in all @auto files.

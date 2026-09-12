@@ -12,6 +12,7 @@ use quick_xml::escape::unescape;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use crate::error::{Error, Result};
 use crate::node::{status, Ua, VnodeId};
 use crate::outline::{Outline, HIDDEN_ROOT_GNX};
 use crate::position::Position;
@@ -27,34 +28,6 @@ const NATIVE_VNODE_ATTRIBUTES: &[&str] = &[
     "t",
     "tnodeList",
 ];
-
-#[derive(Debug)]
-pub enum LeoFileError {
-    Io(std::io::Error),
-    Xml(String),
-    NotALeoFile(String),
-    /// The file is not UTF-8. See [`read_leo_file`].
-    NotUtf8(String),
-}
-
-impl std::fmt::Display for LeoFileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LeoFileError::Io(e) => write!(f, "{e}"),
-            LeoFileError::Xml(s) => write!(f, "bad XML in .leo file: {s}"),
-            LeoFileError::NotALeoFile(s) => write!(f, "not a readable .leo file: {s}"),
-            LeoFileError::NotUtf8(s) => write!(f, "{s}"),
-        }
-    }
-}
-
-impl std::error::Error for LeoFileError {}
-
-impl From<std::io::Error> for LeoFileError {
-    fn from(e: std::io::Error) -> Self {
-        LeoFileError::Io(e)
-    }
-}
 
 /// One `<v>` or `<t>` element, as read from the file.
 #[derive(Debug, Default)]
@@ -75,7 +48,7 @@ impl Element {
 }
 
 /// Parse the `.leo` XML into the three sections the reader needs.
-fn parse(contents: &str) -> Result<(Element, Element), LeoFileError> {
+fn parse(contents: &str) -> Result<(Element, Element)> {
     let mut reader = Reader::from_reader(contents.as_bytes());
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
@@ -84,7 +57,11 @@ fn parse(contents: &str) -> Result<(Element, Element), LeoFileError> {
     let mut stack: Vec<Element> = vec![Element::default()];
     loop {
         match reader.read_event_into(&mut buf) {
-            Err(e) => return Err(LeoFileError::Xml(e.to_string())),
+            Err(e) => {
+                return Err(Error::BadXml {
+                    detail: e.to_string(),
+                })
+            }
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) => {
                 stack.push(element_from_start(&e, &reader)?);
@@ -107,7 +84,9 @@ fn parse(contents: &str) -> Result<(Element, Element), LeoFileError> {
             // `&lt;`, `&#10;` and the like arrive apart from the text around them.
             Ok(Event::GeneralRef(e)) => {
                 let r = format!("&{};", &*e);
-                let s = unescape(&r).map_err(|e| LeoFileError::Xml(e.to_string()))?;
+                let s = unescape(&r).map_err(|e| Error::BadXml {
+                    detail: e.to_string(),
+                })?;
                 stack.last_mut().unwrap().text.push_str(&s);
             }
             Ok(Event::CData(e)) => {
@@ -122,7 +101,9 @@ fn parse(contents: &str) -> Result<(Element, Element), LeoFileError> {
         .children
         .into_iter()
         .find(|e| e.name == "leo_file")
-        .ok_or_else(|| LeoFileError::NotALeoFile("no <leo_file> element".to_string()))?;
+        .ok_or_else(|| Error::NotALeoFile {
+            detail: "no <leo_file> element".to_string(),
+        })?;
     let mut vnodes = Element::default();
     let mut tnodes = Element::default();
     for child in leo_file.children {
@@ -138,15 +119,19 @@ fn parse(contents: &str) -> Result<(Element, Element), LeoFileError> {
 fn element_from_start<R: BufRead>(
     e: &quick_xml::events::BytesStart,
     _reader: &Reader<R>,
-) -> Result<Element, LeoFileError> {
+) -> Result<Element> {
     let name = e.name().as_ref().to_owned();
     let mut attrs = Vec::new();
     for a in e.attributes() {
-        let a = a.map_err(|e| LeoFileError::Xml(e.to_string()))?;
+        let a = a.map_err(|e| Error::BadXml {
+            detail: e.to_string(),
+        })?;
         let key = a.key.as_ref().to_owned();
         // Not `normalized_value()`: it turns newlines and tabs into spaces.
         let val = unescape(&a.value)
-            .map_err(|e| LeoFileError::Xml(e.to_string()))?
+            .map_err(|e| Error::BadXml {
+                detail: e.to_string(),
+            })?
             .into_owned();
         attrs.push((key, val));
     }
@@ -169,21 +154,16 @@ fn element_from_start<R: BufRead>(
 /// The prolog this writes always says utf-8, whatever the file read said, so
 /// the declaration and the bytes agree. Leo does the same: it writes with
 /// `leo_file_encoding`, a setting, not a property of the file it read.
-pub fn read_leo_file(path: &str) -> Result<Outline, LeoFileError> {
-    let bytes = std::fs::read(path)?;
-    let contents = String::from_utf8(bytes).map_err(|e| {
-        LeoFileError::NotUtf8(format!(
-            "{path}: not UTF-8 (byte {}); this port reads and writes UTF-8 only",
-            e.utf8_error().valid_up_to()
-        ))
-    })?;
+pub fn read_leo_file(path: &str) -> Result<Outline> {
+    let bytes = std::fs::read(path).map_err(|e| Error::io(path, e))?;
+    let contents = String::from_utf8(bytes).map_err(|e| Error::not_utf8(path, &e.utf8_error()))?;
     let mut o = Outline::new(path);
     read_leo_string(&mut o, &contents)?;
     Ok(o)
 }
 
 /// Rebuild `o` from the text of a `.leo` file.
-pub fn read_leo_string(o: &mut Outline, contents: &str) -> Result<(), LeoFileError> {
+pub fn read_leo_string(o: &mut Outline, contents: &str) -> Result<()> {
     // #1510: characters that are not valid in XML at all. Leo strips them
     // rather than failing, because files in the wild contain them.
     let cleaned: String = contents
@@ -461,28 +441,27 @@ fn put_unknown_attributes(o: &Outline, v: VnodeId) -> String {
 }
 
 /// Write the outline to `path` in `.leo` format. Returns the path written.
-pub fn write_leo_file(o: &mut Outline, path: &str) -> Result<String, LeoFileError> {
+pub fn write_leo_file(o: &mut Outline, path: &str) -> Result<String> {
     let path = if path.is_empty() {
         o.file_name.clone()
     } else {
         util::finalize(path)
     };
     if path.is_empty() {
-        return Err(LeoFileError::NotALeoFile(
-            "no file name: pass one, or set outline.file_name".to_string(),
-        ));
+        return Err(Error::NotALeoFile {
+            detail: "no file name: pass one, or set outline.file_name".to_string(),
+        });
     }
     // The prolog copies this, and the bytes below are UTF-8. A caller that
     // set it to anything else would write a file that lies about itself.
     if !crate::external::encoding_is_supported(&o.config.leo_file_encoding) {
-        return Err(LeoFileError::NotUtf8(format!(
-            "leo_file_encoding is {}; this port reads and writes UTF-8 only",
-            o.config.leo_file_encoding
-        )));
+        return Err(Error::UnsupportedEncoding {
+            encoding: o.config.leo_file_encoding.clone(),
+        });
     }
     o.file_name = path.clone();
     let s = outline_to_xml_string(o);
-    std::fs::write(&path, s.as_bytes())?;
+    std::fs::write(&path, s.as_bytes()).map_err(|e| Error::io(&path, e))?;
     o.changed = false;
     Ok(path)
 }
@@ -513,7 +492,7 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
 
         let err = read_leo_file(&path.to_string_lossy()).unwrap_err();
-        assert!(matches!(err, LeoFileError::NotUtf8(_)), "{err}");
+        assert!(matches!(err, Error::NotUtf8 { .. }), "{err}");
         assert!(err.to_string().contains("not UTF-8"), "{err}");
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
@@ -525,7 +504,7 @@ mod tests {
         let mut o = Outline::new_empty();
         o.config.leo_file_encoding = "latin-1".to_string();
         let err = write_leo_file(&mut o, &path).unwrap_err();
-        assert!(matches!(err, LeoFileError::NotUtf8(_)), "{err}");
+        assert!(matches!(err, Error::UnsupportedEncoding { .. }), "{err}");
         assert!(!std::path::Path::new(&path).exists());
     }
 
@@ -591,7 +570,7 @@ mod tests {
         assert!(xml.contains("kept"));
     }
 
-    fn read(t: &str) -> Result<Outline, LeoFileError> {
+    fn read(t: &str) -> Result<Outline> {
         let xml = format!(
             "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
              <v t=\"a.1\"><vh>h &amp; &#x41;</vh></v></vnodes>\
@@ -617,7 +596,7 @@ mod tests {
     fn an_unknown_entity_is_an_error() {
         assert!(matches!(
             read("<t tx=\"a.1\">&nope;</t>"),
-            Err(LeoFileError::Xml(_))
+            Err(Error::BadXml { .. })
         ));
     }
 }

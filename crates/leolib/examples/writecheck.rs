@@ -29,6 +29,6 @@ fn main() {
     }
     println!("unchanged: {}", result.unchanged);
     for e in &result.errors {
-        println!("  ERROR {}: {}", e.headline, e.message);
+        println!("  ERROR {}: {}", e.headline, e.error);
     }
 }

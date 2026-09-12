@@ -421,6 +421,25 @@ impl Outline {
         self.node(parent_v).children.get(p.child_index) == Some(&p.v)
     }
 
+    /// True if every step of p's ancestor chain links, not just the last one.
+    ///
+    /// [`position_exists`](Self::position_exists) checks where p sits under
+    /// its own parent. A walk of the outline reaches p only if the whole
+    /// stack above it is real too.
+    pub fn position_is_linked(&self, p: &Position) -> bool {
+        if !self.position_exists(p) {
+            return false;
+        }
+        let mut parent = self.hidden_root;
+        for (v, index) in &p.stack {
+            if self.node(parent).children.get(*index) != Some(v) {
+                return false;
+            }
+            parent = *v;
+        }
+        true
+    }
+
     /// An unlinked copy of p's tree with fresh gnxs. Paste links it back in.
     pub fn copy_tree(&mut self, p: &Position) -> VnodeId {
         self.copy_tree_helper(p.v)
@@ -696,26 +715,41 @@ impl Outline {
     }
 
     /// Walk from p in outline order until `pred` holds, wrapping once.
+    ///
+    /// One step at a time rather than over `all_positions()`: this runs per
+    /// keystroke, and materializing every position of an 11,000-node outline
+    /// to find the next marked node a row below is the whole cost of it. p is
+    /// checked last, so a lone match on p still answers.
     fn scan_from(
         &self,
         p: &Position,
         forward: bool,
         pred: impl Fn(&Outline, &Position) -> bool,
     ) -> Option<Position> {
-        let all = self.all_positions();
-        let start = all.iter().position(|q| q == p)?;
-        let n = all.len();
-        for step in 1..=n {
-            let i = if forward {
-                (start + step) % n
+        // A position whose ancestors no longer link is not on the walk, and
+        // looking for it would not terminate.
+        if !self.position_is_linked(p) {
+            return None;
+        }
+        let mut cur = p.clone();
+        loop {
+            let next = if forward {
+                cur.thread_next(self)
             } else {
-                (start + n - step % n) % n
+                cur.thread_back(self)
             };
-            if pred(self, &all[i]) {
-                return Some(all[i].clone());
+            cur = match next {
+                Some(q) => q,
+                None if forward => self.root_position()?,
+                None => self.last_position()?,
+            };
+            if pred(self, &cur) {
+                return Some(cur);
+            }
+            if cur == *p {
+                return None;
             }
         }
-        None
     }
 
     // --- Directive scanners ----------------------------------------------
@@ -1156,6 +1190,29 @@ mod tests {
         // Wraps back to the first.
         assert_eq!(o.next_marked(&second).unwrap().h(&o), "a1");
         assert_eq!(o.prev_marked(&first).unwrap().h(&o), "c");
+    }
+
+    #[test]
+    fn the_only_marked_node_is_its_own_next() {
+        // The walk ends where it started, and p is tested last, so a lone
+        // mark still answers rather than reporting there is none.
+        let (mut o, all) = tree();
+        o.node_mut(all[2].v).set_bit(node::status::MARKED);
+        assert_eq!(o.next_marked(&all[2]).unwrap().h(&o), "a2");
+        assert_eq!(o.prev_marked(&all[2]).unwrap().h(&o), "a2");
+    }
+
+    #[test]
+    fn a_position_that_no_longer_links_finds_nothing() {
+        // Walking from a position the outline cannot reach would not come
+        // back to it, so the walk never starts.
+        let (mut o, all) = tree();
+        o.node_mut(all[4].v).set_bit(node::status::MARKED);
+        let stale = all[1].clone();
+        o.delete_position(&all[1]);
+        assert!(!o.position_is_linked(&stale));
+        assert!(o.next_marked(&stale).is_none());
+        assert!(o.prev_marked(&stale).is_none());
     }
 
     #[test]

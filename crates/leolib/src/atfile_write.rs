@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 
+use crate::error::{Error, Result};
 use crate::node::VnodeId;
 use crate::outline::Outline;
 use crate::position::Position;
@@ -868,14 +869,14 @@ impl<'a> AtWrite<'a> {
 /// The text of p's external file, without writing anything.
 ///
 /// Sentinels are included only for the node kinds whose files carry them.
-pub fn tangle(o: &Outline, p: &Position) -> Result<String, String> {
+pub fn tangle(o: &Outline, p: &Position) -> Result<String> {
     let sentinels =
         p.is_at_file_node(o) || p.is_at_thin_file_node(o) || p.is_at_shadow_file_node(o);
     at_file_to_string(o, p, sentinels)
 }
 
 /// Write p's file to a string. `sentinels` is false for @clean and @nosent.
-pub fn at_file_to_string(o: &Outline, p: &Position, sentinels: bool) -> Result<String, String> {
+pub fn at_file_to_string(o: &Outline, p: &Position, sentinels: bool) -> Result<String> {
     write_to_string(o, p, sentinels, false)
 }
 
@@ -886,7 +887,7 @@ pub fn write_to_string(
     p: &Position,
     sentinels: bool,
     allow_undefined_refs: bool,
-) -> Result<String, String> {
+) -> Result<String> {
     let mut at = AtWrite::new(o, p);
     at.sentinels = sentinels;
     at.allow_undefined_refs = allow_undefined_refs;
@@ -894,7 +895,9 @@ pub fn write_to_string(
     if at.errors.is_empty() {
         Ok(contents)
     } else {
-        Err(at.errors.join("\n"))
+        Err(Error::Write {
+            detail: at.errors.join("\n"),
+        })
     }
 }
 
@@ -951,7 +954,8 @@ mod tests {
         let (mut o, root) = python_outline();
         o.set_body(&root, "<< missing >>\n");
         let err = tangle(&o, &root).unwrap_err();
-        assert!(err.contains("undefined section"), "{err}");
+        assert!(matches!(err, Error::Write { .. }), "{err}");
+        assert!(err.to_string().contains("undefined section"), "{err}");
     }
 
     #[test]

@@ -24,6 +24,8 @@ The `.leo` file itself is read the same way, in `leofile::read_leo_file`. Leo ha
 
 A rejected external file is reported in `ReadResult::errors` and never recorded as read, so `may_overwrite` refuses the write. Three further guards cover the paths that do not go through a read: `file_contents` checks the directive for `@nosent`, which is never read, and `@clean`, which is exempt from `may_overwrite`; `write_files` keeps a file that is not UTF-8 out of `WriteResult::refused`, since approving it would write UTF-8 over those bytes; and `replace_file` refuses to replace on-disk bytes it cannot decode. Leo, with its codecs, edits these files normally.
 
+**Every fallible function answers with `leolib::Error`.** Leo reports through `g.error` and `g.es_exception` and returns a flag, which a front end cannot act on: `at.readFileAtPosition` prints and carries on. The variants here are the distinctions a caller acts on -- `NotFound`, `NotUtf8`, `UnsupportedEncoding`, `RefusedOverwrite`, `Import`, `Write` -- not the places that raise them. `external::FileReport` carries one whole, so a front end can prompt for a refused overwrite and stay silent about an encoding no prompt can fix.
+
 **Writes are atomic.** `external::replace_file` writes a sibling temporary file and renames it over the target. Leo writes in place after a backup.
 
 ## The `@auto` importers

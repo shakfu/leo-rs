@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::error::{Error, Result};
 use crate::node::VnodeId;
 use crate::outline::Outline;
 use crate::position::Position;
@@ -145,25 +146,20 @@ pub fn scan_header(lines: &[String]) -> Option<Header> {
 }
 
 /// Parse `contents` into a tree of vnodes anchored at `root`.
-pub fn read_into_root(
-    o: &mut Outline,
-    contents: &str,
-    path: &str,
-    root: &Position,
-) -> Result<(), String> {
+pub fn read_into_root(o: &mut Outline, contents: &str, path: &str, root: &Position) -> Result<()> {
     let contents = contents.replace('\r', "");
     let lines = util::split_lines(&contents);
     let Some(header) = scan_header(&lines) else {
-        return Err(format!("not a valid external file: {path}"));
+        return Err(Error::NotAnExternalFile {
+            path: path.to_string(),
+        });
     };
     // The header names the encoding the file was written in. One this port
     // cannot write back leaves the file unread; see `external::read_file_to_string`.
     if !crate::external::encoding_is_supported(&header.encoding) {
-        return Err(format!(
-            "{path}: -encoding={} in the @+leo header is not supported; \
-             this port reads and writes UTF-8 only",
-            header.encoding
-        ));
+        return Err(Error::UnsupportedEncoding {
+            encoding: header.encoding.clone(),
+        });
     }
     // Detach the whole subtree first, so every link the scan makes is fresh.
     // Leo clears only the root's children, which leaves a re-read adding a

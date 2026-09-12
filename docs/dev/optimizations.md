@@ -39,3 +39,30 @@ Not done, and the saving is an estimate. `util::split_lines` returns a `Vec<Stri
 - **For reading `@file`.** Sentinels are comments, so a parse of the host language does not find them any faster. tree-sitter-python took 562ms to parse leo-editor's 293 Python files (6.9MB). A line scan of the same text took 6.5ms, and the whole load takes 99ms. The reader also works for any language with comment delimiters, where leotui has 12 grammars, and leolib has no tree-sitter dependency.
 
 - **For the `@auto` importers.** About 7 of the 23 importer languages have a grammar here. A tree-sitter importer would split files differently from Leo's, so an outline would differ from leo-editor's for the same file. `LeoPyRef.leo` has no `@auto` nodes, so importers are not in this load at all. The case for it is import quality, not speed.
+
+# Traversal costs
+
+Measured on 2026-09-12, release build, on `leo/core/LeoPyRef.leo` with its external files read: 11,598 positions.
+
+## Finding the next marked node
+
+`Outline::scan_from`, which `next_marked`, `prev_marked` and `next_clone` are written on, built `all_positions()` and searched it. That is 665us per call whatever the answer, and it runs per keystroke.
+
+It now steps with `thread_next`/`thread_back` and stops when it returns to where it started: 27ns when the match is a row away, 304us when there is no match at all and the walk covers the outline. A position whose ancestors no longer link is rejected first, since the walk would never come back to it.
+
+## Cost is quadratic in depth
+
+`Position` carries its ancestor stack, so `self_and_parents` allocates depth positions of depth entries each. `Outline::get_path` calls it per node, `full_path` calls `get_path`, and `find_files_to_read` calls `full_path` per node, as Leo's `findFilesToRead` does.
+
+A single chain of N nodes, opened and written through `examples/writecheck`:
+
+| depth | time |
+|-|-|
+| 500 | 0.06s |
+| 1,000 | 0.64s |
+| 2,000 | 7.05s |
+| 20,000 | over 300s, killed |
+
+Reading alone is milliseconds at 20,000, so the cost is in the path scanners, not the reader.
+
+Not done, and not a problem in practice: real outlines are shallow. `LeoPyRef.leo` is 11,581 nodes at depth 10 and loads in 99ms. Memoizing `get_path` per vnode for the length of one read is the smaller fix; it needs interior mutability or a `&mut self` scan. Skipping the path for nodes whose headline is not a directive is cheaper still, but it changes which clone subtrees are walked twice, and with them the contents of `ReadResult::ignored`.

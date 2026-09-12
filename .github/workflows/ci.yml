@@ -1,0 +1,42 @@
+# `make check` on every push, and the corpus against Python Leo.
+#
+# The corpus job pins a leo-editor commit: demo/'s expected files are Python
+# Leo's answers, so checking them needs the Python that produced them. Bump
+# LEO_EDITOR_REF when the corpus is regenerated against a newer Leo.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  LEO_EDITOR_REPO: shakfu/leo-editor
+  LEO_EDITOR_REF: b6e06060ad9c806919032c843350f1259b4fc7ed
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: make check
+        run: make check
+
+  corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out leo-editor
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.LEO_EDITOR_REPO }}
+          ref: ${{ env.LEO_EDITOR_REF }}
+          path: leo-editor
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: make corpus
+        run: make corpus LEO_EDITOR="$GITHUB_WORKSPACE/leo-editor"

@@ -4,6 +4,7 @@
 //! about display: "move this node left" is a fact about the tree. A view
 //! supplies the current position and decides what to select afterwards.
 
+use crate::error::Result;
 use crate::external::{ReadResult, WriteResult};
 use crate::node::{status, VnodeId};
 use crate::outline::Outline;
@@ -34,7 +35,7 @@ impl Document {
     ///
     /// Folds and marks come from the sidecar state file, since the `.leo`
     /// format does not carry them.
-    pub fn open(path: &str, read_external: bool) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open(path: &str, read_external: bool) -> Result<Self> {
         let (mut outline, report) = crate::open_outline_with_report(path, read_external)?;
         crate::state::load(&mut outline);
         let mut doc = Self::new(outline);
@@ -370,9 +371,8 @@ impl Document {
     // --- Files ------------------------------------------------------------
 
     /// Write the `.leo` file. External files are a separate command.
-    pub fn save(&mut self, path: &str) -> Result<String, String> {
-        let written =
-            leofile::write_leo_file(&mut self.outline, path).map_err(|e| e.to_string())?;
+    pub fn save(&mut self, path: &str) -> Result<String> {
+        let written = leofile::write_leo_file(&mut self.outline, path)?;
         crate::state::save(&self.outline);
         Ok(written)
     }
@@ -394,7 +394,7 @@ impl Document {
     /// The node goes after the outermost `@<file>` node at or above p, since
     /// `@<file>` nodes do not nest. Returns the node, and whether it still
     /// needs writing (see [`external::import_at_file`]).
-    pub fn import_at_file(&mut self, p: &Position, path: &str) -> Result<(Position, bool), String> {
+    pub fn import_at_file(&mut self, p: &Position, path: &str) -> Result<(Position, bool)> {
         let abs = util::finalize_join(&[path]);
         let o = &self.outline;
         let existing = o
@@ -402,7 +402,10 @@ impl Document {
             .into_iter()
             .find(|q| q.is_any_at_file_node(o) && o.full_path(q) == abs);
         if let Some(q) = existing {
-            return Err(format!("{abs} is already in the outline as {}", q.h(o)));
+            return Err(crate::Error::Import {
+                path: abs,
+                detail: format!("already in the outline as {}", q.h(o)),
+            });
         }
         let after = p
             .self_and_parents(o)

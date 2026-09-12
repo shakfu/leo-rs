@@ -10,14 +10,27 @@ use std::collections::HashSet;
 use crate::atclean;
 use crate::atfile_read;
 use crate::atfile_write;
+use crate::error::{Error, Result};
 use crate::langdata;
 use crate::outline::Outline;
 use crate::position::Position;
 use crate::util;
 
 /// What happened to one external file.
-#[derive(Debug, Clone)]
+///
+/// The error is kept whole rather than flattened to a string: a front end
+/// that wants to offer something -- a prompt for a refused overwrite, nothing
+/// at all for an encoding this port cannot write -- has to tell them apart.
+#[derive(Debug)]
 pub struct FileReport {
+    pub headline: String,
+    pub path: String,
+    pub error: Error,
+}
+
+/// Something a front end should say about a file that read successfully.
+#[derive(Debug, Clone)]
+pub struct FileNote {
     pub headline: String,
     pub path: String,
     pub message: String,
@@ -30,7 +43,7 @@ pub struct ReadResult {
     pub ignored: Vec<String>,
     /// Files the reader normalized. Writing the node back changes the file on
     /// disk even if nobody edits it, so a front end should say so.
-    pub warnings: Vec<FileReport>,
+    pub warnings: Vec<FileNote>,
 }
 
 #[derive(Debug, Default)]
@@ -107,15 +120,15 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
         match read_file_at_position(o, &p) {
             Ok(true) => result.read += 1,
             Ok(false) => {}
-            Err(message) => result.errors.push(FileReport {
+            Err(error) => result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
                 path: o.full_path(&p),
-                message,
+                error,
             }),
         }
         let gnx = p.gnx(o).to_string();
         if let Some(message) = o.import_warnings.remove(&gnx) {
-            result.warnings.push(FileReport {
+            result.warnings.push(FileNote {
                 headline: p.h(o).to_string(),
                 path: o.full_path(&p),
                 message,
@@ -129,13 +142,11 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
 }
 
 /// Read the `@<file>` node at p, dispatching on its kind.
-pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool, String> {
+pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool> {
     // An `@encoding` directive the writer cannot honour: see `read_file_to_string`.
     let encoding = o.get_encoding(p);
     if !encoding_is_supported(&encoding) {
-        return Err(format!(
-            "@encoding {encoding} is not supported; this port reads and writes UTF-8 only"
-        ));
+        return Err(Error::UnsupportedEncoding { encoding });
     }
     if p.is_at_auto_node(o) {
         return read_one_at_auto_node(o, p);
@@ -150,12 +161,14 @@ pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool, Stri
         return read_at_file_node(o, p);
     }
     if p.is_at_shadow_file_node(o) {
-        return Err("@shadow is deprecated and not supported".to_string());
+        return Err(Error::Unsupported {
+            detail: "@shadow is deprecated and not supported".to_string(),
+        });
     }
     Ok(false)
 }
 
-fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
+fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
     atfile_read::read_into_root(o, &contents, &path, p)?;
@@ -171,7 +184,7 @@ fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
 /// importer that dropped or reordered a line would therefore overwrite the
 /// user's source. On failure the whole file goes into the node's body, which
 /// is what Leo does when an importer raises.
-fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
+fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
     let report = crate::importers::import_string(o, p, &contents, &path)?;
@@ -199,13 +212,15 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
             o.node_mut(p.v).b = contents;
             // The body is the whole file, so writing it reproduces the file.
             o.remember_read_path(p, &path);
-            let detail = written.err().unwrap_or_else(|| "text differs".to_string());
-            return Err(format!(
-                "the {} importer did not reproduce {}: {detail}. \
-                 The whole file is in the node's body.",
-                report.language,
-                util::short_file_name(&path)
-            ));
+            let detail = written.map_or_else(|e| e.to_string(), |_| "text differs".to_string());
+            return Err(Error::Import {
+                path: util::short_file_name(&path),
+                detail: format!(
+                    "the {} importer did not reproduce it: {detail}. \
+                     The whole file is in the node's body.",
+                    report.language
+                ),
+            });
         }
     }
     o.remember_read_path(p, &path);
@@ -214,7 +229,7 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
 }
 
 /// Read an `@edit` file: one node, no structure, prefixed by a language directive.
-fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
+fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
     let kids = p.children(o);
@@ -247,14 +262,12 @@ fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool, String> 
 /// Any other file is split by its `@auto` importer, or kept whole in p's body
 /// when the tree would not write the file back unchanged. Returns true when
 /// the node still has to be written to give the file its sentinels.
-pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool, String> {
+pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
     let name = util::short_file_name(&path);
-    let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    let bytes = std::fs::read(&path).map_err(|e| Error::io(&path, e))?;
     // Sentinels written into a binary file would corrupt it.
-    let Ok(contents) = std::str::from_utf8(&bytes) else {
-        return Err(format!("{name} is not UTF-8 text"));
-    };
+    let contents = std::str::from_utf8(&bytes).map_err(|e| Error::not_utf8(&path, &e))?;
     if contents.contains("@+leo-ver=") {
         read_at_file_node(o, p)?;
         return Ok(false);
@@ -271,9 +284,10 @@ pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool, String> {
         o.detach_subtree(p.v);
         o.node_mut(p.v).b = text.clone();
         if !(mark_first_lines(o, p, &text) && reproduces(o, p, &text)) {
-            return Err(format!(
-                "{name} would not be written back unchanged as @file"
-            ));
+            return Err(Error::Import {
+                path: name,
+                detail: "would not be written back unchanged as @file".to_string(),
+            });
         }
     }
     o.set_dirty(p);
@@ -337,17 +351,12 @@ pub fn language_for_extension(ext: &str) -> String {
 /// two encodings spell differently. Refusing leaves the file alone instead --
 /// the node keeps what the `.leo` file said, and [`Outline::may_overwrite`]
 /// refuses the write, since nothing recorded the file as read.
-pub fn read_file_to_string(path: &str) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+pub fn read_file_to_string(path: &str) -> Result<String> {
+    let bytes = std::fs::read(path).map_err(|e| Error::io(path, e))?;
     let bytes = bytes
         .strip_prefix(&[0xEF, 0xBB, 0xBF][..])
         .unwrap_or(&bytes);
-    String::from_utf8(bytes.to_vec()).map_err(|e| {
-        format!(
-            "{path}: not UTF-8 (byte {}); this port reads and writes UTF-8 only",
-            e.utf8_error().valid_up_to()
-        )
-    })
+    String::from_utf8(bytes.to_vec()).map_err(|e| Error::not_utf8(path, &e.utf8_error()))
 }
 
 /// True if `encoding` names UTF-8, or a subset of it.
@@ -422,13 +431,14 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
             let decodable = file_on_disk_is_utf8(&path);
             result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
-                path,
-                message: if decodable {
-                    "refusing to overwrite a file this outline has not read".to_string()
-                } else {
-                    "the file on disk is not UTF-8; this port reads and writes UTF-8 only"
-                        .to_string()
+                error: match decodable {
+                    true => Error::RefusedOverwrite { path: path.clone() },
+                    false => Error::NotUtf8 {
+                        path: path.clone(),
+                        byte: first_non_utf8_byte(&path),
+                    },
                 },
+                path,
             });
             if decodable {
                 result.refused.push(p);
@@ -436,10 +446,10 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
             continue;
         }
         match file_contents(o, &p) {
-            Err(message) => result.errors.push(FileReport {
+            Err(error) => result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
                 path,
-                message,
+                error,
             }),
             Ok((contents, newline, encoding)) => {
                 let contents = if newline != "\n" {
@@ -466,10 +476,10 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
                         o.remember_read_path(&p, &path);
                         o.clear_dirty_in_tree(&p);
                     }
-                    Err(message) => result.errors.push(FileReport {
+                    Err(error) => result.errors.push(FileReport {
                         headline: p.h(o).to_string(),
                         path,
-                        message,
+                        error,
                     }),
                 }
             }
@@ -483,9 +493,11 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
 /// The dispatch on node kind is the point: `@edit` is a body with its
 /// directives removed, `@asis` is the tree's text verbatim, and only the rest
 /// go through the sentinel writer.
-pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, String), String> {
+pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, String)> {
     if p.is_at_shadow_file_node(o) {
-        return Err("@shadow is deprecated and not supported".to_string());
+        return Err(Error::Unsupported {
+            detail: "@shadow is deprecated and not supported".to_string(),
+        });
     }
     let at = atfile_write::AtWrite::new(o, p);
     let newline = at.output_newline.clone();
@@ -494,9 +506,7 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     // exempt from `may_overwrite`, so the write needs its own guard: writing
     // UTF-8 over a file the directive says is not UTF-8 changes its bytes.
     if !encoding_is_supported(&encoding) {
-        return Err(format!(
-            "@encoding {encoding} is not supported; this port reads and writes UTF-8 only"
-        ));
+        return Err(Error::UnsupportedEncoding { encoding });
     }
     if p.is_at_auto_node(o) {
         let path = o.full_path(p);
@@ -546,10 +556,17 @@ fn write_at_edit(o: &Outline, p: &Position) -> String {
 
 /// True if the file is UTF-8, or is not there at all.
 fn file_on_disk_is_utf8(path: &str) -> bool {
-    match std::fs::read(path) {
-        Ok(bytes) => std::str::from_utf8(&bytes).is_ok(),
-        Err(_) => true,
-    }
+    first_non_utf8_byte_opt(path).is_none()
+}
+
+/// Where the file stops being UTF-8, for the report. 0 if it never does.
+fn first_non_utf8_byte(path: &str) -> usize {
+    first_non_utf8_byte_opt(path).unwrap_or(0)
+}
+
+fn first_non_utf8_byte_opt(path: &str) -> Option<usize> {
+    let bytes = std::fs::read(path).ok()?;
+    std::str::from_utf8(&bytes).err().map(|e| e.valid_up_to())
 }
 
 fn file_mtime(path: &str) -> Option<u64> {
@@ -570,7 +587,7 @@ fn file_mtime(path: &str) -> Option<u64> {
 ///
 /// The temporary file takes the original's permissions before the rename,
 /// or rewriting an executable script would leave it without `+x`.
-pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool, String> {
+pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool> {
     if let Ok(old) = std::fs::read(path) {
         if old == contents.as_bytes() {
             return Ok(false);
@@ -579,24 +596,21 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool,
         // `@clean` and `@nosent` are exempt from `may_overwrite`, and a front
         // end can approve an overwrite. Replacing bytes this port cannot
         // decode with UTF-8 loses every character the two spell differently.
-        if std::str::from_utf8(&old).is_err() {
-            return Err(format!(
-                "{path}: the file on disk is not UTF-8; this port reads and writes UTF-8 only"
-            ));
+        if let Err(e) = std::str::from_utf8(&old) {
+            return Err(Error::not_utf8(path, &e));
         }
     }
     let dir = util::os_path_dirname(path);
     if !dir.is_empty() && !std::path::Path::new(&dir).exists() {
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{dir}: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
     }
     let tmp = format!("{path}.leo-rs-tmp");
-    std::fs::write(&tmp, contents.as_bytes()).map_err(|e| format!("{tmp}: {e}"))?;
-    let finish = || -> Result<(), String> {
+    std::fs::write(&tmp, contents.as_bytes()).map_err(|e| Error::io(&tmp, e))?;
+    let finish = || -> Result<()> {
         if let Ok(meta) = std::fs::metadata(path) {
-            std::fs::set_permissions(&tmp, meta.permissions())
-                .map_err(|e| format!("{tmp}: {e}"))?;
+            std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| Error::io(&tmp, e))?;
         }
-        std::fs::rename(&tmp, path).map_err(|e| format!("{path}: {e}"))
+        std::fs::rename(&tmp, path).map_err(|e| Error::io(path, e))
     };
     if let Err(e) = finish() {
         let _ = std::fs::remove_file(&tmp);

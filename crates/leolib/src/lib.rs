@@ -15,6 +15,7 @@ pub mod atclean;
 pub mod atfile_read;
 pub mod atfile_write;
 pub mod document;
+pub mod error;
 pub mod external;
 pub mod gnx;
 pub mod importers;
@@ -29,6 +30,7 @@ pub mod undo;
 pub mod util;
 
 pub use document::Document;
+pub use error::{Error, Result};
 pub use node::{Vnode, VnodeId};
 pub use outline::{Config, Outline};
 pub use position::Position;
@@ -40,10 +42,7 @@ pub use undo::{Bead, Undoer};
 /// `@clean` and friends live in the external files. Reading them is on by
 /// default because otherwise this returns a shell. Pass `read_external =
 /// false` when only the shape of the outline is wanted -- it is much faster.
-pub fn open_outline(
-    path: &str,
-    read_external: bool,
-) -> Result<Outline, Box<dyn std::error::Error>> {
+pub fn open_outline(path: &str, read_external: bool) -> Result<Outline> {
     open_outline_with_report(path, read_external).map(|(o, _)| o)
 }
 
@@ -55,13 +54,10 @@ pub fn open_outline(
 pub fn open_outline_with_report(
     path: &str,
     read_external: bool,
-) -> Result<(Outline, external::ReadResult), Box<dyn std::error::Error>> {
+) -> Result<(Outline, external::ReadResult)> {
     let path = util::finalize(path);
     if !std::path::Path::new(&path).exists() {
-        return Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            path,
-        )));
+        return Err(Error::NotFound { path });
     }
     let mut o = leofile::read_leo_file(&path)?;
     let report = match read_external {
@@ -84,8 +80,8 @@ pub fn new_outline(file_name: &str) -> Outline {
 /// This writes the `.leo` file only. External `@file` nodes are a separate
 /// concern; conflating them here would make a headless save touch the user's
 /// source tree as a side effect.
-pub fn save(o: &mut Outline, path: &str) -> Result<String, Box<dyn std::error::Error>> {
-    Ok(leofile::write_leo_file(o, path)?)
+pub fn save(o: &mut Outline, path: &str) -> Result<String> {
+    leofile::write_leo_file(o, path)
 }
 
 /// Return the outline in `.leo` (XML) format.
@@ -104,6 +100,6 @@ pub fn write_external_files(o: &mut Outline, dirty_only: bool) -> external::Writ
 }
 
 /// The text of p's external file, without writing anything.
-pub fn tangle(o: &Outline, p: &Position) -> Result<String, String> {
+pub fn tangle(o: &Outline, p: &Position) -> Result<String> {
     atfile_write::tangle(o, p)
 }

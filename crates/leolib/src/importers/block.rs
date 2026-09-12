@@ -976,7 +976,7 @@ b = 2
         let root = o.root_position().unwrap();
         o.set_headline(&root, "@auto x.unknown");
         let err = import_string(&mut o, &root, "text\n", "x.unknown").unwrap_err();
-        assert!(err.contains("no @auto importer"), "{err}");
+        assert!(matches!(err, crate::Error::Import { .. }), "{err}");
     }
 
     #[test]

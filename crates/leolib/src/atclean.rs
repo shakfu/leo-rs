@@ -15,6 +15,7 @@ use regex::Regex;
 
 use crate::atfile_read;
 use crate::atfile_write;
+use crate::error::{Error, Result};
 use crate::outline::Outline;
 use crate::position::Position;
 use crate::seqmatch::{SequenceMatcher, Tag};
@@ -100,10 +101,10 @@ fn parse_leo_sentinel(s: &str) -> (String, String) {
 }
 
 /// Update the `@clean` node at `root` from its file on disk.
-pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool, String> {
+pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool> {
     let path = o.full_path(root);
     if !std::path::Path::new(&path).exists() {
-        return Err(format!("not found: {path}"));
+        return Err(Error::NotFound { path });
     }
     // #4385: do nothing if the file has not changed since we last saw it.
     let new_mod_time = std::fs::metadata(&path)
@@ -137,8 +138,7 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool, 
         return Ok(false);
     }
     let text = new_private_lines.concat();
-    atfile_read::read_into_root(o, &text, &path, root)
-        .map_err(|e| format!("could not rebuild the tree for {path}: {e}"))?;
+    atfile_read::read_into_root(o, &text, &path, root)?;
     Ok(true)
 }
 

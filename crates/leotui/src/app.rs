@@ -167,8 +167,8 @@ pub struct App {
 pub fn read_report_message(report: &leolib::external::ReadResult) -> Option<String> {
     let first = report.errors.first()?;
     Some(match report.errors.len() {
-        1 => format!("external file not read: {}", first.message),
-        n => format!("{n} external files not read; first: {}", first.message),
+        1 => format!("external file not read: {}", first.error),
+        n => format!("{n} external files not read; first: {}", first.error),
     })
 }
 
@@ -528,7 +528,7 @@ impl App {
             parts.push(format!(
                 "{} failed: {}",
                 result.errors.len(),
-                result.errors[0].message
+                result.errors[0].error
             ));
         }
         self.message = parts.join(", ");
@@ -2095,7 +2095,9 @@ mod tests {
         let failure = |path: &str| FileReport {
             headline: format!("@file {path}"),
             path: path.to_string(),
-            message: format!("not a valid external file: {path}"),
+            error: leolib::Error::NotAnExternalFile {
+                path: path.to_string(),
+            },
         };
         assert_eq!(read_report_message(&ReadResult::default()), None);
         let one = ReadResult {

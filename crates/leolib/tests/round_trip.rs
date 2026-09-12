@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use leolib::{external, Document, Outline};
+use leolib::{external, Document, Error, Outline};
 
 /// A digest of the whole outline: gnx, headline and body of every node.
 fn digest(o: &Outline) -> Vec<(String, String, String)> {
@@ -155,7 +155,10 @@ fn writing_refuses_to_overwrite_a_file_the_outline_never_read() {
     let result = external::write_external_files(&mut o, false);
     assert!(result.written.is_empty());
     assert_eq!(result.errors.len(), 1);
-    assert!(result.errors[0].message.contains("has not read"));
+    assert!(matches!(
+        result.errors[0].error,
+        Error::RefusedOverwrite { .. }
+    ));
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
         "work that is only on disk\n"
@@ -250,7 +253,7 @@ fn an_at_auto_node_whose_importer_loses_text_keeps_the_whole_file() {
 
     let result = external::read_external_files(&mut o);
     assert_eq!(result.errors.len(), 1);
-    assert!(result.errors[0].message.contains("did not reproduce"));
+    assert!(matches!(result.errors[0].error, Error::Import { .. }));
     assert_eq!(o.root_position().unwrap().b(&o), text);
 }
 
@@ -283,9 +286,7 @@ fn a_file_that_failed_to_read_is_reported_and_never_overwritten() {
     let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
     assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
     assert!(
-        report.errors[0]
-            .message
-            .contains("not a valid external file"),
+        matches!(report.errors[0].error, Error::NotAnExternalFile { .. }),
         "{:?}",
         report.errors
     );
@@ -299,7 +300,7 @@ fn a_file_that_failed_to_read_is_reported_and_never_overwritten() {
         result
             .errors
             .iter()
-            .any(|e| e.message.contains("refusing to overwrite")),
+            .any(|e| matches!(e.error, Error::RefusedOverwrite { .. })),
         "{:?}",
         result.errors
     );
@@ -436,14 +437,15 @@ fn import_at_file_refusals_leave_no_trace_and_an_import_undoes() {
     let count = doc.outline.all_positions().len();
 
     let err = doc.import_at_file(&root, &binary).unwrap_err();
-    assert!(err.contains("not UTF-8"), "{err}");
+    assert!(matches!(err, Error::NotUtf8 { .. }), "{err}");
     assert_eq!(doc.outline.all_positions().len(), count);
     assert!(!doc.outline.changed);
     assert!(!doc.undoer.can_undo());
 
     let (p, _) = doc.import_at_file(&root, &plain).unwrap();
     let err = doc.import_at_file(&root, &plain).unwrap_err();
-    assert!(err.contains("already in the outline"), "{err}");
+    assert!(matches!(err, Error::Import { .. }), "{err}");
+    assert!(err.to_string().contains("already in the outline"), "{err}");
 
     // Importing from inside an @file tree puts the new node beside it.
     let child = doc.outline.insert_as_last_child(&p);
@@ -467,7 +469,7 @@ fn an_auto_file_with_no_importer_is_reported_and_never_overwritten() {
         report
             .errors
             .iter()
-            .any(|e| e.message.contains("no @auto importer")),
+            .any(|e| matches!(e.error, Error::Import { .. })),
         "{:?}",
         report.errors
     );
@@ -549,11 +551,11 @@ fn a_file_that_is_not_utf8_is_reported_unread_and_never_rewritten() {
     let report = external::read_external_files(&mut o);
     assert_eq!(report.read, 0);
     assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
-    assert!(report.errors[0].message.contains("not UTF-8"));
+    assert!(matches!(report.errors[0].error, Error::NotUtf8 { .. }));
 
     let result = external::write_external_files(&mut o, false);
     assert!(result.written.is_empty(), "{:?}", result.written);
-    assert!(result.errors[0].message.contains("not UTF-8"));
+    assert!(matches!(result.errors[0].error, Error::NotUtf8 { .. }));
     // Not offered for approval: approving it would write UTF-8 over the file.
     assert!(result.refused.is_empty());
     assert_eq!(fs::read(&file).unwrap(), disk);
@@ -576,6 +578,9 @@ fn an_at_nosent_node_declaring_another_encoding_is_not_written() {
     let result = external::write_external_files(&mut o, false);
     assert!(result.written.is_empty(), "{:?}", result.written);
     assert_eq!(result.errors.len(), 1);
-    assert!(result.errors[0].message.contains("@encoding latin-1"));
+    let Error::UnsupportedEncoding { encoding } = &result.errors[0].error else {
+        panic!("{:?}", result.errors[0].error);
+    };
+    assert_eq!(encoding, "latin-1");
     assert_eq!(fs::read_to_string(&file).unwrap(), "old = 1\n");
 }
