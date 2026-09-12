@@ -1,0 +1,20 @@
+{
+ "read_external": true,
+ "unread": [
+  "@auto empty.py"
+ ],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto empty.py",
+   "b": ""
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@auto one.py",
+   "b": "x = 1\n@language python\n@tabwidth -4\n"
+  }
+ ]
+}

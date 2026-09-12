@@ -89,7 +89,6 @@ pub struct AtWrite<'a> {
     section_delim2: String,
     encoding: String,
     pub output_newline: String,
-    pub explicit_line_ending: bool,
     /// Nodes already written, so `@others` does not write one twice.
     visited: HashSet<VnodeId>,
     pub errors: Vec<String>,
@@ -141,7 +140,6 @@ impl<'a> AtWrite<'a> {
             section_delim2: ">>".to_string(),
             encoding: o.get_encoding(root),
             output_newline,
-            explicit_line_ending,
             visited: HashSet::new(),
             errors: Vec::new(),
         };
@@ -854,15 +852,6 @@ impl<'a> AtWrite<'a> {
     /// An @edit file is its node's body with these lines removed.
     pub fn is_directive_line(&self, line: &str) -> bool {
         self.directive_kind4(line, 0) != Kind::None
-    }
-
-    /// Nodes in root's tree that no sentinel claimed: an orphan is a lost node.
-    pub fn orphans(&self, root: &Position) -> Vec<String> {
-        root.self_and_subtree(self.o)
-            .iter()
-            .filter(|p| !self.visited.contains(&p.v))
-            .map(|p| p.h(self.o).to_string())
-            .collect()
     }
 }
 

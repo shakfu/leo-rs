@@ -12,6 +12,18 @@ Unmeasured: whether go, python and javascript earn the same treatment. A builtin
 
 Renaming `@auto` to `@file` and writing with `w` moves a leading shebang to line 3, below the sentinel header. `:import-at-file` adds `@first`; the rename does not. Add `@first` by hand first.
 
+## Nothing frees a vnode, and the undo stack has no cap
+
+Deleting a node leaves its vnode in the arena, which is what makes undoing a delete a relink rather than a rebuild (`undo.rs`). The stack itself is unbounded. Neither matters for an editing session of ordinary length; together they mean a long-lived process editing a large outline has no steady state. A cap has to drop beads and their vnodes together, or undo starts relinking nodes that are no longer there.
+
+## `app.rs` is 2,500 lines
+
+59 methods on one `App` impl. Every other file in the workspace is under 1,100, including the parts of the TUI already split out (`editor/`, `minibuffer`, `search`, `substitute`, `theme`). The dispatcher, the mode handlers, the minibuffer glue and the command-line runner are separable, and the method names already say which is which. Worth doing when something else takes you into that file, not on its own.
+
+## Say which leo-editor the `@auto` figures came from
+
+The README's status table gives 998 of 1,000 `@auto` trees identical, without naming the checkout it was measured against; `docs/dev/comparison.md` pins its own figures to `3acfadd8d0`. A run at `b6e06060ad` no longer reproduces the table, because Leo's reader now raises on a file with nothing in it -- `demo/cases/empty_auto` pins that one. Re-measure, and name the commit.
+
 ---
 
 `docs/dev/tui-design.md` section 19.8 holds what else is not done in the body colouring.

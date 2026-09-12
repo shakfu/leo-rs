@@ -11,9 +11,9 @@
 //! }
 //! ```
 
-pub mod atclean;
+pub(crate) mod atclean;
 pub mod atfile_read;
-pub mod atfile_write;
+pub(crate) mod atfile_write;
 pub mod document;
 pub mod error;
 pub mod external;
@@ -24,7 +24,7 @@ pub mod leofile;
 pub mod node;
 pub mod outline;
 pub mod position;
-pub mod seqmatch;
+pub(crate) mod seqmatch;
 pub mod state;
 pub mod undo;
 pub mod util;

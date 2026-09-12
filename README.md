@@ -55,6 +55,14 @@ leolib::write_external_files(&mut outline, true);
 
 `leolib::Document` adds an undo history and the structural commands (insert, delete, clone, copy, paste, move, mark) on top of an `Outline`.
 
+Every fallible call answers with `leolib::Error`, whose variants are the distinctions a caller acts on: `NotFound`, `NotUtf8`, `UnsupportedEncoding`, `RefusedOverwrite`, `Import`, `Write`. Reading and writing the external files reports per file rather than failing the outline, in `ReadResult` and `WriteResult`.
+
+### A `.leo` file names the paths it writes
+
+An `@<file>` headline and an `@path` directive can name any path: an absolute one, or one that climbs out with `..`, with `~` expanded. Writing creates the directories it needs. So opening an outline and writing its external files can write anywhere the user can write, and a `.leo` file from someone else is as dangerous as a Makefile from someone else. Leo behaves the same way.
+
+`Outline::may_overwrite` narrows this but does not close it: it refuses to overwrite a file the outline has not read, which leaves creating new files unguarded. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
+
 ## Using leotui
 
 ```sh
@@ -242,13 +250,7 @@ Two things an import can change even when it succeeds, both as in Leo: leading t
 
 - **Unknown attributes are opaque.** Leo pickles them. They round-trip as the hex strings the file spells, and are written back unchanged.
 
-- **Encodings other than UTF-8.** Leo decodes an external file with the encoding
-  its `@encoding` directive or `@+leo` header names, and encodes it with the same
-  one on the way out. This port reads and writes UTF-8 only, so a file in any
-  other encoding is reported unread and is never written: writing it would
-  replace its bytes with UTF-8 and lose every character the two encodings spell
-  differently. The node keeps whatever the `.leo` file said. A `.leo` file that
-  is not UTF-8 is refused outright, since there is no part of it to keep.
+- **Encodings other than UTF-8.** Leo decodes an external file with the encoding its `@encoding` directive or `@+leo` header names, and encodes it with the same one on the way out. This port reads and writes UTF-8 only, so a file in any other encoding is reported unread and is never written: writing it would replace its bytes with UTF-8 and lose every character the two encodings spell differently. The node keeps whatever the `.leo` file said. A `.leo` file that is not UTF-8 is refused outright, since there is no part of it to keep.
 
 - **`.leojs`** (the JSON outline format).
 
@@ -261,5 +263,8 @@ make build      # cargo build --workspace
 make test       # cargo test --workspace
 make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Python Leo
 make lint       # rustfmt --check and clippy -D warnings
+make check      # lint, then test
 make audit      # Cargo.lock against the RustSec advisories (cargo-audit)
 ```
+
+`.github/workflows/ci.yml` runs `make check` and `make corpus` on every push; the corpus job pins the leo-editor commit its expected files came from. `make audit` is not in CI, as it fetches the RustSec database.

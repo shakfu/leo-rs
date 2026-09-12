@@ -19,10 +19,17 @@ use serde_json::Value;
 
 /// Cases this port reads differently from Python Leo, and why. A case listed
 /// here that no longer differs fails the test, so the list cannot go stale.
-const KNOWN: &[(&str, &str)] = &[(
-    "cases/encoding/encoding.leo",
-    "a file that is not UTF-8 is left unread; Leo decodes it with its own encoding",
-)];
+const KNOWN: &[(&str, &str)] = &[
+    (
+        "cases/empty_auto/empty_auto.leo",
+        "Leo's at.readFileAtPosition raises AttributeError on an @auto file with \
+         nothing in it and reports it unread; this port imports the empty tree",
+    ),
+    (
+        "cases/encoding/encoding.leo",
+        "a file that is not UTF-8 is left unread; Leo decodes it with its own encoding",
+    ),
+];
 
 /// External files this port does not tangle to the bytes on disk, and why.
 /// As with KNOWN, an entry that no longer differs fails the test.

@@ -434,6 +434,8 @@ fn put_unknown_attributes(o: &Outline, v: VnodeId) -> String {
         }
         match val {
             Ua::Text(s) => out.push_str(&format!(" {key}={}", util::xml_quoteattr(s))),
+            // Not escaped, as Leo's `fc.pickle` does not escape it either: the
+            // value is a hexlified pickle, so there is nothing in it to escape.
             Ua::Opaque(s) => out.push_str(&format!(" {key}=\"{s}\"")),
         }
     }

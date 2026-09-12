@@ -116,6 +116,17 @@ def build_auto_languages(o, add):
     return sources
 
 
+def build_empty_auto(o, add):
+    """An @auto file with nothing in it, beside one with something.
+
+    Leo's `at.readFileAtPosition` raises `AttributeError` on the empty one and
+    reports it unread; this port imports it as the empty tree it is.
+    """
+    add('@auto empty.py', '')
+    add('@auto one.py', '')
+    return {'empty.py': '', 'one.py': 'x = 1\n'}
+
+
 def build_unreadable(o, add):
     """An @file whose file has no sentinels, which both report unread, and one that reads."""
     add('@file plain.py', '@others\n')
@@ -131,6 +142,7 @@ BUILDERS = {
     'sentinel_lookalikes': build_sentinel_lookalikes,
     'auto_languages': build_auto_languages,
     'unreadable': build_unreadable,
+    'empty_auto': build_empty_auto,
 }
 
 

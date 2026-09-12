@@ -18,11 +18,17 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **`Outline::scan_from` walks instead of listing.** `next_marked`, `prev_marked` and `next_clone` built `all_positions()` and searched it: 665us per call on an 11,598-position outline, per keystroke. Stepping with `thread_next`/`thread_back` and stopping where it started takes 27ns when the match is a row away, 304us when there is none at all. `Outline::position_is_linked` is new, and rejects a position the walk could not come back to.
 
+- **`atclean`, `atfile_write` and `seqmatch` are `pub(crate)`.** Nothing outside the crate used them, and every item in them was semver-visible. `AtWrite::orphans` and `AtWrite.explicit_line_ending` went with the narrowing: both were dead, and only their visibility had hidden it. `langdata` stays public: it is Leo's tables, and a front end has reason to read them.
+
 - `corpus.rs`'s tangle test skips files the read reported unread. They have nothing in the outline to reproduce.
 
 ### Added
 
-- **GitHub Actions.** `make check` on push and pull request, `make corpus` against a pinned leo-editor commit, and `cargo audit` weekly. Nothing ran the checks the Makefile had.
+- **Corpus case `empty_auto`**: an `@auto` file with nothing in it. Leo's `at.readFileAtPosition` raises `AttributeError: 'NoneType' object has no attribute 'v'` on it (`leoAtFile.py:642`, leo-editor `b6e06060ad`) and reports the file unread; this port imports the empty tree. Found by comparing the two importers over 591 files, where it was the only difference in all 12 cases that differed. `KNOWN` in `corpus.rs` records it, so the test says so when Leo is fixed.
+
+- **What a `.leo` file can write**, in the README. An `@<file>` headline or `@path` can name any absolute path, climb out with `..`, or expand `~`, and writing creates directories. `may_overwrite` refuses to clobber an unread file but does not stop a new one, so an outline from someone else is as dangerous as a Makefile from someone else. Leo is the same.
+
+- **GitHub Actions.** `make check` on push and pull request, and `make corpus` against a pinned leo-editor commit. Nothing ran the checks the Makefile had. `make audit` stays local: it fetches the RustSec database, and is run by hand.
 
 - **Corpus case `unreadable`**: an `@file` whose file has no sentinels, which both implementations report unread, beside an `@clean` file that reads. No case had an unread file, so nothing checked that Python and Rust agree on which files are unread.
 
