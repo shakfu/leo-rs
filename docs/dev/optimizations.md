@@ -65,4 +65,16 @@ A single chain of N nodes, opened and written through `examples/writecheck`:
 
 Reading alone is milliseconds at 20,000, so the cost is in the path scanners, not the reader.
 
-Not done, and not a problem in practice: real outlines are shallow. `LeoPyRef.leo` is 11,581 nodes at depth 10 and loads in 99ms. Memoizing `get_path` per vnode for the length of one read is the smaller fix; it needs interior mutability or a `&mut self` scan. Skipping the path for nodes whose headline is not a directive is cheaper still, but it changes which clone subtrees are walked twice, and with them the contents of `ReadResult::ignored`.
+Not done, and measured before being rejected on 2026-09-12.
+
+`find_files_to_read` is 0.92ms of LeoPyRef's 61ms load, release build: it skips whole `@file` subtrees with `node_after_tree`, so most nodes are never visited. On a chain, where nothing can be skipped, it is the whole load: 65ms at depth 500, 620ms at 1,000, 6.97s at 2,000.
+
+Carrying the `@path` components down the walk in a stack, truncated by level, and joining them per node costs 0.90ms, 3.5ms and 16.7ms at those depths -- up to 417x -- and cannot beat 0.92ms on a real outline. A first cut that walked `all_positions()` instead of skipping subtrees measured 6.5ms there, seven times slower than what it replaced.
+
+Two traps, if it is ever built:
+
+- **Do not memoize `get_path` per vnode.** A clone's path depends on the parent chain it was reached through, which is why `find_files_to_read` keys its dedupe on `(gnx, full_path)` and not on the gnx alone. One vnode under `@path alpha` and `@path beta` answers `/tmp/alpha/f.py` and `/tmp/beta/f.py`.
+
+- **Carry the components, not the joined path.** `finalize` translates `\` to `/` last, so finalizing early splits one component in two and a later `..` then pops the wrong one: `@path x\y` above `@path ..` gives `/base` from `get_path` and `/base/x` from a fold over joined strings. Accumulating the component list and calling `finalize_join` once is the same call `get_path` makes, so it cannot differ. Both agree on all 12,295 nodes of the corpus and LeoPyRef; only the synthetic backslash case separates them.
+
+Skipping the path for nodes whose headline is not a directive is cheaper still. `find_files_to_write` already does that. On the read side it changes which clone subtrees are walked twice, and with them the contents of `ReadResult::ignored`.
