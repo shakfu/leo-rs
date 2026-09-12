@@ -242,6 +242,14 @@ Two things an import can change even when it succeeds, both as in Leo: leading t
 
 - **Unknown attributes are opaque.** Leo pickles them. They round-trip as the hex strings the file spells, and are written back unchanged.
 
+- **Encodings other than UTF-8.** Leo decodes an external file with the encoding
+  its `@encoding` directive or `@+leo` header names, and encodes it with the same
+  one on the way out. This port reads and writes UTF-8 only, so a file in any
+  other encoding is reported unread and is never written: writing it would
+  replace its bytes with UTF-8 and lose every character the two encodings spell
+  differently. The node keeps whatever the `.leo` file said. A `.leo` file that
+  is not UTF-8 is refused outright, since there is no part of it to keep.
+
 - **`.leojs`** (the JSON outline format).
 
 See `docs/dev/porting-notes.md` for the places this port deliberately differs from Leo, and why.

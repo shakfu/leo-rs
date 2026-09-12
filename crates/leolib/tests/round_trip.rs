@@ -529,3 +529,53 @@ fn replacing_a_file_keeps_its_mode() {
         .collect();
     assert_eq!(names, vec!["run.sh"], "a temporary file was left behind");
 }
+
+#[test]
+fn a_file_that_is_not_utf8_is_reported_unread_and_never_rewritten() {
+    // Leo decodes with the file's own encoding and encodes with it again.
+    // This port writes UTF-8 only, so it leaves such a file alone: writing it
+    // would replace the latin-1 bytes with UTF-8 and lose every character the
+    // two spell differently.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("latin.py");
+    let disk = b"# @+leo-ver=5-thin-encoding=latin-1,.\n# @+node:x.1: * @file latin.py\nname = 'caf\xe9'\n# @-leo\n";
+    fs::write(&file, disk).unwrap();
+
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file latin.py");
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+
+    let report = external::read_external_files(&mut o);
+    assert_eq!(report.read, 0);
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(report.errors[0].message.contains("not UTF-8"));
+
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert!(result.errors[0].message.contains("not UTF-8"));
+    // Not offered for approval: approving it would write UTF-8 over the file.
+    assert!(result.refused.is_empty());
+    assert_eq!(fs::read(&file).unwrap(), disk);
+}
+
+#[test]
+fn an_at_nosent_node_declaring_another_encoding_is_not_written() {
+    // @nosent is never read and is exempt from `may_overwrite`, so the write
+    // needs its own guard. @clean takes the same path.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nosent.py");
+    fs::write(&file, "old = 1\n").unwrap();
+
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@nosent nosent.py");
+    o.set_body(&root, "@encoding latin-1\nname = 'caf\u{e9}'\n");
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(result.errors.len(), 1);
+    assert!(result.errors[0].message.contains("@encoding latin-1"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "old = 1\n");
+}

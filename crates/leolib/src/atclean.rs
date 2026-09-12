@@ -137,9 +137,8 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool, 
         return Ok(false);
     }
     let text = new_private_lines.concat();
-    if !atfile_read::read_into_root(o, &text, &path, root) {
-        return Err(format!("could not rebuild the tree for {path}"));
-    }
+    atfile_read::read_into_root(o, &text, &path, root)
+        .map_err(|e| format!("could not rebuild the tree for {path}: {e}"))?;
     Ok(true)
 }
 
@@ -326,12 +325,9 @@ mod tests {
         let old = util::split_lines(&private);
         let marker = Marker::from_file_lines(&old);
         let new_private = propagate_changed_lines(&public, &old, &marker);
-        assert!(atfile_read::read_into_root(
-            &mut o,
-            &new_private.concat(),
-            "test.py",
-            &root
-        ));
+        assert!(
+            atfile_read::read_into_root(&mut o, &new_private.concat(), "test.py", &root).is_ok()
+        );
         let kids = root.children(&o);
         assert_eq!(kids[0].b(&o), "a = 111\n");
         assert_eq!(kids[1].b(&o), "b = 2\n");
@@ -350,12 +346,9 @@ mod tests {
         let old = util::split_lines(&private);
         let marker = Marker::from_file_lines(&old);
         let new_private = propagate_changed_lines(&public, &old, &marker);
-        assert!(atfile_read::read_into_root(
-            &mut o,
-            &new_private.concat(),
-            "test.py",
-            &root
-        ));
+        assert!(
+            atfile_read::read_into_root(&mut o, &new_private.concat(), "test.py", &root).is_ok()
+        );
         let kids = root.children(&o);
         assert_eq!(kids[0].b(&o), "a = 1\na2 = 1\n");
         assert_eq!(kids[1].b(&o), "b = 2\n");

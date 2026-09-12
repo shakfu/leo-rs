@@ -18,6 +18,12 @@ Where this port departs from `leo/leolib`, and why. Everything not listed here f
 
 **Refusing to overwrite is unconditional.** `at.promptForDangerousWrite` asks the user; with no view there is nobody to ask, so `Outline::may_overwrite` refuses. `@nosent` and `@clean` are exempt, as in `at.shouldPromptForDangerousWrite`. A path counts as read only once its node holds the file, so a failed read leaves the file refused rather than exposed. `open_outline_with_report` returns those failures; `open_outline` drops them.
 
+**UTF-8 only, and a file in any other encoding is left alone.** Leo carries an encoding per file: `at.readFileToUnicode` takes it from the BOM or the `-encoding=` field of the `@+leo` header (`leoAtFile.py`), directives supply it elsewhere, and `g.writeFile` encodes with it again. Python gets those codecs from its standard library; Rust's gives only UTF-8, and adding a decoder means a dependency. So `external::read_file_to_string` rejects bytes that are not UTF-8, and `external::encoding_is_supported` rejects an `@encoding` or header field that names anything else.
+
+The `.leo` file itself is read the same way, in `leofile::read_leo_file`. Leo hands those bytes to an XML parser, which honours the encoding in the prolog; here a file that is not UTF-8 fails to open with `LeoFileError::NotUtf8` rather than opening with U+FFFD in its headlines. The prolog this writes always says utf-8, so the declaration and the bytes agree. That matches Leo, which writes with `leo_file_encoding`, a setting, not a property of the file it read (`leoFileCommands.py:1925`).
+
+A rejected external file is reported in `ReadResult::errors` and never recorded as read, so `may_overwrite` refuses the write. Three further guards cover the paths that do not go through a read: `file_contents` checks the directive for `@nosent`, which is never read, and `@clean`, which is exempt from `may_overwrite`; `write_files` keeps a file that is not UTF-8 out of `WriteResult::refused`, since approving it would write UTF-8 over those bytes; and `replace_file` refuses to replace on-disk bytes it cannot decode. Leo, with its codecs, edits these files normally.
+
 **Writes are atomic.** `external::replace_file` writes a sibling temporary file and renames it over the target. Leo writes in place after a backup.
 
 ## The `@auto` importers

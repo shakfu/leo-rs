@@ -21,15 +21,12 @@ use serde_json::Value;
 /// here that no longer differs fails the test, so the list cannot go stale.
 const KNOWN: &[(&str, &str)] = &[(
     "cases/encoding/encoding.leo",
-    "external files are decoded as UTF-8 whatever their @encoding",
+    "a file that is not UTF-8 is left unread; Leo decodes it with its own encoding",
 )];
 
 /// External files this port does not tangle to the bytes on disk, and why.
 /// As with KNOWN, an entry that no longer differs fails the test.
-const KNOWN_TANGLE: &[(&str, &str)] = &[(
-    "cases/encoding/encoding.leo: @file latin.py",
-    "read as UTF-8, so the text it writes back is not the file's",
-)];
+const KNOWN_TANGLE: &[(&str, &str)] = &[];
 
 fn demo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demo")
@@ -258,7 +255,8 @@ fn every_importable_file_survives_an_at_file_import() {
         }
         let text = external::file_contents(o, &p).map(|(t, _, _)| t);
         let q = o.insert_after(&p);
-        let same = text.is_ok_and(|t| leolib::atfile_read::read_into_root(o, &t, &path, &q))
+        let same = text
+            .is_ok_and(|t| leolib::atfile_read::read_into_root(o, &t, &path, &q).is_ok())
             && tree(o, &p) == tree(o, &q);
         if !same {
             differ.push(format!("{path}: read back differently"));

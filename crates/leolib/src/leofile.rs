@@ -33,6 +33,8 @@ pub enum LeoFileError {
     Io(std::io::Error),
     Xml(String),
     NotALeoFile(String),
+    /// The file is not UTF-8. See [`read_leo_file`].
+    NotUtf8(String),
 }
 
 impl std::fmt::Display for LeoFileError {
@@ -41,6 +43,7 @@ impl std::fmt::Display for LeoFileError {
             LeoFileError::Io(e) => write!(f, "{e}"),
             LeoFileError::Xml(s) => write!(f, "bad XML in .leo file: {s}"),
             LeoFileError::NotALeoFile(s) => write!(f, "not a readable .leo file: {s}"),
+            LeoFileError::NotUtf8(s) => write!(f, "{s}"),
         }
     }
 }
@@ -156,9 +159,24 @@ fn element_from_start<R: BufRead>(
 }
 
 /// Read a `.leo` file into a fresh outline. External files are not read here.
+///
+/// A file that is not UTF-8 is refused rather than decoded with replacements,
+/// for the reason [`crate::external::read_file_to_string`] gives: the writer
+/// emits UTF-8, so a lossy read followed by a save would replace the outline's
+/// own text. Leo hands the bytes to an XML parser, which honours the encoding
+/// in the prolog; matching that needs a decoder this crate does not have.
+///
+/// The prolog this writes always says utf-8, whatever the file read said, so
+/// the declaration and the bytes agree. Leo does the same: it writes with
+/// `leo_file_encoding`, a setting, not a property of the file it read.
 pub fn read_leo_file(path: &str) -> Result<Outline, LeoFileError> {
     let bytes = std::fs::read(path)?;
-    let contents = String::from_utf8_lossy(&bytes).into_owned();
+    let contents = String::from_utf8(bytes).map_err(|e| {
+        LeoFileError::NotUtf8(format!(
+            "{path}: not UTF-8 (byte {}); this port reads and writes UTF-8 only",
+            e.utf8_error().valid_up_to()
+        ))
+    })?;
     let mut o = Outline::new(path);
     read_leo_string(&mut o, &contents)?;
     Ok(o)
@@ -454,6 +472,14 @@ pub fn write_leo_file(o: &mut Outline, path: &str) -> Result<String, LeoFileErro
             "no file name: pass one, or set outline.file_name".to_string(),
         ));
     }
+    // The prolog copies this, and the bytes below are UTF-8. A caller that
+    // set it to anything else would write a file that lies about itself.
+    if !crate::external::encoding_is_supported(&o.config.leo_file_encoding) {
+        return Err(LeoFileError::NotUtf8(format!(
+            "leo_file_encoding is {}; this port reads and writes UTF-8 only",
+            o.config.leo_file_encoding
+        )));
+    }
     o.file_name = path.clone();
     let s = outline_to_xml_string(o);
     std::fs::write(&path, s.as_bytes())?;
@@ -473,6 +499,34 @@ mod tests {
         let mut o2 = Outline::new("");
         read_leo_string(&mut o2, &xml).unwrap();
         o2
+    }
+
+    #[test]
+    fn a_leo_file_that_is_not_utf8_is_refused() {
+        // Lossily decoding it would put U+FFFD in a headline, and the next
+        // save would write that back over the outline's own text.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latin.leo");
+        let mut bytes = b"<?xml version=\"1.0\" encoding=\"latin-1\"?>\n<leo_file>\n<leo_header file_format=\"2\"/>\n<vnodes>\n<v t=\"a.1\"><vh>caf".to_vec();
+        bytes.push(0xe9);
+        bytes.extend_from_slice(b"</vh></v>\n</vnodes>\n<tnodes>\n</tnodes>\n</leo_file>\n");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let err = read_leo_file(&path.to_string_lossy()).unwrap_err();
+        assert!(matches!(err, LeoFileError::NotUtf8(_)), "{err}");
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn writing_refuses_an_encoding_the_writer_cannot_produce() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.leo").to_string_lossy().to_string();
+        let mut o = Outline::new_empty();
+        o.config.leo_file_encoding = "latin-1".to_string();
+        let err = write_leo_file(&mut o, &path).unwrap_err();
+        assert!(matches!(err, LeoFileError::NotUtf8(_)), "{err}");
+        assert!(!std::path::Path::new(&path).exists());
     }
 
     #[test]

@@ -130,6 +130,13 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
 
 /// Read the `@<file>` node at p, dispatching on its kind.
 pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool, String> {
+    // An `@encoding` directive the writer cannot honour: see `read_file_to_string`.
+    let encoding = o.get_encoding(p);
+    if !encoding_is_supported(&encoding) {
+        return Err(format!(
+            "@encoding {encoding} is not supported; this port reads and writes UTF-8 only"
+        ));
+    }
     if p.is_at_auto_node(o) {
         return read_one_at_auto_node(o, p);
     }
@@ -151,9 +158,7 @@ pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool, Stri
 fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool, String> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
-    if !atfile_read::read_into_root(o, &contents, &path, p) {
-        return Err(format!("not a valid external file: {path}"));
-    }
+    atfile_read::read_into_root(o, &contents, &path, p)?;
     o.remember_read_path(p, &path);
     o.clear_dirty_in_tree(p);
     Ok(true)
@@ -320,16 +325,43 @@ pub fn language_for_extension(ext: &str) -> String {
     }
 }
 
-/// Read a file as text. Bytes that are not UTF-8 are replaced, never rejected.
+/// Read a file as text, refusing anything that is not UTF-8.
 ///
 /// A leading byte-order mark is removed, as `g.stripBOM` does: it is an
 /// encoding marker, not text, and leaving it in would put it in a node's body.
+///
+/// Leo decodes with the file's own encoding and encodes with it again on the
+/// way out. This port writes UTF-8 and nothing else, so decoding anything else
+/// would put text in the outline that the writer cannot put back: the write
+/// would replace the file's own bytes with UTF-8 and lose every character the
+/// two encodings spell differently. Refusing leaves the file alone instead --
+/// the node keeps what the `.leo` file said, and [`Outline::may_overwrite`]
+/// refuses the write, since nothing recorded the file as read.
 pub fn read_file_to_string(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let bytes = bytes
         .strip_prefix(&[0xEF, 0xBB, 0xBF][..])
         .unwrap_or(&bytes);
-    Ok(String::from_utf8_lossy(bytes).into_owned())
+    String::from_utf8(bytes.to_vec()).map_err(|e| {
+        format!(
+            "{path}: not UTF-8 (byte {}); this port reads and writes UTF-8 only",
+            e.utf8_error().valid_up_to()
+        )
+    })
+}
+
+/// True if `encoding` names UTF-8, or a subset of it.
+///
+/// The spellings are Python's aliases for utf-8, which is what an `@encoding`
+/// directive and the `-encoding=` field of an `@+leo` header are written in.
+/// ASCII is accepted because an ASCII file is the same bytes either way. An
+/// empty name means nothing declared one, which leaves the default, utf-8.
+pub fn encoding_is_supported(encoding: &str) -> bool {
+    let e = encoding.trim().to_lowercase().replace('_', "-");
+    matches!(
+        e.as_str(),
+        "" | "utf-8" | "utf8" | "utf" | "u8" | "cp65001" | "ascii" | "us-ascii" | "646"
+    )
 }
 
 // --- Writing ------------------------------------------------------------
@@ -385,12 +417,22 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
     for p in files {
         let path = o.full_path(&p);
         if !o.may_overwrite(&p) {
+            // A file that is not UTF-8 is not offered for approval: approving
+            // it would write UTF-8 over bytes this port could not read.
+            let decodable = file_on_disk_is_utf8(&path);
             result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
                 path,
-                message: "refusing to overwrite a file this outline has not read".to_string(),
+                message: if decodable {
+                    "refusing to overwrite a file this outline has not read".to_string()
+                } else {
+                    "the file on disk is not UTF-8; this port reads and writes UTF-8 only"
+                        .to_string()
+                },
             });
-            result.refused.push(p);
+            if decodable {
+                result.refused.push(p);
+            }
             continue;
         }
         match file_contents(o, &p) {
@@ -448,6 +490,14 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     let at = atfile_write::AtWrite::new(o, p);
     let newline = at.output_newline.clone();
     let encoding = at.encoding().to_string();
+    // The read refuses these, but `@nosent` is never read and `@clean` is
+    // exempt from `may_overwrite`, so the write needs its own guard: writing
+    // UTF-8 over a file the directive says is not UTF-8 changes its bytes.
+    if !encoding_is_supported(&encoding) {
+        return Err(format!(
+            "@encoding {encoding} is not supported; this port reads and writes UTF-8 only"
+        ));
+    }
     if p.is_at_auto_node(o) {
         let path = o.full_path(p);
         return Ok((
@@ -494,6 +544,14 @@ fn write_at_edit(o: &Outline, p: &Position) -> String {
         .concat()
 }
 
+/// True if the file is UTF-8, or is not there at all.
+fn file_on_disk_is_utf8(path: &str) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => std::str::from_utf8(&bytes).is_ok(),
+        Err(_) => true,
+    }
+}
+
 fn file_mtime(path: &str) -> Option<u64> {
     std::fs::metadata(path)
         .ok()?
@@ -517,6 +575,15 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool,
         if old == contents.as_bytes() {
             return Ok(false);
         }
+        // The last guard, for the paths that reach here without a read:
+        // `@clean` and `@nosent` are exempt from `may_overwrite`, and a front
+        // end can approve an overwrite. Replacing bytes this port cannot
+        // decode with UTF-8 loses every character the two spell differently.
+        if std::str::from_utf8(&old).is_err() {
+            return Err(format!(
+                "{path}: the file on disk is not UTF-8; this port reads and writes UTF-8 only"
+            ));
+        }
     }
     let dir = util::os_path_dirname(path);
     if !dir.is_empty() && !std::path::Path::new(&dir).exists() {
@@ -536,4 +603,19 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool,
         return Err(e);
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_utf8_aliases_are_supported_and_nothing_else_is() {
+        for name in ["", "utf-8", "UTF-8", "utf8", "u8", "ascii", "us-ascii"] {
+            assert!(encoding_is_supported(name), "{name}");
+        }
+        for name in ["latin-1", "iso-8859-1", "cp1252", "utf-16", "shift-jis"] {
+            assert!(!encoding_is_supported(name), "{name}");
+        }
+    }
 }

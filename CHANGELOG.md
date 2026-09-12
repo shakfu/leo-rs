@@ -4,6 +4,14 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## Unreleased
 
+### Fixed
+
+- **An external file that is not UTF-8 is no longer rewritten as UTF-8.** The reader decoded every external file with `from_utf8_lossy`, so a latin-1 file arrived with U+FFFD in place of each high byte, and the writer ignored the encoding it was handed. Editing any node in such a tree and saving replaced the user's source -- `name = 'caf\xe9'` became `name = 'caf\xef\xbf\xbd'` -- and neither the read nor the write reported anything.
+
+  Leo decodes with the file's own encoding and encodes with it again, from Python's `codecs`. Rust's standard library gives only UTF-8, so matching Leo means a new dependency; refusing does not. Such a file is now reported in `ReadResult::errors` and left unread, which leaves `may_overwrite` to refuse the write. `@nosent` is never read and `@clean` is exempt from `may_overwrite`, so the write side checks too, and the file is kept out of `WriteResult::refused`: approving that prompt would write UTF-8 over the bytes. `atfile_read::read_into_root` returns `Result<(), String>` rather than `bool`, to carry the reason.
+
+- **A `.leo` file that is not UTF-8 no longer opens.** It was decoded the same lossy way, where the loss is worse: the replacement lands in a headline or a body, and the next save writes it over the outline itself. Opening now fails with the new `LeoFileError::NotUtf8`. Leo reads those bytes with an XML parser, which honours the encoding in the prolog. `write_leo_file` refuses a `leo_file_encoding` it cannot produce, since the prolog copies that name while the bytes are always UTF-8.
+
 ### Added
 
 - **Corpus case `unreadable`**: an `@file` whose file has no sentinels, which both implementations report unread, beside an `@clean` file that reads. No case had an unread file, so nothing checked that Python and Rust agree on which files are unread.

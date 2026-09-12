@@ -119,6 +119,8 @@ static HEADER_PATTERN: Lazy<Regex> = Lazy::new(|| {
 pub struct Header {
     pub delim1: String,
     pub delim2: String,
+    /// The `-encoding=` field, or "" when the header has none.
+    pub encoding: String,
     pub first_lines: Vec<String>,
     pub start: usize,
 }
@@ -132,6 +134,7 @@ pub fn scan_header(lines: &[String]) -> Option<Header> {
             return Some(Header {
                 delim1: m.get(1).map(|x| x.as_str()).unwrap_or("").to_string(),
                 delim2: m.get(8).map(|x| x.as_str()).unwrap_or("").to_string(),
+                encoding: m.get(6).map(|x| x.as_str()).unwrap_or("").to_string(),
                 first_lines,
                 start: i + 1,
             });
@@ -142,19 +145,33 @@ pub fn scan_header(lines: &[String]) -> Option<Header> {
 }
 
 /// Parse `contents` into a tree of vnodes anchored at `root`.
-pub fn read_into_root(o: &mut Outline, contents: &str, path: &str, root: &Position) -> bool {
+pub fn read_into_root(
+    o: &mut Outline,
+    contents: &str,
+    path: &str,
+    root: &Position,
+) -> Result<(), String> {
     let contents = contents.replace('\r', "");
     let lines = util::split_lines(&contents);
     let Some(header) = scan_header(&lines) else {
-        return false;
+        return Err(format!("not a valid external file: {path}"));
     };
+    // The header names the encoding the file was written in. One this port
+    // cannot write back leaves the file unread; see `external::read_file_to_string`.
+    if !crate::external::encoding_is_supported(&header.encoding) {
+        return Err(format!(
+            "{path}: -encoding={} in the @+leo header is not supported; \
+             this port reads and writes UTF-8 only",
+            header.encoding
+        ));
+    }
     // Detach the whole subtree first, so every link the scan makes is fresh.
     // Leo clears only the root's children, which leaves a re-read adding a
     // second parent link to every node below.
     o.detach_subtree(root.v);
     let mut scanner = Scanner::new(o, root, path);
     scanner.scan_lines(&header, &lines);
-    true
+    Ok(())
 }
 
 struct Scanner<'a> {
@@ -610,7 +627,7 @@ mod tests {
         let mut o2 = Outline::new_empty();
         let root2 = o2.root_position().unwrap();
         o2.set_headline(&root2, o.root_position().unwrap().h(o));
-        assert!(read_into_root(&mut o2, &text, "test.py", &root2));
+        assert!(read_into_root(&mut o2, &text, "test.py", &root2).is_ok());
         o2.all_positions()
             .iter()
             .map(|p| {
@@ -707,7 +724,7 @@ mod tests {
         let mut o2 = Outline::new_empty();
         let root2 = o2.root_position().unwrap();
         o2.set_headline(&root2, "@file test.py");
-        assert!(read_into_root(&mut o2, &text, "test.py", &root2));
+        assert!(read_into_root(&mut o2, &text, "test.py", &root2).is_ok());
         assert_eq!(o2.all_positions().len(), 3);
         assert_eq!(o2.all_unique_positions().len(), 2);
     }
