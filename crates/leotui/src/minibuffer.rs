@@ -17,6 +17,10 @@ pub enum MiniKind {
     ConfirmQuit,
     /// The label names the files, so `App::mini_label` draws it.
     ConfirmOverwrite,
+    /// Saving the `.leo` file, which changed on disk since it was read.
+    ConfirmSave,
+    /// Reading external files over edits not yet written to them.
+    ConfirmRead,
 }
 
 impl MiniKind {
@@ -29,6 +33,8 @@ impl MiniKind {
             MiniKind::SaveAs => "save as: ",
             MiniKind::ConfirmQuit => "unsaved changes. quit anyway? (y/n) ",
             MiniKind::ConfirmOverwrite => "overwrite files this outline has not read? (y/n) ",
+            MiniKind::ConfirmSave => "the .leo file changed on disk. overwrite it? (y/n) ",
+            MiniKind::ConfirmRead => "discard edits not written to these files? (y/n) ",
         }
     }
 
@@ -226,6 +232,13 @@ impl Minibuffer {
     /// line: the line has been replaced by the selection, and recomputing
     /// from it would leave a list of one.
     pub fn menu(&self, themes: &[String]) -> Menu {
+        if self.kind != MiniKind::Command {
+            return Menu {
+                items: Vec::new(),
+                selected: None,
+                at: 0,
+            };
+        }
         match self.completion.as_ref() {
             Some(c) => Menu {
                 items: c.matches.clone(),
@@ -295,7 +308,8 @@ pub fn candidates(line: &str, themes: &[String]) -> Candidates {
     match line.split_once(char::is_whitespace) {
         // A command and its argument. Only `theme` has anything to offer.
         Some((head, rest)) => {
-            let at = head.len() + 1;
+            // The separator may be wider than one byte: NBSP, U+3000.
+            let at = line.len() - rest.len();
             let stem = &line[at..];
             let resolved = ALIASES
                 .iter()
@@ -361,6 +375,8 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("write", "save"),
     ("q", "quit"),
     ("wq", "save-and-quit"),
+    ("saveas", "save-as"),
+    ("sav", "save-as"),
     ("x", "save-and-quit"),
     ("xit", "save-and-quit"),
     ("h", "help"),
@@ -504,6 +520,25 @@ mod tests {
         assert!(candidates("open one", &names).items.is_empty());
         // A second word is a path, not a theme.
         assert!(candidates("theme one two", &names).items.is_empty());
+    }
+
+    #[test]
+    fn a_multibyte_space_after_the_command_does_not_panic() {
+        let names = themes();
+        for line in ["e\u{a0}x", "theme\u{3000}one", "a\u{a0}"] {
+            let c = candidates(line, &names);
+            assert!(line.is_char_boundary(c.at));
+        }
+        assert_eq!(
+            candidates("theme\u{3000}one", &names).at,
+            "theme\u{3000}".len()
+        );
+    }
+
+    #[test]
+    fn only_a_command_line_has_a_menu() {
+        let m = Minibuffer::new(MiniKind::Headline, "theme one".to_string());
+        assert!(!m.menu(&themes()).is_open());
     }
 
     #[test]

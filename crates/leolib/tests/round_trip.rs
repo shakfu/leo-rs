@@ -584,3 +584,176 @@ fn an_at_nosent_node_declaring_another_encoding_is_not_written() {
     assert_eq!(encoding, "latin-1");
     assert_eq!(fs::read_to_string(&file).unwrap(), "old = 1\n");
 }
+
+/// An outline with one `@file` node, written and reopened from `dir`.
+fn written_at_file(dir: &std::path::Path) -> (Document, String) {
+    let leo = dir.join("x.leo").to_string_lossy().to_string();
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file x.py");
+    o.set_body(&root, "x = 1\n");
+    assert_eq!(
+        external::write_external_files(&mut o, false).written.len(),
+        1
+    );
+    leolib::save(&mut o, "").unwrap();
+    let doc = Document::open(&leo, true).unwrap();
+    (doc, dir.join("x.py").to_string_lossy().to_string())
+}
+
+#[test]
+fn a_file_changed_on_disk_since_the_read_is_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut doc, py) = written_at_file(dir.path());
+    let theirs = fs::read_to_string(&py)
+        .unwrap()
+        .replace("x = 1", "x = 1  # theirs");
+    fs::write(&py, &theirs).unwrap();
+    assert!(doc.outline.changed_on_disk(&py));
+
+    let root = doc.outline.root_position().unwrap();
+    doc.set_body(&root, "x = 2\n");
+    let result = doc.write_external_files(true);
+    assert!(result.written.is_empty());
+    assert_eq!(result.changed_on_disk.len(), 1);
+    assert!(matches!(
+        result.errors[0].error,
+        Error::ChangedOnDisk { .. }
+    ));
+    assert_eq!(fs::read_to_string(&py).unwrap(), theirs);
+
+    // Recording what is on disk now is the approval.
+    doc.outline
+        .record_file_stamp(&py, leolib::util::file_stamp(&py));
+    let result = doc.write_external_files(true);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+    assert!(fs::read_to_string(&py).unwrap().contains("x = 2"));
+}
+
+#[test]
+fn read_files_takes_in_a_file_changed_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut doc, py) = written_at_file(dir.path());
+    let theirs = fs::read_to_string(&py).unwrap().replace("x = 1", "x = 3");
+    fs::write(&py, theirs).unwrap();
+    let root = doc.outline.root_position().unwrap();
+    let result = doc.read_files(vec![root.clone()]);
+    assert_eq!(result.read, 1, "{:?}", result.errors);
+    assert_eq!(root.b(&doc.outline), "x = 3\n");
+    assert!(!doc.outline.changed_on_disk(&py));
+    assert!(!doc.undoer.can_undo());
+}
+
+#[test]
+fn save_to_writes_a_copy_and_keeps_the_outline_where_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut doc, _) = written_at_file(dir.path());
+    let name = doc.outline.file_name.clone();
+    let root = doc.outline.root_position().unwrap();
+    doc.set_headline(&root, "@file x.py");
+    doc.outline.changed = true;
+    let copy = dir.path().join("copy.leo").to_string_lossy().to_string();
+    doc.save_to(&copy).unwrap();
+    assert_eq!(doc.outline.file_name, name);
+    assert!(doc.outline.changed);
+    assert!(leolib::open_outline(&copy, false).is_ok());
+}
+
+#[test]
+fn a_leo_file_changed_on_disk_is_noticed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (doc, _) = written_at_file(dir.path());
+    let leo = doc.outline.file_name.clone();
+    assert!(!doc.outline.changed_on_disk(&leo));
+    let mut text = fs::read_to_string(&leo).unwrap();
+    text.push('\n');
+    fs::write(&leo, text).unwrap();
+    assert!(doc.outline.changed_on_disk(&leo));
+}
+
+#[test]
+fn a_file_in_a_missing_directory_is_not_written_unless_the_config_allows() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("x.leo").to_string_lossy().to_string();
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file sub/x.py");
+    o.set_body(&root, "x = 1\n");
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty());
+    assert!(matches!(result.errors[0].error, Error::NotFound { .. }));
+    assert!(!dir.path().join("sub").exists());
+
+    o.config.create_nonexistent_directories = true;
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_file_is_written_through_the_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut doc, py) = written_at_file(dir.path());
+    let target = dir.path().join("target.py");
+    fs::rename(&py, &target).unwrap();
+    std::os::unix::fs::symlink(&target, &py).unwrap();
+    let root = doc.outline.root_position().unwrap();
+    doc.set_body(&root, "x = 2\n");
+    let result = doc.write_external_files(true);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+    assert!(fs::symlink_metadata(&py).unwrap().file_type().is_symlink());
+    assert!(fs::read_to_string(&target).unwrap().contains("x = 2"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_read_only_file_is_not_overwritten() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (mut doc, py) = written_at_file(dir.path());
+    let before = fs::read_to_string(&py).unwrap();
+    fs::set_permissions(&py, fs::Permissions::from_mode(0o444)).unwrap();
+    let root = doc.outline.root_position().unwrap();
+    doc.set_body(&root, "x = 2\n");
+    let result = doc.write_external_files(true);
+    assert!(result.written.is_empty());
+    assert_eq!(result.errors.len(), 1);
+    assert_eq!(fs::read_to_string(&py).unwrap(), before);
+}
+
+#[test]
+fn save_all_writes_the_outline_and_every_file_that_can_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("s.leo").to_string_lossy().to_string();
+    let mut o = leolib::new_outline(&leo);
+    let bad = o.root_position().unwrap();
+    o.set_headline(&bad, "@file bad.py");
+    o.set_body(&bad, "x = 1\n");
+    let orphan = o.insert_as_last_child(&bad);
+    o.set_body(&orphan, "y = 2\n");
+    let good = o.insert_after(&bad);
+    o.set_headline(&good, "@file good.py");
+    o.set_body(&good, "z = 3\n");
+
+    let result = leolib::save_all(&mut o, "");
+    assert!(result.leo.is_ok());
+    assert_eq!(result.files.written.len(), 1);
+    assert_eq!(result.files.errors.len(), 1);
+    assert!(bad.is_dirty(&o));
+    assert!(!good.is_dirty(&o));
+    assert!(!dir.path().join("bad.py").exists());
+
+    // A `.leo` file that cannot be written holds back every file.
+    o.set_body(&bad, "x = 1\n@others\n");
+    let missing = dir.path().join("no-such-dir/s.leo");
+    let result = leolib::save_all(&mut o, &missing.to_string_lossy());
+    assert!(result.leo.is_err());
+    assert!(result.files.written.is_empty() && result.files.errors.is_empty());
+    assert!(!dir.path().join("bad.py").exists());
+    assert!(bad.is_dirty(&o));
+
+    let result = leolib::save_all(&mut o, "");
+    assert!(result.leo.is_ok());
+    assert_eq!(result.files.written.len(), 1, "{:?}", result.files.errors);
+    assert!(dir.path().join("bad.py").exists());
+}

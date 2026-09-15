@@ -864,6 +864,37 @@ pub fn tangle(o: &Outline, p: &Position) -> Result<String> {
     at_file_to_string(o, p, sentinels)
 }
 
+/// The text to write to p's file, refusing a tree the file would not hold.
+///
+/// Leo's writers check that every node below the root was written, as
+/// `at.warnAboutOrphandAndIgnoredNodes`; `tangle` and `at_file_to_string` do
+/// not, as `at.atFileToString` does not. A node that neither `@others` nor a
+/// section reference reaches is not in the file, and for `@file` it is gone
+/// from the outline too once the `.leo` file is saved.
+pub fn file_to_write(o: &Outline, p: &Position, sentinels: bool) -> Result<String> {
+    let mut at = AtWrite::new(o, p);
+    at.sentinels = sentinels;
+    let contents = at.put_file(p);
+    if at.errors.is_empty() && !p.is_at_all_node(o) {
+        for q in p.subtree(o) {
+            if !at.visited.contains(&q.v) {
+                at.errors.push(format!(
+                    "orphan node: {}\n  parent node: {}\n  \
+                     The node is included neither by an @others directive nor a section reference",
+                    util::truncate(q.h(o), 60),
+                    util::truncate(q.parent(o).map_or("", |r| r.h(o)), 60)
+                ));
+            }
+        }
+    }
+    match at.errors.is_empty() {
+        true => Ok(contents),
+        false => Err(Error::Write {
+            detail: at.errors.join("\n"),
+        }),
+    }
+}
+
 /// Write p's file to a string. `sentinels` is false for @clean and @nosent.
 pub fn at_file_to_string(o: &Outline, p: &Position, sentinels: bool) -> Result<String> {
     write_to_string(o, p, sentinels, false)
@@ -958,6 +989,36 @@ mod tests {
         assert!(s.contains("# @+<< helper >>\n"), "{s}");
         assert!(s.contains("y = 2\n"), "{s}");
         assert!(s.contains("# @-<< helper >>\n"), "{s}");
+    }
+
+    #[test]
+    fn a_child_nothing_includes_is_refused_on_write() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file x.py");
+        o.set_body(&root, "x = 1\n");
+        let child = o.insert_as_last_child(&root);
+        o.set_headline(&child, "f");
+        o.set_body(&child, "return 42\n");
+        for sentinels in [true, false] {
+            let err = file_to_write(&o, &root, sentinels).unwrap_err().to_string();
+            assert!(err.contains("orphan node: f"), "{err}");
+        }
+        // Tangling a tree to look at it is not a write, as in Leo.
+        assert!(tangle(&o, &root).is_ok());
+        o.set_body(&root, "x = 1\n@others\n");
+        assert!(file_to_write(&o, &root, true).is_ok());
+    }
+
+    #[test]
+    fn at_all_writes_every_node_so_nothing_is_an_orphan() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file x.txt");
+        o.set_body(&root, "@all\n");
+        let child = o.insert_as_last_child(&root);
+        o.set_body(&child, "text\n");
+        assert!(file_to_write(&o, &root, true).is_ok());
     }
 
     #[test]

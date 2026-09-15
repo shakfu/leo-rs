@@ -7,7 +7,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::gnx::NodeIndices;
 use crate::langdata;
 use crate::node::{self, Vnode, VnodeId};
 use crate::position::Position;
@@ -68,7 +67,6 @@ pub struct Outline {
     pub gnx_dict: HashMap<String, VnodeId>,
     pub file_name: String,
     pub changed: bool,
-    pub ni: NodeIndices,
     pub config: Config,
     /// Bumped on every structural change, so a view can tell whether to redraw.
     pub generation: u64,
@@ -82,6 +80,9 @@ pub struct Outline {
     pub read_paths: HashSet<(String, String, String)>,
     /// Per-gnx note from the last `@auto` import that normalized its file.
     pub import_warnings: HashMap<String, String>,
+    /// Size and mtime of each file as last read or written, by path. See
+    /// [`Outline::changed_on_disk`].
+    pub file_stamps: HashMap<String, util::FileStamp>,
 }
 
 pub const HIDDEN_ROOT_GNX: &str = "hidden-root-vnode-gnx";
@@ -95,12 +96,12 @@ impl Outline {
             gnx_dict: HashMap::new(),
             file_name: file_name.to_string(),
             changed: false,
-            ni: NodeIndices::new(&default_user_id()),
             config: Config::default(),
             generation: 0,
             expanded: HashSet::new(),
             window_geometry: WindowGeometry::default(),
             mod_time_cache: HashMap::new(),
+            file_stamps: HashMap::new(),
             read_paths: HashSet::new(),
             import_warnings: HashMap::new(),
         };
@@ -138,10 +139,19 @@ impl Outline {
     }
 
     /// Allocate a vnode. With no gnx, mint one; with a gnx, index it.
+    ///
+    /// A minted gnx is never one the outline already holds. Another process
+    /// with the same user id may have written this file in the same second,
+    /// and reusing its gnx would merge two nodes into one on the next read.
     pub fn new_vnode(&mut self, gnx: Option<&str>) -> VnodeId {
         let gnx = match gnx {
             Some(g) => g.to_string(),
-            None => self.ni.new_gnx(),
+            None => loop {
+                let g = crate::gnx::new_gnx();
+                if !self.gnx_dict.contains_key(&g) {
+                    break g;
+                }
+            },
         };
         let id = VnodeId(self.nodes.len() as u32);
         self.nodes.push(Vnode::new(gnx.clone()));
@@ -513,9 +523,14 @@ impl Outline {
 
     /// Mark p and every ancestor @<file> node dirty, following clone links.
     pub fn set_dirty(&mut self, p: &Position) {
-        self.node_mut(p.v).set_bit(node::status::DIRTY);
-        for v in self.all_ancestor_at_file_nodes(p.v) {
-            self.node_mut(v).set_bit(node::status::DIRTY);
+        self.set_dirty_vnode(p.v);
+    }
+
+    /// `set_dirty` for a vnode, through every one of its parents.
+    pub(crate) fn set_dirty_vnode(&mut self, v: VnodeId) {
+        self.node_mut(v).set_bit(node::status::DIRTY);
+        for a in self.all_ancestor_at_file_nodes(v) {
+            self.node_mut(a).set_bit(node::status::DIRTY);
         }
     }
 
@@ -556,6 +571,29 @@ impl Outline {
             p.h(self).to_string(),
         );
         self.read_paths.insert(key);
+    }
+
+    /// Record `stamp` as what the outline last saw of `path`.
+    ///
+    /// Take the stamp before reading the file, so an edit made during the read
+    /// still counts as a change.
+    pub fn record_file_stamp(&mut self, path: &str, stamp: Option<util::FileStamp>) {
+        match stamp {
+            Some(stamp) => self.file_stamps.insert(path.to_string(), stamp),
+            None => self.file_stamps.remove(path),
+        };
+    }
+
+    /// True if `path` was changed by someone else since this outline read or
+    /// wrote it.
+    ///
+    /// A file the outline never saw, or one since deleted, has not changed:
+    /// writing it cannot lose an edit. `may_overwrite` covers the first case.
+    pub fn changed_on_disk(&self, path: &str) -> bool {
+        match (self.file_stamps.get(path), util::file_stamp(path)) {
+            (Some(seen), Some(now)) => *seen != now,
+            _ => false,
+        }
     }
 
     /// True if writing p's file cannot destroy work this outline never saw.
@@ -1012,12 +1050,6 @@ fn adjust_before_unlink(o: &Outline, p: &Position, p2: &Position) -> Position {
     p
 }
 
-fn default_user_id() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "leo-rs".to_string())
-}
-
 pub fn is_valid_language(language: &str) -> bool {
     !language.is_empty()
         && (langdata::language_delims_dict().contains_key(language)
@@ -1123,6 +1155,44 @@ mod tests {
         o.move_after(&a, &c);
         let heads: Vec<&str> = root.children(&o).iter().map(|p| p.h(&o)).collect();
         assert_eq!(heads, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn a_minted_gnx_is_never_one_the_outline_holds() {
+        let mut o = Outline::new_empty();
+        let (id, t, n) = {
+            let g = crate::gnx::new_gnx();
+            let mut parts = g.splitn(3, '.');
+            let id = parts.next().unwrap().to_string();
+            let t = parts.next().unwrap().to_string();
+            (id, t, parts.next().unwrap().parse::<u64>().unwrap())
+        };
+        // As another process writing the file in the same second would leave it.
+        let taken: Vec<String> = (n + 1..n + 50).map(|k| format!("{id}.{t}.{k}")).collect();
+        for g in &taken {
+            o.new_vnode(Some(g));
+        }
+        let v = o.new_vnode(None);
+        assert!(!taken.contains(&o.gnx(v).to_string()), "{}", o.gnx(v));
+    }
+
+    #[test]
+    fn outlines_saved_and_reopened_in_one_second_keep_every_node() {
+        let dir = std::env::temp_dir().join(format!("leolib-gnx-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("g.leo").to_string_lossy().to_string();
+        let mut o = crate::new_outline(&path);
+        crate::save(&mut o, "").unwrap();
+        for i in 0..3 {
+            let mut o = crate::open_outline(&path, false).unwrap();
+            let root = o.root_position().unwrap();
+            let p = o.insert_after(&root);
+            o.set_headline(&p, &format!("inserted {i}"));
+            crate::save(&mut o, "").unwrap();
+        }
+        let o = crate::open_outline(&path, false).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(o.all_unique_positions().len(), 4);
     }
 
     #[test]

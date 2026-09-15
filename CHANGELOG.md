@@ -4,7 +4,33 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## Unreleased
 
+## [0.3.0]
+
 ### Fixed
+
+- **A write refuses a node that nothing includes.** A child of an `@file` or `@clean` node that neither `@others` nor a section reference reaches was left out of the file, and the write reported success. After the next save the node was gone from the outline too. The write now fails with "orphan node", as Leo's `warnAboutOrphandAndIgnoredNodes` does. `tangle` does not check, as Leo's `atFileToString` does not.
+
+- **gnxs no longer collide.** Each `Outline` had its own allocator, whose counter restarts every second. Three open-insert-save cycles within one second gave three nodes one gnx, and the next read merged them. One allocator now serves the process, as in Python leolib. `new_vnode` also skips a gnx the outline already holds, which covers another process writing the file in the same second. `Outline::ni` is removed.
+
+- **A write refuses a file changed on disk since it was read.** `w` replaced another editor's changes without a word. Each file's size and mtime are recorded when it is read or written. A write whose file no longer matches fails with `Error::ChangedOnDisk`, and is listed in `WriteResult::changed_on_disk`. leotui asks before overwriting, and names changed files when the terminal regains focus. Size and mtime over a hash: a hash reads every file on each write, and the stamp misses only a same-size edit within the mtime's resolution.
+
+- **Quitting and `:e` see unwritten `@file` edits.** Both checked `outline.changed`, which saving the `.leo` file clears. An `@file` tree's text is not in the `.leo` file, so its edits were dropped without a prompt. Both now also count dirty `@<file>` nodes.
+
+- **`g<` (promote) is undoable and marks the outline changed.** It called `Outline::promote` directly: `u` undid the previous change, and `q` quit without asking. `Document::promote` records the moves, as `demote` does. Undoing a move now also marks the `@file` trees involved dirty; an undone move after `w` was never written.
+
+- **No panic on a multi-byte space in a `:`, `/` or headline input.** Completion sliced one byte past the first word, inside an NBSP (Option-Space on macOS) or U+3000. The panic lost the session.
+
+- **`:wq` and `:x` stay open when the save fails.** They quit regardless, and the error was never shown.
+
+- **A paste is inserted as text.** Bracketed paste was off, so a pasted newline acted as Enter and the rest ran as commands. Pasting `title` and `dd` into a headline renamed it, then cut a subtree. In the body a paste is one change; in a one-line input its line breaks become spaces.
+
+- **`:w path` writes a copy.** It moved the outline to `path`, which also moved where relative `@file` paths resolve, and it overwrote an existing file without asking. `:w path` is now vim's `:w path` and Leo's `save-to`. The new `:saveas path` is Leo's `save-as`. Both refuse an existing file until given `!`, as vim does.
+
+- **The `.leo` file is written atomically**, through the temporary file and rename that external files use. It was written in place, so a crash or a full disk truncated the outline.
+
+- **A write follows a symlink and refuses a read-only file.** The rename replaced a symlink with a regular file and left its target stale. It also replaced a 0444 file regardless of its mode.
+
+- **A write refuses a missing directory.** `replace_file` created any directory a headline named: writing an outline whose files were absent created 375 stub files in 24 directories. `Config::create_nonexistent_directories` now decides; it was defined but never read. Leo's default also refuses (`at.precheck`, #1450).
 
 - **An external file that is not UTF-8 is no longer rewritten as UTF-8.** The reader decoded every external file with `from_utf8_lossy`, so a latin-1 file arrived with U+FFFD in place of each high byte, and the writer ignored the encoding it was handed. Editing any node in such a tree and saving replaced the user's source -- `name = 'caf\xe9'` became `name = 'caf\xef\xbf\xbd'` -- and neither the read nor the write reported anything.
 
@@ -13,6 +39,10 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 - **A `.leo` file that is not UTF-8 no longer opens.** It was decoded the same lossy way, where the loss is worse: the replacement lands in a headline or a body, and the next save writes it over the outline itself. Opening now fails with `Error::NotUtf8`. Leo reads those bytes with an XML parser, which honours the encoding in the prolog. `write_leo_file` refuses a `leo_file_encoding` it cannot produce, since the prolog copies that name while the bytes are always UTF-8.
 
 ### Changed
+
+- **`Ctrl-s`, `:w`, `:w path` and `:saveas` write the dirty external files after the `.leo` file.** They wrote the `.leo` file alone and reported `saved`, leaving `@file` edits only in memory. An `@clean` edit was lost on reopen: its text is in the `.leo` file, but the read merges the unwritten file over it. Leo's `save`, `save-to` and `save-as` write both. `:write-outline-only` writes the `.leo` file alone.
+
+  The `.leo` file goes first, where Leo writes it last, so the outline's edits reach disk however the files fare. A file that fails does not stop the others; it stays dirty, and the next save retries it. If the `.leo` file is not saved, by an error or a declined prompt, no file is written. `@nosent` and `@asis` files are never read back, so one newer than its `.leo` file would reopen stale and be overwritten by the next write.
 
 - **One error type, `leolib::Error`.** The crate answered with three: `Box<dyn Error>` from `open_outline` and `Document::open`, `LeoFileError` from the `.leo` reader, and `String` everywhere else. A caller could not tell a missing file from a failed importer from a refused overwrite without matching on message text. `LeoFileError` is gone; its variants are `Error::NotALeoFile` and `Error::BadXml`. `external::FileReport` carries the error itself rather than a rendered string, so a front end can offer a prompt for `RefusedOverwrite` and nothing at all for `UnsupportedEncoding`. Warnings, which are not errors, move to `external::FileNote`.
 
@@ -24,15 +54,25 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ### Added
 
+- **`leotui --version`**, and `-V`, print the package version.
+
+- **`:refresh-from-disk` and `:read-at-file-nodes`**, Leo's commands to read external files again: the `@<file>` node at or above the selection, or every one at or under it. Both ask before discarding unwritten edits. Both clear the undo history, as Leo's do, because the history names nodes the read replaces. `Document::read_files` and `external::read_files` are the library side.
+
+- **`:e!` and `:revert`** open the `.leo` file again, discarding every change.
+
+- **`leolib::save_all` and `Document::save_all`** write the `.leo` file, then every dirty external file, and report both in `SaveResult`. No file is written if the `.leo` write fails. `save` and `write_external_files` still do one half each.
+
+- **`leolib::save_to` and `Document::save_to`** write a copy without changing the outline's file name.
+
 - **Corpus case `empty_auto`**: an `@auto` file with nothing in it. Leo's `at.readFileAtPosition` raises `AttributeError: 'NoneType' object has no attribute 'v'` on it (`leoAtFile.py:642`, leo-editor `b6e06060ad`) and reports the file unread; this port imports the empty tree. Found by comparing the two importers over 591 files, where it was the only difference in all 12 cases that differed. `KNOWN` in `corpus.rs` records it, so the test says so when Leo is fixed.
 
-- **What a `.leo` file can write**, in the README. An `@<file>` headline or `@path` can name any absolute path, climb out with `..`, or expand `~`, and writing creates directories. `may_overwrite` refuses to clobber an unread file but does not stop a new one, so an outline from someone else is as dangerous as a Makefile from someone else. Leo is the same.
+- **What a `.leo` file can write**, in the README. An `@<file>` headline or `@path` can name any absolute path, climb out with `..`, or expand `~`. The write guards refuse an unread file, a file changed on disk and a missing directory, but not a new file in an existing directory. So an outline from someone else is as dangerous as a Makefile from someone else. Leo is the same.
 
 - **GitHub Actions.** `make check` on push and pull request, and `make corpus` against a pinned leo-editor commit. Nothing ran the checks the Makefile had. `make audit` stays local: it fetches the RustSec database, and is run by hand.
 
 - **Corpus case `unreadable`**: an `@file` whose file has no sentinels, which both implementations report unread, beside an `@clean` file that reads. No case had an unread file, so nothing checked that Python and Rust agree on which files are unread.
 
-## 0.2.1
+## [0.2.1]
 
 The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already contains every change below except the `quick-xml` and `ratatui` upgrades and `make audit`.
 

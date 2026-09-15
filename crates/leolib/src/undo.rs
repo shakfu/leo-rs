@@ -212,6 +212,8 @@ fn unlink(o: &mut Outline, parent: VnodeId, index: usize, v: VnodeId) {
     if o.node(parent).children.get(index) != Some(&v) {
         return; // The tree moved under us; do nothing rather than corrupt it.
     }
+    // The tree losing the node must be written again, as must the one gaining it.
+    o.set_dirty_vnode(parent);
     o.node_mut(parent).children.remove(index);
     if let Some(i) = o.node(v).parents.iter().position(|x| *x == parent) {
         o.node_mut(v).parents.remove(i);
@@ -224,6 +226,7 @@ fn relink(o: &mut Outline, parent: VnodeId, index: usize, v: VnodeId) {
     let n = index.min(o.node(parent).children.len());
     o.node_mut(parent).children.insert(n, v);
     o.node_mut(v).parents.push(parent);
+    o.set_dirty_vnode(v);
     o.changed = true;
     o.generation += 1;
 }

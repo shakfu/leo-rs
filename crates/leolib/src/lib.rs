@@ -84,6 +84,38 @@ pub fn save(o: &mut Outline, path: &str) -> Result<String> {
     leofile::write_leo_file(o, path)
 }
 
+/// What [`save_all`] did: the `.leo` file, then each changed external file.
+#[derive(Debug)]
+pub struct SaveResult {
+    pub leo: Result<String>,
+    /// Empty when the `.leo` write failed, as no file was attempted.
+    pub files: external::WriteResult,
+}
+
+/// Save the `.leo` file, then write every dirty external file. Leo's `save`.
+///
+/// Leo writes the external files first. The `.leo` file goes first here, so
+/// the outline's own edits reach disk however the files fare. A file that
+/// fails does not stop the rest; it stays dirty and is retried on the next
+/// save. [`save`] and [`write_external_files`] do each half.
+///
+/// If the `.leo` write fails, no file is written. `@nosent` and `@asis` files
+/// are never read back, so a file newer than its `.leo` file would be shown
+/// stale on reopen and overwritten by the next write of that tree.
+pub fn save_all(o: &mut Outline, path: &str) -> SaveResult {
+    let leo = leofile::write_leo_file(o, path);
+    let files = match leo {
+        Ok(_) => external::write_external_files(o, true),
+        Err(_) => external::WriteResult::default(),
+    };
+    SaveResult { leo, files }
+}
+
+/// Write a copy of the outline to `path`, leaving its file name alone.
+pub fn save_to(o: &mut Outline, path: &str) -> Result<String> {
+    leofile::write_leo_copy(o, path)
+}
+
 /// Return the outline in `.leo` (XML) format.
 pub fn to_xml(o: &mut Outline) -> String {
     leofile::outline_to_xml_string(o)

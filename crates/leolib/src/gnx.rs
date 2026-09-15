@@ -44,11 +44,28 @@ fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     )
 }
 
-/// Allocates gnxs for one process.
+/// The allocator [`new_gnx`] shares across the process.
+static SHARED: once_cell::sync::Lazy<std::sync::Mutex<NodeIndices>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(NodeIndices::new(&default_user_id())));
+
+/// Mint a gnx from the process's one allocator.
 ///
-/// Process-wide, never per outline: Leo copies and clones nodes between
-/// outlines, so two allocators sharing a user id would mint the same gnx
-/// within the same second.
+/// Process-wide, never per outline: nodes are copied between outlines, and
+/// two allocators sharing a user id mint the same gnx within the same second.
+pub fn new_gnx() -> String {
+    // A panic elsewhere while holding the lock leaves the counter intact.
+    let mut ni = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    ni.new_gnx()
+}
+
+/// The id a gnx starts with: the login name, as Leo's default.
+fn default_user_id() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "leo-rs".to_string())
+}
+
+/// Allocates gnxs. [`new_gnx`] holds the one every outline uses.
 #[derive(Debug, Clone)]
 pub struct NodeIndices {
     pub user_id: String,

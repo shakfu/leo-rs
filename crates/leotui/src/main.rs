@@ -29,7 +29,8 @@ mod ui;
 use std::io;
 
 use crossterm::event::{
-    self, Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -47,6 +48,7 @@ struct Args {
     dump: bool,
     list_keys: bool,
     list_key_specs: bool,
+    version: bool,
     press: Vec<String>,
     kitty_keys: bool,
     width: u16,
@@ -67,6 +69,7 @@ fn parse_args() -> Result<Args, String> {
         dump: false,
         list_keys: false,
         list_key_specs: false,
+        version: false,
         press: Vec::new(),
         kitty_keys: true,
         width: 100,
@@ -80,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
             "--dump" => args.dump = true,
             "--keys" => args.list_keys = true,
             "--key-specs" => args.list_key_specs = true,
+            "-V" | "--version" => args.version = true,
             "--press" => {
                 let spec = it.next().ok_or("--press needs a key sequence")?;
                 args.press = spec.split(',').map(|s| s.trim().to_string()).collect();
@@ -109,7 +113,7 @@ fn parse_args() -> Result<Args, String> {
 
 fn usage() -> String {
     "usage: leotui [FILE.leo] [--dump] [--keys] [--key-specs] [--press KEYS] \
-[--no-external] [--no-kitty-keys] [--width N] [--height N] [--theme NAME]"
+[--no-external] [--no-kitty-keys] [--width N] [--height N] [--theme NAME] [--version]"
         .to_string()
 }
 
@@ -121,6 +125,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.version {
+        println!("leotui {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
     if args.list_keys {
         print_keys();
         std::process::exit(0);
@@ -247,6 +255,9 @@ impl TerminalGuard {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
+        // Without bracketed paste a pasted newline is Enter, and the rest of
+        // the paste runs as commands. A terminal without either ignores them.
+        let _ = execute!(stdout, EnableBracketedPaste, EnableFocusChange);
         if kitty_keys {
             let _ = execute!(
                 stdout,
@@ -262,6 +273,7 @@ impl TerminalGuard {
         if kitty_keys {
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         }
+        let _ = execute!(stdout, DisableFocusChange, DisableBracketedPaste);
         let _ = execute!(stdout, LeaveAlternateScreen);
         let _ = disable_raw_mode();
     }
@@ -308,10 +320,11 @@ fn event_loop(app: &mut App) -> io::Result<()> {
         terminal.draw(|f| ui::draw(f, app))?;
         // Key *press* only: on Windows crossterm also reports releases, which
         // would run every command twice.
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                app.handle_key(key);
-            }
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+            Event::Paste(text) => app.handle_paste(&text),
+            Event::FocusGained => app.check_disk(),
+            _ => {}
         }
     }
     Ok(())

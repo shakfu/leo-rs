@@ -155,10 +155,12 @@ fn element_from_start<R: BufRead>(
 /// the declaration and the bytes agree. Leo does the same: it writes with
 /// `leo_file_encoding`, a setting, not a property of the file it read.
 pub fn read_leo_file(path: &str) -> Result<Outline> {
+    let stamp = util::file_stamp(path);
     let bytes = std::fs::read(path).map_err(|e| Error::io(path, e))?;
     let contents = String::from_utf8(bytes).map_err(|e| Error::not_utf8(path, &e.utf8_error()))?;
     let mut o = Outline::new(path);
     read_leo_string(&mut o, &contents)?;
+    o.record_file_stamp(path, stamp);
     Ok(o)
 }
 
@@ -442,13 +444,35 @@ fn put_unknown_attributes(o: &Outline, v: VnodeId) -> String {
     out
 }
 
-/// Write the outline to `path` in `.leo` format. Returns the path written.
+/// Write the outline to `path` in `.leo` format, and make `path` its file.
+/// Returns the path written. Leo's `save-as`, or `save` when `path` is "".
+///
+/// The outline's file name decides where relative `@<file>` paths resolve,
+/// so this also moves where the external files are written.
 pub fn write_leo_file(o: &mut Outline, path: &str) -> Result<String> {
-    let path = if path.is_empty() {
-        o.file_name.clone()
-    } else {
-        util::finalize(path)
+    let path = match path.is_empty() {
+        true => o.file_name.clone(),
+        false => util::finalize(path),
     };
+    write_xml(o, &path)?;
+    o.file_name = path.clone();
+    o.changed = false;
+    Ok(path)
+}
+
+/// Write a copy of the outline to `path`, as Leo's `save-to`. The outline's
+/// file name and changed flag are left alone. Returns the path written.
+pub fn write_leo_copy(o: &mut Outline, path: &str) -> Result<String> {
+    let path = util::finalize(path);
+    write_xml(o, &path)?;
+    Ok(path)
+}
+
+/// Write the XML to a temporary file and rename it over `path`.
+///
+/// Leo backs the file up and writes in place. A rename leaves either the old
+/// file or the new one after a crash or a full disk, never half of each.
+fn write_xml(o: &mut Outline, path: &str) -> Result<()> {
     if path.is_empty() {
         return Err(Error::NotALeoFile {
             detail: "no file name: pass one, or set outline.file_name".to_string(),
@@ -461,11 +485,10 @@ pub fn write_leo_file(o: &mut Outline, path: &str) -> Result<String> {
             encoding: o.config.leo_file_encoding.clone(),
         });
     }
-    o.file_name = path.clone();
     let s = outline_to_xml_string(o);
-    std::fs::write(&path, s.as_bytes()).map_err(|e| Error::io(&path, e))?;
-    o.changed = false;
-    Ok(path)
+    crate::external::replace_file(path, &s, "utf-8")?;
+    o.record_file_stamp(path, util::file_stamp(path));
+    Ok(())
 }
 
 /// The hidden root's gnx, exported for tests that build outlines by hand.

@@ -257,6 +257,12 @@ mod tests {
         "substitute",
         "nohlsearch",
         "bufdo",
+        "refresh-from-disk",
+        "read-at-file-nodes",
+        "save-as",
+        "save-to",
+        "write-outline-only",
+        "revert",
     ];
 
     #[test]

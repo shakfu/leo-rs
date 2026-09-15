@@ -54,6 +54,9 @@ pub struct WriteResult {
     pub ignored: Vec<String>,
     /// Nodes refused by [`Outline::may_overwrite`], also listed in `errors`.
     pub refused: Vec<Position>,
+    /// Nodes whose files changed on disk since they were read, also listed in
+    /// `errors`. [`Outline::record_file_stamp`] with the current stamp approves one.
+    pub changed_on_disk: Vec<Position>,
 }
 
 /// The `@<file>` nodes to read, in outline order.
@@ -110,15 +113,36 @@ pub fn find_files_to_read(o: &Outline, root: &Position, all: bool) -> (Vec<Posit
 /// failure leaves the node as the `.leo` file described it, which is what Leo
 /// does.
 pub fn read_external_files(o: &mut Outline) -> ReadResult {
-    let mut result = ReadResult::default();
     let Some(root) = o.root_position() else {
-        return result;
+        return ReadResult::default();
     };
     let (files, ignored) = find_files_to_read(o, &root, true);
+    let mut result = read_files(o, files);
     result.ignored = ignored;
+    for p in o.all_positions() {
+        o.node_mut(p.v).clear_bit(crate::node::status::DIRTY);
+    }
+    result
+}
+
+/// Read the given `@<file>` nodes from disk, replacing what their trees hold.
+///
+/// Leo's `refresh-from-disk` for one node, and `read-at-file-nodes` for those
+/// [`find_files_to_read`] lists under a node. An `@clean` file is read even if
+/// its mtime says it is unchanged, as Leo's #4875 clears the cache first.
+pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
+    let mut result = ReadResult::default();
     for p in files {
+        if p.is_at_clean_node(o) {
+            let gnx = p.gnx(o).to_string();
+            o.mod_time_cache.remove(&gnx);
+        }
         match read_file_at_position(o, &p) {
-            Ok(true) => result.read += 1,
+            Ok(true) => {
+                // The tree now matches the file; an `@clean` merge set bits.
+                o.clear_dirty_in_tree(&p);
+                result.read += 1
+            }
             Ok(false) => {}
             Err(error) => result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
@@ -135,14 +159,21 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
             });
         }
     }
-    for p in o.all_positions() {
-        o.node_mut(p.v).clear_bit(crate::node::status::DIRTY);
-    }
     result
 }
 
 /// Read the `@<file>` node at p, dispatching on its kind.
 pub fn read_file_at_position(o: &mut Outline, p: &Position) -> Result<bool> {
+    let path = o.full_path(p);
+    let stamp = util::file_stamp(&path);
+    let read = read_file_by_kind(o, p)?;
+    if read {
+        o.record_file_stamp(&path, stamp);
+    }
+    Ok(read)
+}
+
+fn read_file_by_kind(o: &mut Outline, p: &Position) -> Result<bool> {
     // An `@encoding` directive the writer cannot honour: see `read_file_to_string`.
     let encoding = o.get_encoding(p);
     if !encoding_is_supported(&encoding) {
@@ -457,8 +488,43 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
                 } else {
                     contents
                 };
+                // Someone else's edit since the read. Unless the file already
+                // says what the tree does, writing would discard it.
+                if o.changed_on_disk(&path)
+                    && std::fs::read(&path).ok().as_deref() != Some(contents.as_bytes())
+                {
+                    result.errors.push(FileReport {
+                        headline: p.h(o).to_string(),
+                        error: Error::ChangedOnDisk { path: path.clone() },
+                        path,
+                    });
+                    result.changed_on_disk.push(p);
+                    continue;
+                }
+                // Leo's `at.precheck` (#1450). Creating directories on the
+                // strength of a headline is a setting, off by default.
+                let dir = util::os_path_dirname(&path);
+                if !dir.is_empty() && !std::path::Path::new(&dir).exists() {
+                    if !o.config.create_nonexistent_directories {
+                        result.errors.push(FileReport {
+                            headline: p.h(o).to_string(),
+                            error: Error::NotFound { path: dir },
+                            path,
+                        });
+                        continue;
+                    }
+                    if let Err(e) = std::fs::create_dir_all(&dir) {
+                        result.errors.push(FileReport {
+                            headline: p.h(o).to_string(),
+                            error: Error::io(&dir, e),
+                            path,
+                        });
+                        continue;
+                    }
+                }
                 match replace_file(&path, &contents, &encoding) {
                     Ok(true) => {
+                        o.record_file_stamp(&path, util::file_stamp(&path));
                         result.written.push(path.clone());
                         o.remember_read_path(&p, &path);
                         o.clear_dirty_in_tree(&p);
@@ -472,6 +538,7 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
                         }
                     }
                     Ok(false) => {
+                        o.record_file_stamp(&path, util::file_stamp(&path));
                         result.unchanged += 1;
                         o.remember_read_path(&p, &path);
                         o.clear_dirty_in_tree(&p);
@@ -523,7 +590,7 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
         return Ok((write_at_edit(o, p), newline, encoding));
     }
     let sentinels = !(p.is_at_clean_node(o) || p.is_at_nosent_node(o));
-    let contents = atfile_write::at_file_to_string(o, p, sentinels)?;
+    let contents = atfile_write::file_to_write(o, p, sentinels)?;
     Ok((contents, newline, encoding))
 }
 
@@ -587,7 +654,24 @@ fn file_mtime(path: &str) -> Option<u64> {
 ///
 /// The temporary file takes the original's permissions before the rename,
 /// or rewriting an executable script would leave it without `+x`.
+///
+/// A symlink is written through, as Leo's `os.path.realpath`: renaming onto
+/// the link would replace it with a copy and leave its target stale. A
+/// read-only file is refused, which a rename would otherwise bypass. The
+/// directory must exist.
 pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    let real;
+    let path = match is_link {
+        true => {
+            real = std::fs::canonicalize(path)
+                .map_err(|e| Error::io(path, e))?
+                .to_string_lossy()
+                .to_string();
+            real.as_str()
+        }
+        false => path,
+    };
     if let Ok(old) = std::fs::read(path) {
         if old == contents.as_bytes() {
             return Ok(false);
@@ -599,10 +683,10 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool>
         if let Err(e) = std::str::from_utf8(&old) {
             return Err(Error::not_utf8(path, &e));
         }
-    }
-    let dir = util::os_path_dirname(path);
-    if !dir.is_empty() && !std::path::Path::new(&dir).exists() {
-        std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        if std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+            let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+            return Err(Error::io(path, denied));
+        }
     }
     let tmp = format!("{path}.leo-rs-tmp");
     std::fs::write(&tmp, contents.as_bytes()).map_err(|e| Error::io(&tmp, e))?;

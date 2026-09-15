@@ -233,7 +233,9 @@ pub static COMMANDS: &[Command] = &[
         "make this node's children its siblings",
         |app, _| {
             let p = app.current.clone();
-            app.doc.outline.promote(&p);
+            if !app.doc.promote(&p) {
+                app.message = "no children".to_string();
+            }
         },
     ),
     c(
@@ -425,11 +427,46 @@ pub static COMMANDS: &[Command] = &[
             app.clamp_current();
         })
     }),
-    c("save", "write the .leo file", |app, _| app.save()),
+    c(
+        "save",
+        "write the .leo file, then the changed external files",
+        |app, _| app.save(),
+    ),
+    c(
+        "write-outline-only",
+        "write the .leo file and no external file",
+        |app, _| app.write_outline_only(),
+    ),
     c(
         "write-at-file-nodes",
         "write the changed external files",
         |app, _| app.write_external(),
+    ),
+    // The command line runs these: they take a path.
+    c(
+        "save-as",
+        "write the .leo file to a new path, and keep editing it there",
+        noop,
+    ),
+    c(
+        "save-to",
+        "write a copy of the .leo file, and keep editing this one",
+        noop,
+    ),
+    c(
+        "refresh-from-disk",
+        "read this node's external file again",
+        |app, _| app.refresh_from_disk(),
+    ),
+    c(
+        "read-at-file-nodes",
+        "read the external files at and under this node again",
+        |app, _| app.read_at_file_nodes(),
+    ),
+    c(
+        "revert",
+        "open the .leo file again, discarding every change",
+        |app, _| app.revert(),
     ),
     // The command line runs this one: it takes an argument, and Tab completes
     // over the themes on disk. The entry is here so `:the` completes to it.

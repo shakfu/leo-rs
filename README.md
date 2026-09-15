@@ -8,14 +8,14 @@ Leo's outline model was separated from its Qt front end in `leo/leolib`; this po
 
 ## Status
 
-Verified against `leo/core/LeoPyRef.leo` from the Leo repository:
+Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor `e3b3841f64`. The two `@auto` rows come from an earlier checkout; `TODO.md` records re-measuring them.
 
 | check | result |
 |---|---|
-| nodes read from the `.leo` file | 536, identical gnx/headline/body to Python `leolib` |
-| nodes read with all external files | 11,581, identical to Python `leolib` |
+| nodes read from the `.leo` file | 538, identical gnx/headline/body to Python `leolib` |
+| nodes read with all external files | 11,596, identical to Python `leolib` |
 | `.leo` file rewritten | byte-identical to the file read |
-| external files tangled | 381 of 381 byte-identical to the files on disk |
+| external files written | 383 of 383 byte-identical to the files on disk |
 | `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
 | `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
 
@@ -49,19 +49,27 @@ for p in outline.all_unique_positions() {
 }
 let root = outline.root_position().unwrap();
 outline.set_body(&root, "edited with no window in sight\n");
-leolib::save(&mut outline, "")?;
-leolib::write_external_files(&mut outline, true);
+let saved = leolib::save_all(&mut outline, "");   // the .leo file, then the dirty external files
+saved.leo?;
 ```
+
+`leolib::save` writes only the `.leo` file and `leolib::write_external_files` only the external files; `save_all` does both, in that order, and reports each in `SaveResult`.
 
 `leolib::Document` adds an undo history and the structural commands (insert, delete, clone, copy, paste, move, mark) on top of an `Outline`.
 
-Every fallible call answers with `leolib::Error`, whose variants are the distinctions a caller acts on: `NotFound`, `NotUtf8`, `UnsupportedEncoding`, `RefusedOverwrite`, `Import`, `Write`. Reading and writing the external files reports per file rather than failing the outline, in `ReadResult` and `WriteResult`.
+Every fallible call answers with `leolib::Error`, whose variants are the distinctions a caller acts on: `NotFound`, `NotUtf8`, `UnsupportedEncoding`, `RefusedOverwrite`, `ChangedOnDisk`, `Import`, `Write`. Reading and writing the external files reports per file rather than failing the outline, in `ReadResult` and `WriteResult`.
 
 ### A `.leo` file names the paths it writes
 
-An `@<file>` headline and an `@path` directive can name any path: an absolute one, or one that climbs out with `..`, with `~` expanded. Writing creates the directories it needs. So opening an outline and writing its external files can write anywhere the user can write, and a `.leo` file from someone else is as dangerous as a Makefile from someone else. Leo behaves the same way.
+An `@<file>` headline and an `@path` directive can name any path: an absolute one, or one that climbs out with `..`, with `~` expanded. So opening an outline and writing its external files can write anywhere the user can write, and a `.leo` file from someone else is as dangerous as a Makefile from someone else. Leo behaves the same way.
 
-`Outline::may_overwrite` narrows this but does not close it: it refuses to overwrite a file the outline has not read, which leaves creating new files unguarded. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
+Three guards narrow this without closing it:
+
+- `Outline::may_overwrite` refuses a file the outline has not read.
+- A write refuses a file changed on disk since the outline read or wrote it (`Error::ChangedOnDisk`).
+- A write refuses a directory that does not exist, unless `Config::create_nonexistent_directories` is set. Leo's default is the same.
+
+None of them stops a new file in an existing directory. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
 
 ## Using leotui
 
@@ -70,6 +78,7 @@ leotui FILE.leo
 leotui FILE.leo --dump              # one frame, no terminal
 leotui FILE.leo --dump --press F1   # press keys, then dump
 leotui --keys                       # the binding table
+leotui --version
 ```
 
 or during development
@@ -182,7 +191,7 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 | `n` `N` | next match, previous match |
 | `u` `Ctrl-z` | undo |
 | `Ctrl-r` | redo |
-| `Ctrl-s` | write the `.leo` file |
+| `Ctrl-s` | write the `.leo` file, then the changed external files |
 | `w` | write the changed external files |
 | `Ctrl-f` `Ctrl-b` `PageDown` `PageUp` | a screen down, up |
 | `Ctrl-d` `Ctrl-u` | half a screen down, up |
@@ -194,12 +203,23 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 
 **The `:` command line**
 
-Every Leo command name, with Tab completion and Up/Down history, plus the vim spellings: `:w` `:w path` `:q` `:q!` `:wq` `:x` `:e path` `:h cmd`. `:N` selects
-the Nth visible row. `:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values.
+Every Leo command name, with Tab completion and Up/Down history, plus the vim spellings: `:w` `:w path` `:saveas path` `:q` `:q!` `:wq` `:x` `:e path` `:e!` `:h cmd`. `:N` selects the Nth visible row.
+
+`Ctrl-s` and `:w` write the `.leo` file, then every dirty external file, as Leo's `save` does. A file that cannot be written, such as one with an orphan node, does not stop the others. It stays dirty, and the next save tries it again. If the `.leo` file is not saved, no external file is written. `:write-outline-only` writes the `.leo` file alone, and `w` the external files alone.
+
+`:w path` writes a copy and keeps editing this outline. `:saveas path` moves the outline there, which also moves where relative `@file` paths are written. Both refuse an existing file until given `!`.
+
+`q`, `:q` and `:e` ask or refuse while anything is unsaved, including an `@file` tree a save could not write. `:e!` opens the `.leo` file again, discarding every change.
+
+`:refresh-from-disk` reads the `@<file>` node at or above the selection from disk again; `:read-at-file-nodes` reads every one at or under it. Both ask before discarding unwritten edits, and both clear the undo history, as in Leo. When the terminal regains focus, the status line names any external file changed on disk, and a write asks before overwriting it.
+
+`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
+
 `/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
+
 `:import-at-file path` imports a file as an `@file` tree, and asks before writing sentinels into it.
+
 `:[range]s/pattern/replacement/[flags]` substitutes in the current node's body, as one undo step. The pattern is a Rust `regex`, with smartcase as in `/`; an empty pattern reuses the last search. The replacement takes `&`, `\1`-`\9` and `\r`. Ranges are `%`, `.`, `$`, `N` and `N,M`; flags are `g`, `i`, `I` and `n`. `:bufdo %s/pattern/replacement/[flags]` does the same in every node's body, as one undo step.
-`:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
 
 **Leo's own chords**
 

@@ -400,6 +400,22 @@ pub fn finalize_join(args: &[&str]) -> String {
     finalize(&acc.to_string_lossy())
 }
 
+/// What a file looked like when last seen: enough to tell that it changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    pub len: u64,
+    pub modified: Option<std::time::SystemTime>,
+}
+
+/// The file's stamp, or None if it cannot be read.
+pub fn file_stamp(path: &str) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(FileStamp {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    })
+}
+
 pub fn os_path_dirname(path: &str) -> String {
     Path::new(path)
         .parent()

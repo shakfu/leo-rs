@@ -158,6 +158,11 @@ pub struct App {
     position_count: (u64, usize),
     /// Files `w` refused to overwrite, waiting on the y/n prompt.
     pending_overwrite: Vec<Position>,
+    /// Files to read over unwritten edits, waiting on the y/n prompt.
+    pending_read: Vec<Position>,
+    /// Whether the save waiting on the y/n prompt also writes external files.
+    /// False only for `write-outline-only`.
+    save_files: bool,
 }
 
 /// The status line's account of external files that could not be read.
@@ -237,6 +242,8 @@ impl App {
             config_path: None,
             position_count: (u64::MAX, 0),
             pending_overwrite: Vec::new(),
+            pending_read: Vec::new(),
+            save_files: true,
         };
         app.expand_ancestors();
         app
@@ -258,6 +265,50 @@ impl App {
             Mode::Normal if self.focus == Focus::Body => self.body_key(event),
             Mode::Normal | Mode::Help => self.command_key(event),
         }
+    }
+
+    /// Text the terminal says was pasted, which is text and never keys.
+    ///
+    /// In the body it is inserted at the cursor as one change, entering and
+    /// leaving INSERT if it was not already on. A one-line input takes it with
+    /// its line breaks as spaces. The outline has nowhere to put text.
+    pub fn handle_paste(&mut self, text: &str) {
+        self.message.clear();
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        match self.mode {
+            Mode::Headline | Mode::Command | Mode::Search => {
+                let Some(mini) = self.mini.as_mut() else {
+                    return;
+                };
+                for ch in text.trim_end_matches('\n').chars() {
+                    mini.insert(if ch == '\n' { ' ' } else { ch });
+                }
+                self.preview_search();
+            }
+            Mode::Insert => self.insert_text(&text),
+            Mode::Normal if self.focus == Focus::Body => {
+                self.begin_body_edit();
+                self.insert_text(&text);
+                self.insert_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            }
+            _ => {
+                self.message =
+                    "paste: nothing takes text here; open a body or a headline".to_string()
+            }
+        }
+    }
+
+    /// Type `text` into the INSERT session, each character as itself.
+    fn insert_text(&mut self, text: &str) {
+        let mut lines = self.buffer.clone().unwrap_or_else(|| self.body_buffer());
+        for ch in text.chars() {
+            match ch {
+                '\n' => self.editor.insert_newline(&mut lines),
+                ch => self.editor.insert_char(&mut lines, ch),
+            }
+        }
+        self.buffer = Some(lines);
+        self.scroll_to_cursor();
     }
 
     /// NORMAL and HELP: accumulate a count and keys, then run a binding.
@@ -498,15 +549,83 @@ impl App {
 
     // --- Files ------------------------------------------------------------
 
+    /// Leo's `save`: the `.leo` file, then every dirty external file.
+    ///
+    /// The `.leo` file goes first, so the outline's edits reach disk however
+    /// the files fare. A file that fails stays dirty for the next save and
+    /// does not stop the others.
     pub fn save(&mut self) {
+        self.request_save(true);
+    }
+
+    /// Leo's `write-outline-only`: the `.leo` file and nothing else.
+    pub fn write_outline_only(&mut self) {
+        if self.outline().file_name.is_empty() {
+            self.message = "write-outline-only: no file name; use :saveas path".to_string();
+            return;
+        }
+        self.request_save(false);
+    }
+
+    fn request_save(&mut self, files: bool) {
         if self.outline().file_name.is_empty() {
             self.open_mini(MiniKind::SaveAs, String::new());
             return;
         }
-        match self.doc.save("") {
-            Ok(path) => self.message = format!("saved: {path}"),
-            Err(e) => self.message = format!("save failed: {e}"),
+        self.save_files = files;
+        if self.outline().changed_on_disk(&self.outline().file_name) {
+            self.open_mini(MiniKind::ConfirmSave, String::new());
+            return;
         }
+        self.save_now(true);
+    }
+
+    /// Save the `.leo` file unless the user declined to overwrite it, then the
+    /// external files unless this is `write-outline-only`.
+    ///
+    /// A `.leo` file that is not saved, by failure or by refusal, holds back
+    /// every external file, as `leolib::save_all` does.
+    fn save_now(&mut self, leo: bool) {
+        let name = leolib::util::short_file_name(&self.outline().file_name);
+        let leo = match leo {
+            true if self.save_files => {
+                let result = self.doc.save_all("");
+                match result.leo {
+                    Ok(_) => return self.report_save(format!("saved {name}"), result.files),
+                    Err(e) => format!("save failed: {e}"),
+                }
+            }
+            true => match self.doc.save("") {
+                Ok(_) => return self.message = format!("saved {name}"),
+                Err(e) => format!("save failed: {e}"),
+            },
+            false => format!("not saved: {name}"),
+        };
+        self.message = match self.save_files {
+            true => self.held_back(leo),
+            false => leo,
+        };
+    }
+
+    /// `message`, naming the dirty external files a failed save did not write.
+    fn held_back(&self, message: String) -> String {
+        match leolib::external::find_files_to_write(self.outline(), true)
+            .0
+            .len()
+        {
+            0 => message,
+            n => format!("{message}; {} not written", plural(n, "external file")),
+        }
+    }
+
+    /// Say what saving the `.leo` file did, then what writing the files did.
+    fn report_save(&mut self, leo: String, files: leolib::external::WriteResult) {
+        let none = files.written.is_empty() && files.unchanged == 0 && files.errors.is_empty();
+        self.report_write(files);
+        self.message = match none {
+            true => leo,
+            false => format!("{leo}; {}", self.message),
+        };
     }
 
     /// Write the outline's external files. Only dirty trees, as Leo does.
@@ -532,10 +651,107 @@ impl App {
             ));
         }
         self.message = parts.join(", ");
-        if !result.refused.is_empty() {
-            self.pending_overwrite = result.refused;
+        let mut refused = result.refused;
+        refused.extend(result.changed_on_disk);
+        if !refused.is_empty() {
+            self.pending_overwrite = refused;
             self.open_mini(MiniKind::ConfirmOverwrite, String::new());
         }
+    }
+
+    /// Say that external files changed on disk, when any this outline read did.
+    ///
+    /// Run when the terminal regains focus: the likeliest moment another
+    /// program has written them.
+    pub fn check_disk(&mut self) {
+        let o = self.outline();
+        let mut changed: Vec<String> = o
+            .file_stamps
+            .keys()
+            .filter(|path| o.changed_on_disk(path))
+            .map(|path| leolib::util::short_file_name(path))
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        changed.sort();
+        self.message = format!(
+            "changed on disk: {}. :refresh-from-disk or :read-at-file-nodes reads them, :e! the .leo file",
+            changed.join(", ")
+        );
+    }
+
+    /// Leo's `refresh-from-disk`: read the `@<file>` node at or above the
+    /// selection from disk again.
+    pub fn refresh_from_disk(&mut self) {
+        let o = self.outline();
+        let Some(root) = self
+            .current
+            .self_and_parents(o)
+            .into_iter()
+            .find(|p| p.is_any_at_file_node(o))
+        else {
+            self.message = "refresh-from-disk: not in an @<file> tree".to_string();
+            return;
+        };
+        let (files, _) = leolib::external::find_files_to_read(o, &root, false);
+        if files.is_empty() {
+            self.message = format!("refresh-from-disk: {} is never read", root.h(o));
+            return;
+        }
+        self.read_or_ask(files);
+    }
+
+    /// Leo's `read-at-file-nodes`: read every `@<file>` node at or under the
+    /// selection from disk again.
+    pub fn read_at_file_nodes(&mut self) {
+        let (files, _) = leolib::external::find_files_to_read(self.outline(), &self.current, false);
+        if files.is_empty() {
+            self.message = "read-at-file-nodes: no external files to read here".to_string();
+            return;
+        }
+        self.read_or_ask(files);
+    }
+
+    /// Read `files`, asking first if that would discard edits not yet written.
+    fn read_or_ask(&mut self, files: Vec<Position>) {
+        if files.iter().any(|p| p.is_dirty(self.outline())) {
+            self.pending_read = files;
+            self.open_mini(MiniKind::ConfirmRead, String::new());
+            return;
+        }
+        self.read_files(files);
+    }
+
+    fn read_files(&mut self, files: Vec<Position>) {
+        // A selection inside a tree being rebuilt names nodes about to go, so
+        // it moves to that tree's root, which the read keeps.
+        let o = self.outline();
+        let inside = self
+            .current
+            .self_and_parents(o)
+            .into_iter()
+            .find(|p| files.iter().any(|f| f.v == p.v));
+        let result = self.doc.read_files(files);
+        match inside {
+            Some(root) => self.select(root),
+            None => self.clamp_current(),
+        }
+        self.buffer = None;
+        self.message = read_report_message(&result).unwrap_or_else(|| {
+            format!("read {}; undo history cleared", plural(result.read, "file"))
+        });
+    }
+
+    /// Leo's `revert`, vim's `:e!`: open the `.leo` file again, dropping
+    /// every change since it was last saved.
+    pub fn revert(&mut self) {
+        let path = self.outline().file_name.clone();
+        if path.is_empty() {
+            self.message = "revert: the outline has never been saved".to_string();
+            return;
+        }
+        self.open_file_now(&path);
     }
 
     /// The prompt drawn before the minibuffer's text.
@@ -546,25 +762,50 @@ impl App {
         match (mini.kind, self.pending_overwrite.as_slice()) {
             (MiniKind::ConfirmOverwrite, [p]) => {
                 let path = self.outline().full_path(p);
-                let name = std::path::Path::new(&path)
-                    .file_name()
-                    .map_or(path.clone(), |n| n.to_string_lossy().to_string());
-                format!("overwrite {name}, which this outline has not read? (y/n) ")
+                let name = leolib::util::short_file_name(&path);
+                match self.outline().changed_on_disk(&path) {
+                    true => {
+                        format!("overwrite {name}, which changed on disk since it was read? (y/n) ")
+                    }
+                    false => format!("overwrite {name}, which this outline has not read? (y/n) "),
+                }
             }
             (MiniKind::ConfirmOverwrite, files) => format!(
-                "overwrite {} files this outline has not read? (y/n) ",
+                "overwrite {} files this outline has not read, or that changed on disk? (y/n) ",
                 files.len()
             ),
+            (MiniKind::ConfirmRead, _) if self.pending_read.len() == 1 => {
+                let name = self.pending_read[0].h(self.outline()).to_string();
+                format!("discard edits not written to {name}? (y/n) ")
+            }
+            (MiniKind::ConfirmQuit, _) => format!("{}. quit anyway? (y/n) ", self.unsaved_work()),
             (kind, _) => kind.label().to_string(),
         }
     }
 
     pub fn request_quit(&mut self) {
-        if !self.outline().changed {
+        if self.unsaved_work().is_empty() {
             self.quit = true;
             return;
         }
         self.open_mini(MiniKind::ConfirmQuit, String::new());
+    }
+
+    /// What quitting now would lose, or "" if nothing.
+    ///
+    /// Saving the `.leo` file clears `changed`, but an `@file` tree's text is
+    /// not in the `.leo` file: only `w` puts it on disk.
+    pub fn unsaved_work(&self) -> String {
+        let o = self.outline();
+        let files = leolib::external::find_files_to_write(o, true).0.len();
+        let mut parts = Vec::new();
+        if o.changed {
+            parts.push("unsaved changes".to_string());
+        }
+        if files > 0 {
+            parts.push(format!("{} not written", plural(files, "external file")));
+        }
+        parts.join(", ")
     }
 
     // --- Prompts and the body editor --------------------------------------
@@ -579,7 +820,10 @@ impl App {
         self.mode = match kind {
             MiniKind::Command => Mode::Command,
             MiniKind::SearchForward | MiniKind::SearchBackward => Mode::Search,
-            MiniKind::ConfirmQuit | MiniKind::ConfirmOverwrite => Mode::Confirm,
+            MiniKind::ConfirmQuit
+            | MiniKind::ConfirmOverwrite
+            | MiniKind::ConfirmSave
+            | MiniKind::ConfirmRead => Mode::Confirm,
             _ => Mode::Headline,
         };
         if kind.is_search() {
@@ -849,9 +1093,17 @@ impl App {
         self.mode = Mode::Normal;
         let text = mini.buffer;
         let refused = std::mem::take(&mut self.pending_overwrite);
+        let to_read = std::mem::take(&mut self.pending_read);
         let approved = accepted && text.trim().eq_ignore_ascii_case("y");
-        if mini.kind == MiniKind::ConfirmOverwrite && !approved {
-            self.message = format!("not overwritten: {} unread file(s)", refused.len());
+        if !approved {
+            match mini.kind {
+                MiniKind::ConfirmOverwrite => {
+                    self.message = format!("not overwritten: {}", plural(refused.len(), "file"))
+                }
+                MiniKind::ConfirmSave => self.save_now(false),
+                MiniKind::ConfirmRead => self.message = "not read".to_string(),
+                _ => {}
+            }
         }
         if !accepted {
             if mini.kind.is_search() {
@@ -866,13 +1118,22 @@ impl App {
                 let p = self.current.clone();
                 self.doc.set_headline(&p, &text);
             }
-            MiniKind::SaveAs => match self.doc.save(&text) {
-                Ok(path) => self.message = format!("saved: {path}"),
-                Err(e) => self.message = format!("save failed: {e}"),
-            },
+            // An existing file is refused as `:saveas` refuses it, which the
+            // message names.
+            MiniKind::SaveAs => self.run_command_line(&format!("saveas {text}")),
             MiniKind::ConfirmQuit => {
                 if text.trim().eq_ignore_ascii_case("y") {
                     self.quit = true;
+                }
+            }
+            MiniKind::ConfirmSave => {
+                if approved {
+                    self.save_now(true);
+                }
+            }
+            MiniKind::ConfirmRead => {
+                if approved {
+                    self.read_files(to_read);
                 }
             }
             MiniKind::ConfirmOverwrite => {
@@ -880,6 +1141,8 @@ impl App {
                     for p in &refused {
                         let path = self.outline().full_path(p);
                         self.doc.outline.remember_read_path(p, &path);
+                        let stamp = leolib::util::file_stamp(&path);
+                        self.doc.outline.record_file_stamp(&path, stamp);
                     }
                     let result = self.doc.write_files(refused);
                     self.report_write(result);
@@ -993,14 +1256,45 @@ impl App {
             }
             "save-and-quit" => {
                 self.save();
-                if self.mini.is_none() {
-                    self.quit = true;
+                // A failed save leaves `changed` set, and says why.
+                if self.mini.is_none() && !self.outline().changed {
+                    self.request_quit();
                 }
             }
-            "save" if !parsed.arg.is_empty() => match self.doc.save(&parsed.arg) {
-                Ok(path) => self.message = format!("saved: {path}"),
-                Err(e) => self.message = format!("save failed: {e}"),
-            },
+            // vim's `:w path` writes a copy; `:saveas path` moves the outline.
+            // Both write the dirty external files too, as Leo's `save-to` and
+            // `save-as` do.
+            "save" | "save-to" if !parsed.arg.is_empty() => {
+                if self.refuse_existing(&parsed.arg, parsed.force) {
+                    return;
+                }
+                match self.doc.save_to(&parsed.arg) {
+                    Ok(path) => {
+                        let files = self.doc.write_external_files(true);
+                        let leo = format!("wrote a copy: {}", leolib::util::short_file_name(&path));
+                        self.report_save(leo, files);
+                    }
+                    Err(e) => self.message = self.held_back(format!("save failed: {e}")),
+                }
+            }
+            "save-as" | "save-to" if parsed.arg.is_empty() => {
+                self.message = format!("{}: needs a file name", parsed.name)
+            }
+            "save-as" => {
+                if self.refuse_existing(&parsed.arg, parsed.force) {
+                    return;
+                }
+                let result = self.doc.save_all(&parsed.arg);
+                match result.leo {
+                    Ok(path) => {
+                        let leo = format!("saved {}", leolib::util::short_file_name(&path));
+                        self.report_save(leo, result.files);
+                    }
+                    Err(e) => self.message = self.held_back(format!("save failed: {e}")),
+                }
+            }
+            "open" if parsed.force && parsed.arg.is_empty() => self.revert(),
+            "open" if parsed.force => self.open_file_now(&parsed.arg),
             "open" => self.open_file(&parsed.arg),
             "import-at-file" => self.import_at_file(&parsed.arg),
             "set" => self.set_options(&parsed.arg),
@@ -1034,16 +1328,34 @@ impl App {
         }
     }
 
+    /// True, with a message, if `path` is another file that exists and `!` was
+    /// not given. vim's E13.
+    fn refuse_existing(&mut self, path: &str, force: bool) -> bool {
+        let full = leolib::util::finalize(path);
+        let exists = std::path::Path::new(&full).exists();
+        if force || !exists || full == self.outline().file_name {
+            return false;
+        }
+        self.message = format!("{full} exists: add ! to overwrite it");
+        true
+    }
+
     /// `:e path` -- open another outline, refusing to lose unsaved work.
     fn open_file(&mut self, path: &str) {
         if path.is_empty() {
             self.message = "open: needs a file name".to_string();
             return;
         }
-        if self.outline().changed {
-            self.message = "unsaved changes: save first, or use :q! and reopen".to_string();
+        let unsaved = self.unsaved_work();
+        if !unsaved.is_empty() {
+            self.message = format!("{unsaved}: write first, or :e! to discard");
             return;
         }
+        self.open_file_now(path);
+    }
+
+    /// Open `path` in place of this outline, whatever is unsaved.
+    fn open_file_now(&mut self, path: &str) {
         match Document::open(path, true) {
             Ok(doc) => {
                 let keep = std::mem::replace(self, App::new(doc));
@@ -1839,6 +2151,323 @@ mod tests {
     }
 
     #[test]
+    fn quitting_with_an_unwritten_external_file_asks_first_after_a_save() {
+        let dir = std::env::temp_dir().join(format!("leotui-unwritten-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let leo = dir.join("u.leo");
+        let mut doc = Document::new_empty(leo.to_str().unwrap());
+        let root = doc.outline.root_position().unwrap();
+        doc.set_headline(&root, "@file u.py");
+        doc.set_body(&root, "x = 1\n");
+        let mut app = App::new(doc);
+        app.run_command_line("write-outline-only");
+        assert!(!dir.join("u.py").exists());
+        assert!(!app.outline().changed, "{}", app.message);
+        press(&mut app, "q");
+        assert_eq!(app.mode, Mode::Confirm);
+        assert!(!app.quit);
+        assert!(
+            app.mini_label().contains("1 external file not written"),
+            "{}",
+            app.mini_label()
+        );
+        press(&mut app, "Escape");
+        // `:e` refuses for the same reason.
+        press(&mut app, ":");
+        type_text(&mut app, "e elsewhere.leo");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.message.contains("not written"), "{}", app.message);
+        // Once written, nothing is lost.
+        app.write_external();
+        press(&mut app, "q");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(app.quit, "{}", app.message);
+    }
+
+    /// An unsaved app in `dir` with `@file good.py` and `@file bad.py`, both
+    /// dirty. bad.py has a child its body never includes, so it cannot be
+    /// written until `@others` is added.
+    fn good_and_bad(dir: &std::path::Path) -> App {
+        std::fs::create_dir_all(dir).unwrap();
+        let leo = dir.join("s.leo");
+        let mut doc = Document::new_empty(leo.to_str().unwrap());
+        let bad = doc.outline.root_position().unwrap();
+        doc.set_headline(&bad, "@file bad.py");
+        doc.set_body(&bad, "x = 1\n");
+        let child = doc.outline.insert_as_last_child(&bad);
+        doc.set_headline(&child, "orphan");
+        doc.set_body(&child, "y = 2\n");
+        let good = doc.outline.insert_after(&bad);
+        doc.set_headline(&good, "@file good.py");
+        doc.set_body(&good, "z = 3\n");
+        App::new(doc)
+    }
+
+    #[test]
+    fn save_writes_the_outline_then_every_dirty_file_it_can() {
+        let dir = scratch("saveall");
+        let mut app = good_and_bad(&dir);
+        app.run_command_line("w");
+        assert!(dir.join("s.leo").exists(), "{}", app.message);
+        assert!(!app.outline().changed);
+        assert!(dir.join("good.py").exists(), "{}", app.message);
+        assert!(!dir.join("bad.py").exists());
+        assert!(
+            app.message
+                .starts_with("saved s.leo; wrote 1, 1 failed: orphan node"),
+            "{}",
+            app.message
+        );
+
+        // The failed file stays dirty, so quitting still asks.
+        let bad = app.outline().root_position().unwrap();
+        assert!(bad.is_dirty(app.outline()));
+        press(&mut app, "q");
+        assert!(
+            app.mini_label().contains("1 external file not written"),
+            "{}",
+            app.mini_label()
+        );
+        press(&mut app, "Escape");
+
+        // Once the bug is fixed, the next save writes it.
+        app.doc.set_body(&bad, "x = 1\n@others\n");
+        press(&mut app, "Ctrl-s");
+        let written = std::fs::read_to_string(dir.join("bad.py")).unwrap_or_default();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(written.contains("y = 2"), "{}", app.message);
+        assert!(!bad.is_dirty(app.outline()));
+    }
+
+    #[test]
+    fn a_leo_file_that_fails_to_save_holds_back_every_file() {
+        let dir = scratch("leofails");
+        let mut app = good_and_bad(&dir);
+        app.doc.outline.file_name = dir.join("missing/s.leo").to_string_lossy().to_string();
+        app.run_command_line("w");
+        let wrote = dir.join("good.py").exists();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(!wrote, "{}", app.message);
+        assert!(app.message.starts_with("save failed: "), "{}", app.message);
+        assert!(
+            app.message.ends_with("; 2 external files not written"),
+            "{}",
+            app.message
+        );
+        assert!(app.outline().changed);
+    }
+
+    #[test]
+    fn write_outline_only_leaves_the_files_alone() {
+        let dir = scratch("outlineonly");
+        let mut app = good_and_bad(&dir);
+        app.run_command_line("write-outline-only");
+        let wrote_leo = dir.join("s.leo").exists();
+        let wrote_file = dir.join("good.py").exists();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(wrote_leo, "{}", app.message);
+        assert!(!wrote_file);
+    }
+
+    #[test]
+    fn declining_to_overwrite_the_leo_file_writes_no_file() {
+        let dir = scratch("declineleo");
+        let mut app = good_and_bad(&dir);
+        app.run_command_line("w");
+        let good = app
+            .outline()
+            .root_position()
+            .unwrap()
+            .next(app.outline())
+            .unwrap();
+        app.doc.set_body(&good, "z = 4\n");
+        let leo = dir.join("s.leo");
+        let mut text = std::fs::read_to_string(&leo).unwrap();
+        text.push('\n');
+        std::fs::write(&leo, &text).unwrap();
+        app.run_command_line("w");
+        assert_eq!(app.mode, Mode::Confirm);
+        type_text(&mut app, "n");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let leo_after = std::fs::read_to_string(&leo).unwrap();
+        let good_after = std::fs::read_to_string(dir.join("good.py")).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(leo_after, text);
+        assert!(good_after.contains("z = 3"), "{good_after}");
+        assert_eq!(
+            app.message,
+            "not saved: s.leo; 2 external files not written"
+        );
+    }
+
+    #[test]
+    fn save_and_quit_stays_when_the_save_fails() {
+        let mut doc = Document::new_empty("/nonexistent-leotui-dir/x.leo");
+        let root = doc.outline.root_position().unwrap();
+        doc.set_headline(&root, "changed");
+        let mut app = App::new(doc);
+        app.run_command_line("wq");
+        assert!(!app.quit);
+        assert!(app.message.contains("save failed"), "{}", app.message);
+    }
+
+    #[test]
+    fn promote_can_be_undone_and_quit_sees_it() {
+        let mut app = app();
+        app.doc.outline.changed = false;
+        press(&mut app, "g<");
+        assert_eq!(heads(&app), vec!["a", "a1", "b", "c"]);
+        press(&mut app, "q");
+        assert_eq!(app.mode, Mode::Confirm);
+        press(&mut app, "Escape");
+        press(&mut app, "u");
+        let o = app.outline();
+        let root = o.root_position().unwrap();
+        assert_eq!(root.num_children(o), 1);
+        assert_eq!(o.all_positions().len(), 5);
+    }
+
+    /// An app over `@file x.py`, written, saved, and opened again from `dir`.
+    fn on_disk(dir: &std::path::Path) -> (App, std::path::PathBuf) {
+        std::fs::create_dir_all(dir).unwrap();
+        let leo = dir.join("x.leo");
+        let mut doc = Document::new_empty(leo.to_str().unwrap());
+        let root = doc.outline.root_position().unwrap();
+        doc.set_headline(&root, "@file x.py");
+        doc.set_body(&root, "x = 1\n");
+        doc.write_external_files(false);
+        doc.save("").unwrap();
+        let app = App::new(Document::open(leo.to_str().unwrap(), true).unwrap());
+        (app, dir.join("x.py"))
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("leotui-{name}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn writing_over_a_file_changed_on_disk_asks_first() {
+        let dir = scratch("changed");
+        let (mut app, py) = on_disk(&dir);
+        let theirs = std::fs::read_to_string(&py)
+            .unwrap()
+            .replace("x = 1", "x = 1  # theirs");
+        std::fs::write(&py, &theirs).unwrap();
+        let root = app.current.clone();
+        app.doc.set_body(&root, "x = 2\n");
+        app.write_external();
+        assert_eq!(app.mode, Mode::Confirm);
+        assert!(
+            app.mini_label().contains("changed on disk"),
+            "{}",
+            app.mini_label()
+        );
+        type_text(&mut app, "n");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), theirs);
+        app.write_external();
+        type_text(&mut app, "y");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let written = std::fs::read_to_string(&py).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(written.contains("x = 2"), "{written}");
+    }
+
+    #[test]
+    fn refresh_from_disk_reads_the_file_and_asks_over_unwritten_edits() {
+        let dir = scratch("refresh");
+        let (mut app, py) = on_disk(&dir);
+        let theirs = std::fs::read_to_string(&py)
+            .unwrap()
+            .replace("x = 1", "x = 3");
+        std::fs::write(&py, theirs).unwrap();
+        app.check_disk();
+        assert!(
+            app.message.contains("changed on disk: x.py"),
+            "{}",
+            app.message
+        );
+
+        let root = app.current.clone();
+        app.doc.set_body(&root, "x = 2\n");
+        app.run_command_line("refresh-from-disk");
+        assert_eq!(app.mode, Mode::Confirm);
+        press(&mut app, "Escape");
+        assert_eq!(app.current.b(app.outline()), "x = 2\n");
+
+        app.run_command_line("refresh-from-disk");
+        type_text(&mut app, "y");
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(app.current.b(app.outline()), "x = 3\n", "{}", app.message);
+    }
+
+    #[test]
+    fn e_bang_reverts_to_the_saved_outline() {
+        let dir = scratch("revert");
+        let (mut app, _) = on_disk(&dir);
+        let root = app.current.clone();
+        app.doc.set_headline(&root, "@file y.py");
+        app.run_command_line("e");
+        assert!(app.message.contains("needs a file name") || app.message.contains("unsaved"));
+        app.run_command_line("e!");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            app.current.h(app.outline()),
+            "@file x.py",
+            "{}",
+            app.message
+        );
+        assert!(!app.outline().changed);
+    }
+
+    #[test]
+    fn w_with_a_path_writes_a_copy_and_refuses_an_existing_file() {
+        let dir = scratch("saveto");
+        let (mut app, py) = on_disk(&dir);
+        let name = app.outline().file_name.clone();
+        let copy = dir.join("copy.leo");
+        app.run_command_line(&format!("w {}", copy.display()));
+        assert!(copy.exists(), "{}", app.message);
+        assert_eq!(app.outline().file_name, name);
+
+        let before = std::fs::read_to_string(&py).unwrap();
+        app.run_command_line(&format!("w {}", py.display()));
+        assert!(
+            app.message.contains("add ! to overwrite"),
+            "{}",
+            app.message
+        );
+        assert_eq!(std::fs::read_to_string(&py).unwrap(), before);
+
+        app.run_command_line(&format!("saveas {}", copy.display()));
+        assert!(app.message.contains("add !"), "{}", app.message);
+        app.run_command_line(&format!("saveas! {}", copy.display()));
+        let moved = app.outline().file_name.clone();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(moved.ends_with("copy.leo"), "{moved}");
+    }
+
+    #[test]
+    fn a_paste_is_text_and_never_keys() {
+        let mut app = app();
+        press(&mut app, "e");
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        app.handle_paste(" pasted\ndd");
+        assert_eq!(app.mode, Mode::Headline);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(heads(&app), vec!["a pasted dd", "b", "c"]);
+
+        // In body NORMAL it goes in at the cursor, as one undo.
+        press(&mut app, "Tab");
+        app.handle_paste("one\n\ttwo\n");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.current.b(app.outline()), "one\n\ttwo\n\n");
+        press(&mut app, "u");
+        assert_eq!(app.current.b(app.outline()), "");
+    }
+
+    #[test]
     fn writing_over_an_unread_file_asks_first() {
         let dir = std::env::temp_dir().join(format!("leotui-overwrite-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1861,7 +2490,7 @@ mod tests {
         type_text(&mut app, "n");
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
-        assert_eq!(app.message, "not overwritten: 1 unread file(s)");
+        assert_eq!(app.message, "not overwritten: 1 file");
 
         app.write_external();
         type_text(&mut app, "y");

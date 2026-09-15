@@ -35,6 +35,8 @@ pub enum Error {
     Write { detail: String },
     /// Writing would discard a file this outline never read.
     RefusedOverwrite { path: String },
+    /// Writing would discard changes made to the file since it was read.
+    ChangedOnDisk { path: String },
     /// Something this port does not do, such as `@shadow`.
     Unsupported { detail: String },
 }
@@ -60,6 +62,10 @@ impl std::fmt::Display for Error {
             Error::RefusedOverwrite { path } => write!(
                 f,
                 "refusing to overwrite a file this outline has not read: {path}"
+            ),
+            Error::ChangedOnDisk { path } => write!(
+                f,
+                "refusing to overwrite a file changed on disk since it was read: {path}"
             ),
             Error::Unsupported { detail } => write!(f, "{detail}"),
         }

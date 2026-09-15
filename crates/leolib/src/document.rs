@@ -233,6 +233,34 @@ impl Document {
         true
     }
 
+    /// Make p's children its following siblings, as Leo's `promote`.
+    ///
+    /// False, and nothing recorded, when p has no children.
+    pub fn promote(&mut self, p: &Position) -> bool {
+        let parent_v = p.parent_vnode(&self.outline);
+        let children = self.outline.node(p.v).children.clone();
+        if children.is_empty() {
+            return false;
+        }
+        self.undoer.begin_group("promote");
+        // Each move takes p's first child, so every bead starts at index 0.
+        for (i, v) in children.iter().enumerate() {
+            self.undoer.push(
+                "promote",
+                Bead::Move {
+                    v: *v,
+                    from: (p.v, 0),
+                    to: (parent_v, p.child_index + 1 + i),
+                },
+            );
+        }
+        self.undoer.end_group();
+        self.outline.promote(p);
+        self.outline.set_dirty(p);
+        self.outline.changed = true;
+        true
+    }
+
     /// Copy p to the clipboard, then delete it.
     pub fn cut_node(&mut self, p: &Position) -> Option<Position> {
         self.copy_node(p);
@@ -370,11 +398,37 @@ impl Document {
 
     // --- Files ------------------------------------------------------------
 
-    /// Write the `.leo` file. External files are a separate command.
+    /// Write the `.leo` file only. [`Document::save_all`] also writes the external files.
     pub fn save(&mut self, path: &str) -> Result<String> {
         let written = leofile::write_leo_file(&mut self.outline, path)?;
         crate::state::save(&self.outline);
         Ok(written)
+    }
+
+    /// Save the `.leo` file, then write every dirty external file, as
+    /// [`crate::save_all`]. No file is written if the `.leo` write fails.
+    pub fn save_all(&mut self, path: &str) -> crate::SaveResult {
+        let leo = self.save(path);
+        let files = match leo {
+            Ok(_) => self.write_external_files(true),
+            Err(_) => WriteResult::default(),
+        };
+        crate::SaveResult { leo, files }
+    }
+
+    /// Write a copy of the `.leo` file to `path`, as Leo's `save-to`.
+    pub fn save_to(&mut self, path: &str) -> Result<String> {
+        leofile::write_leo_copy(&mut self.outline, path)
+    }
+
+    /// Read `files` from disk again, replacing their trees.
+    ///
+    /// Not undoable, as in Leo: the read rebuilds the trees, and the history
+    /// still names the nodes it replaced. The history is cleared.
+    pub fn read_files(&mut self, files: Vec<Position>) -> ReadResult {
+        let result = external::read_files(&mut self.outline, files);
+        self.undoer.clear();
+        result
     }
 
     pub fn write_external_files(&mut self, dirty_only: bool) -> WriteResult {
@@ -544,8 +598,24 @@ mod tests {
     fn promote_is_the_inverse_of_demote() {
         let (mut d, all) = abc();
         d.demote(&all[0]);
-        d.outline.promote(&all[0]);
+        assert!(d.promote(&all[0]));
         assert_eq!(heads(&d), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn promote_undoes_redoes_and_marks_the_outline_changed() {
+        let (mut d, all) = abc();
+        d.demote(&all[0]);
+        d.undoer.clear();
+        d.outline.changed = false;
+        assert!(d.promote(&all[0]));
+        assert!(d.outline.changed);
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "  b", "  c"]);
+        d.redo();
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+        assert!(!d.promote(&all[2]));
     }
 
     #[test]
