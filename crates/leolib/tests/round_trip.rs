@@ -521,7 +521,7 @@ fn replacing_a_file_keeps_its_mode() {
     fs::write(&path, "echo 0\n").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     let p = path.to_string_lossy().to_string();
-    assert!(external::replace_file(&p, "echo 1\n", "utf-8").unwrap());
+    assert!(external::replace_file(&p, "echo 1\n", false).unwrap());
     assert_eq!(fs::read_to_string(&path).unwrap(), "echo 1\n");
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o755, "mode is {mode:o}");
@@ -756,4 +756,435 @@ fn save_all_writes_the_outline_and_every_file_that_can_be_written() {
     assert!(result.leo.is_ok());
     assert_eq!(result.files.written.len(), 1, "{:?}", result.files.errors);
     assert!(dir.path().join("bad.py").exists());
+}
+
+#[test]
+fn an_at_clean_edit_in_the_same_second_as_the_write_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo_path = dir.path().join("test.leo").to_string_lossy().to_string();
+    let py_path = dir.path().join("sample.py");
+
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@clean sample.py");
+    o.set_body(&root, "@others\n");
+    let a = o.insert_as_last_child(&root);
+    o.set_headline(&a, "one");
+    o.set_body(&a, "a = 1\n");
+    o.file_name = leo_path.clone();
+
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+
+    // An outside edit whose mtime is in the same second as our write. The
+    // read used to compare whole seconds and skip it.
+    fs::write(&py_path, "a = 111\n").unwrap();
+    let result = external::read_external_files(&mut o);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+    let root = o.root_position().unwrap();
+    assert_eq!(root.children(&o)[0].b(&o), "a = 111\n");
+}
+
+#[test]
+fn an_encoding_this_port_cannot_write_is_refused_whatever_its_name() {
+    // cp1252 was not in the list of names `is_valid_encoding` knew, so
+    // `get_encoding` fell back to utf-8 and the write replaced the file's
+    // bytes with UTF-8 without a word.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nosent.py");
+    let disk = b"name = 'caf\xe9'\n";
+    fs::write(&file, disk).unwrap();
+
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@nosent nosent.py");
+    o.set_body(&root, "@encoding cp1252\nname = 'caf\u{e9}'\n");
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    let Error::UnsupportedEncoding { encoding } = &result.errors[0].error else {
+        panic!("{:?}", result.errors[0].error);
+    };
+    assert_eq!(encoding, "cp1252");
+    assert_eq!(fs::read(&file).unwrap(), disk);
+}
+
+#[test]
+fn an_at_file_written_with_an_encoding_alias_reads_back() {
+    // The header is `-encoding=utf8,.`; the comma is not part of the name.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo").to_string_lossy().to_string();
+
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file sample.py");
+    o.set_body(&root, "@encoding utf8\nx = 1\n");
+    assert_eq!(
+        external::write_external_files(&mut o, false).written.len(),
+        1
+    );
+    leolib::save(&mut o, "").unwrap();
+
+    let o2 = leolib::open_outline(&leo, true).unwrap();
+    let root = o2.root_position().unwrap();
+    assert_eq!(root.b(&o2), "@encoding utf8\nx = 1\n");
+}
+
+#[test]
+fn a_crlf_file_is_left_alone_when_its_text_has_not_changed() {
+    // Leo's `compareIgnoringLineEndings`. A byte compare called every CRLF
+    // file changed, so a write-all rewrote all of them as LF.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo").to_string_lossy().to_string();
+    let py = dir.path().join("sample.py");
+
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file sample.py");
+    o.set_body(&root, "x = 1\n");
+    assert_eq!(
+        external::write_external_files(&mut o, false).written.len(),
+        1
+    );
+    leolib::save(&mut o, "").unwrap();
+
+    let crlf = fs::read_to_string(&py).unwrap().replace('\n', "\r\n");
+    fs::write(&py, &crlf).unwrap();
+
+    let mut o = leolib::open_outline(&leo, true).unwrap();
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.written, Vec::<String>::new());
+    assert_eq!(result.unchanged, 1);
+    assert_eq!(fs::read_to_string(&py).unwrap(), crlf);
+}
+
+#[test]
+fn an_explicit_line_ending_still_corrects_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo").to_string_lossy().to_string();
+    let py = dir.path().join("sample.py");
+
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file sample.py");
+    o.set_body(&root, "@lineending crlf\nx = 1\n");
+    assert_eq!(
+        external::write_external_files(&mut o, false).written.len(),
+        1
+    );
+    assert!(fs::read_to_string(&py).unwrap().contains("\r\n"));
+
+    fs::write(&py, fs::read_to_string(&py).unwrap().replace("\r\n", "\n")).unwrap();
+    o.record_file_stamp(py.to_string_lossy().as_ref(), None);
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.written.len(), 1);
+    assert!(fs::read_to_string(&py).unwrap().contains("\r\n"));
+}
+
+#[test]
+fn an_at_auto_tree_with_nothing_in_it_does_not_truncate_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let py = dir.path().join("sample.py");
+    fs::write(&py, "x = 1\ny = 2\n").unwrap();
+
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@auto sample.py");
+    external::read_file_at_position(&mut o, &root).unwrap();
+
+    // The tree the import produced, emptied: what an importer that returns
+    // nothing would leave behind.
+    let root = o.root_position().unwrap();
+    o.delete_all_children(root.v);
+    o.set_body(&root, "");
+
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert!(
+        matches!(result.errors[0].error, Error::Write { .. }),
+        "{:?}",
+        result.errors[0].error
+    );
+    assert_eq!(fs::read_to_string(&py).unwrap(), "x = 1\ny = 2\n");
+}
+
+#[test]
+fn an_empty_file_leaves_an_at_edit_node_alone() {
+    // Leo's #391. The read used to replace the body with the @language line,
+    // which for @edit is the only copy of the text once the file is empty.
+    let dir = tempfile::tempdir().unwrap();
+    let txt = dir.path().join("notes.txt");
+    fs::write(&txt, "").unwrap();
+
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@edit notes.txt");
+    o.set_body(&root, "@nocolor\nwork not yet written\n");
+
+    assert!(!external::read_file_at_position(&mut o, &root).unwrap());
+    assert_eq!(root.b(&o), "@nocolor\nwork not yet written\n");
+}
+
+#[test]
+fn an_at_edit_node_with_children_is_not_written() {
+    // Only the node's own body reaches the file, so the children's text
+    // would be dropped. Leo refuses the write for the same reason.
+    let dir = tempfile::tempdir().unwrap();
+    let txt = dir.path().join("notes.txt");
+    fs::write(&txt, "first\n").unwrap();
+
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@edit notes.txt");
+    external::read_file_at_position(&mut o, &root).unwrap();
+    let root = o.root_position().unwrap();
+    let child = o.insert_as_last_child(&root);
+    o.set_body(&child, "second\n");
+
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert!(
+        matches!(result.errors[0].error, Error::Write { .. }),
+        "{:?}",
+        result.errors[0].error
+    );
+    assert_eq!(fs::read_to_string(&txt).unwrap(), "first\n");
+}
+
+#[test]
+fn reading_an_at_auto_file_keeps_the_descendent_ua_blob() {
+    // The importer builds the subtree the blob already describes, so the
+    // read itself must not count as a restructuring.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo");
+    fs::write(dir.path().join("x.py"), "a = 1\n\n\ndef f():\n    pass\n").unwrap();
+    fs::write(
+        &leo,
+        "<?xml version=\"1.0\"?>\n<leo_file>\n<leo_header file_format=\"2\"/>\n<vnodes>\n\
+         <v t=\"a.1\" descendentVnodeUnknownAttributes=\"80049501\"><vh>@auto x.py</vh></v>\n\
+         </vnodes>\n<tnodes>\n</tnodes>\n</leo_file>\n",
+    )
+    .unwrap();
+
+    let mut o = leolib::open_outline(&leo.to_string_lossy(), true).unwrap();
+    assert!(!o.root_position().unwrap().children(&o).is_empty());
+    assert!(leolib::to_xml(&mut o).contains("descendentVnodeUnknownAttributes="));
+}
+
+/// A file with another name for it is written in place. The rename that makes
+/// a write atomic replaces the inode, which would leave the other name on the
+/// old contents.
+#[cfg(unix)]
+#[test]
+fn writing_a_hard_linked_file_keeps_the_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("one.txt");
+    let other = dir.path().join("two.txt");
+    fs::write(&path, "old\n").unwrap();
+    fs::hard_link(&path, &other).unwrap();
+
+    let p = path.to_string_lossy().to_string();
+    assert!(external::replace_file(&p, "new\n", false).unwrap());
+    assert_eq!(fs::read_to_string(&other).unwrap(), "new\n");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
+}
+
+#[test]
+fn a_line_the_reader_does_not_understand_is_reported() {
+    // The sentinel scanner keeps such a line, so the text is not lost, but
+    // its warning was collected and dropped.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo").to_string_lossy().to_string();
+    let py = dir.path().join("sample.py");
+
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file sample.py");
+    o.set_body(&root, "x = 1\n");
+    assert_eq!(
+        external::write_external_files(&mut o, false).written.len(),
+        1
+    );
+    leolib::save(&mut o, "").unwrap();
+
+    let text = fs::read_to_string(&py).unwrap();
+    fs::write(&py, text.replace("x = 1\n", "# @+nonsense\nx = 1\n")).unwrap();
+
+    let (o, report) = leolib::open_outline_with_report(&leo, true).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    assert!(
+        report.warnings[0].message.contains("unexpected line"),
+        "{:?}",
+        report.warnings[0]
+    );
+    assert!(o.root_position().unwrap().b(&o).contains("# @+nonsense"));
+}
+
+#[test]
+fn a_save_names_the_tree_whose_descendent_uas_it_dropped() {
+    // The blob is keyed by archived position, and only Leo can rebuild it, so
+    // a restructured subtree loses it. The save is the one place that can say
+    // so: nothing in the outline records it afterwards.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo");
+    fs::write(dir.path().join("x.py"), "a = 1\n\n\ndef f():\n    pass\n").unwrap();
+    fs::write(
+        &leo,
+        "<?xml version=\"1.0\"?>\n<leo_file>\n<leo_header file_format=\"2\"/>\n<vnodes>\n\
+         <v t=\"a.1\" descendentVnodeUnknownAttributes=\"80049501\"><vh>@auto x.py</vh></v>\n\
+         </vnodes>\n<tnodes>\n</tnodes>\n</leo_file>\n",
+    )
+    .unwrap();
+
+    let mut doc = Document::open(&leo.to_string_lossy(), true).unwrap();
+    let root = doc.outline.root_position().unwrap();
+    let kept = doc.save_all("");
+    assert!(kept.leo.is_ok(), "{:?}", kept.leo);
+    assert_eq!(kept.dropped_descendent_uas, Vec::<String>::new());
+    assert!(fs::read_to_string(&leo)
+        .unwrap()
+        .contains("descendentVnodeUnknownAttributes="));
+
+    let child = root.children(&doc.outline)[0].clone();
+    doc.insert_node_before(&child);
+    let dropped = doc.save_all("");
+    assert!(dropped.leo.is_ok(), "{:?}", dropped.leo);
+    assert_eq!(dropped.dropped_descendent_uas, vec!["@auto x.py"]);
+    assert!(!fs::read_to_string(&leo)
+        .unwrap()
+        .contains("descendentVnodeUnknownAttributes="));
+
+    // Said once: the blob is already gone.
+    assert_eq!(
+        doc.save_all("").dropped_descendent_uas,
+        Vec::<String>::new()
+    );
+}
+
+/// `{'0.0': {'__bookmarks': {'is_dupe': False}}, '0.1': {'str_note': 'keep me'}}`,
+/// pickled and hexlified as Leo writes it.
+const BLOB: &str = "7d7100285803000000302e3071017d7102580b0000005f5f626f6f6b6d61726b737103\
+7d7104580700000069735f6475706571054930300a73735803000000302e3171067d710758080000007374725f6e6f\
+7465710858070000006b656570206d65710973752e";
+
+/// An `@auto x.py` outline whose blob holds the uAs of two imported nodes.
+fn outline_with_imported_uas(dir: &std::path::Path, blob: &str) -> String {
+    let leo = dir.join("test.leo").to_string_lossy().to_string();
+    fs::write(
+        dir.join("x.py"),
+        "a = 1\n\n\ndef f():\n    pass\n\n\ndef g():\n    pass\n",
+    )
+    .unwrap();
+    fs::write(
+        &leo,
+        format!(
+            "<?xml version=\"1.0\"?>\n<leo_file>\n<leo_header file_format=\"2\"/>\n<vnodes>\n\
+             <v t=\"a.1\" descendentVnodeUnknownAttributes=\"{blob}\"><vh>@auto x.py</vh></v>\n\
+             </vnodes>\n<tnodes>\n</tnodes>\n</leo_file>\n"
+        ),
+    )
+    .unwrap();
+    leo
+}
+
+#[test]
+fn a_restructured_at_auto_tree_keeps_its_descendants_unknown_attributes() {
+    // The blob names each node by its position under the `@auto` node, so it
+    // is rebuilt from the tree on every save. It used to be written back as
+    // it was read, which named other nodes after a move, and was then dropped
+    // rather than let Leo restore the uAs onto them.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = outline_with_imported_uas(dir.path(), BLOB);
+
+    let mut doc = Document::open(&leo, true).unwrap();
+    let root = doc.outline.root_position().unwrap();
+    let kids = root.children(&doc.outline);
+    assert_eq!(kids.len(), 2, "{:?}", kids.len());
+    // The read gave the uAs to the nodes the importer built.
+    assert!(doc.outline.node(kids[0].v).uas.contains_key("__bookmarks"));
+    assert_eq!(
+        doc.outline.node(kids[1].v).uas["str_note"].as_file_text(),
+        "keep me"
+    );
+
+    // Move the second node to the front: every position in the blob shifts,
+    // and the write puts the tree's new order in the file.
+    doc.move_up(&kids[1]);
+    let result = doc.save_all("");
+    assert!(result.leo.is_ok(), "{:?}", result.leo);
+    assert_eq!(result.files.written.len(), 1, "{:?}", result.files.errors);
+    assert_eq!(result.dropped_descendent_uas, Vec::<String>::new());
+
+    let doc = Document::open(&leo, true).unwrap();
+    let kids = doc.outline.root_position().unwrap().children(&doc.outline);
+    assert_eq!(kids[0].h(&doc.outline), "function: g");
+    assert_eq!(
+        doc.outline.node(kids[0].v).uas["str_note"].as_file_text(),
+        "keep me"
+    );
+    assert!(doc.outline.node(kids[1].v).uas.contains_key("__bookmarks"));
+}
+
+#[test]
+fn a_blob_this_port_cannot_read_is_still_written_back_unchanged() {
+    // Protocol 4, which `pickle.rs` does not read. It stays where it is, and
+    // a structural change drops it rather than let it name other nodes.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = outline_with_imported_uas(dir.path(), "80049501");
+
+    let mut doc = Document::open(&leo, true).unwrap();
+    assert!(doc.save_all("").leo.is_ok());
+    assert!(fs::read_to_string(&leo).unwrap().contains("\"80049501\""));
+
+    let kids = doc.outline.root_position().unwrap().children(&doc.outline);
+    doc.move_up(&kids[1]);
+    let result = doc.save_all("");
+    assert_eq!(result.dropped_descendent_uas, vec!["@auto x.py"]);
+    assert!(!fs::read_to_string(&leo).unwrap().contains("\"80049501\""));
+}
+
+#[test]
+fn a_move_inside_an_at_file_tree_reaches_the_file() {
+    // `move_to` set the dirty bit on the node it moved, where the write asks
+    // the `@<file>` node above it. Nothing was written, and since an `@file`
+    // tree lives in its file and not in the `.leo` file, the move was gone on
+    // the next read.
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("test.leo").to_string_lossy().to_string();
+
+    let mut doc = leolib::Document::new_empty(&leo);
+    let root = doc.outline.root_position().unwrap();
+    doc.set_headline(&root, "@file sample.py");
+    doc.set_body(&root, "@others\n");
+    for (headline, body) in [("f", "def f():\n    pass\n"), ("g", "def g():\n    pass\n")] {
+        let child = doc.insert_child(&root);
+        doc.set_headline(&child, headline);
+        doc.set_body(&child, body);
+    }
+    assert_eq!(doc.save_all("").files.written.len(), 1);
+
+    let kids = doc.outline.root_position().unwrap().children(&doc.outline);
+    let before: Vec<String> = kids.iter().map(|p| p.h(&doc.outline).to_string()).collect();
+    doc.move_up(&kids[1]);
+    let result = doc.save_all("");
+    assert_eq!(result.files.written.len(), 1, "{:?}", result.files.errors);
+
+    let doc = Document::open(&leo, true).unwrap();
+    let heads: Vec<String> = doc
+        .outline
+        .root_position()
+        .unwrap()
+        .children(&doc.outline)
+        .iter()
+        .map(|p| p.h(&doc.outline).to_string())
+        .collect();
+    assert_eq!(heads, vec![before[1].clone(), before[0].clone()]);
 }

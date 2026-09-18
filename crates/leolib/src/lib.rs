@@ -23,6 +23,7 @@ pub mod langdata;
 pub mod leofile;
 pub mod node;
 pub mod outline;
+pub(crate) mod pickle;
 pub mod position;
 pub(crate) mod seqmatch;
 pub mod state;
@@ -61,7 +62,13 @@ pub fn open_outline_with_report(
     }
     let mut o = leofile::read_leo_file(&path)?;
     let report = match read_external {
-        true => external::read_external_files(&mut o),
+        true => {
+            let report = external::read_external_files(&mut o);
+            // After the files, as Leo's `fc.readExternalFiles` does: the
+            // nodes a blob names by position are the ones they just built.
+            leofile::restore_descendent_uas(&mut o);
+            report
+        }
         false => external::ReadResult::default(),
     };
     o.changed = false;
@@ -90,6 +97,12 @@ pub struct SaveResult {
     pub leo: Result<String>,
     /// Empty when the `.leo` write failed, as no file was attempted.
     pub files: external::WriteResult,
+    /// Nodes whose descendants' unknown attributes this session dropped,
+    /// by headline. An `@auto` tree's descendants are not in the `.leo`
+    /// file, so their uAs live in a blob keyed by position that only Leo can
+    /// rebuild; restructuring the tree leaves it naming other nodes, and this
+    /// port drops it rather than let Leo restore those uAs onto them.
+    pub dropped_descendent_uas: Vec<String>,
 }
 
 /// Save the `.leo` file, then write every dirty external file. Leo's `save`.
@@ -108,7 +121,17 @@ pub fn save_all(o: &mut Outline, path: &str) -> SaveResult {
         Ok(_) => external::write_external_files(o, true),
         Err(_) => external::WriteResult::default(),
     };
-    SaveResult { leo, files }
+    // Reported once: the blob is already gone, and holding the names would
+    // repeat them on every later save.
+    let dropped_descendent_uas = match leo {
+        Ok(_) => std::mem::take(&mut o.dropped_descendent_uas),
+        Err(_) => Vec::new(),
+    };
+    SaveResult {
+        leo,
+        files,
+        dropped_descendent_uas,
+    }
 }
 
 /// Write a copy of the outline to `path`, leaving its file name alone.

@@ -4,6 +4,58 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## Unreleased
 
+## [0.4.0]
+
+### Fixed
+
+- **An `@clean` file edited in the same second as a write was never read again.** The cached mod time was truncated to whole seconds, so `old >= new` held for an outside edit made within the second of our own write, and the next write reverted it. The cache holds a `SystemTime` now, as Leo compares float mtimes. An edit to a body also drops it, as Leo's `setBodyString` does; only `setHeadString` had a counterpart here.
+
+- **A body `@path` was ignored in `@clean`, `@auto`, `@edit`, `@nosent` and `@asis` nodes.** Leo skips one only in `@file` and `@thin`, where the headline already names the file (`getPathFromNode`). The file resolved against the wrong directory, and since `@clean` and `@nosent` are exempt from `may_overwrite`, the write could land on an unrelated file.
+
+- **An `@encoding` this port cannot write is refused whatever its name.** `is_valid_encoding` held a list of seven names; `@encoding cp1252` was not among them, so `get_encoding` fell back to utf-8 and the write replaced the file's bytes without a report. The test is now the shape of a codec name, and every name outside the utf-8 and ascii aliases reaches `encoding_is_supported` and is refused. Leo asks Python's codec registry, which this port has no equivalent of; a name neither implementation knows leaves the file unread here rather than read as utf-8, which cannot lose its bytes.
+
+- **A sentinel header's `-encoding=utf8,.` field kept its comma.** The comma is Leo 4.2's field terminator, not part of the name (`at.parseLeoSentinel`), so a file the writer gave any encoding but `utf-8` did not read back.
+
+- **A CRLF file was rewritten as LF.** `replace_file` compared bytes, where Leo's `compareIgnoringLineEndings` treats a file that differs only in its line endings as unchanged unless an `@lineending` directive asks for them. A write-all rewrote every CRLF file in the outline.
+
+- **An `@auto` tree that writes nothing truncated its file.** Leo reports "not written" (`writeOneAtAutoNode`); an importer that produced an empty tree emptied the file it was read from.
+
+- **`@edit`: an empty file replaced the body, and a node with children was written.** Leo's #391 leaves the node alone, because for `@edit` the body is the only copy of the text once the file is empty. The write refuses a node with children, whose text nothing else would reach the file.
+
+- **A uA the reader unescaped was written back raw.** Only `str_` and `json_` values were quoted. A pickled value is hexlified, so quoting it changes nothing, but a value some other writer put there ended its attribute early and left a `.leo` file neither implementation could read.
+
+- **The descendent-uA blob follows the tree.** `descendentVnodeUnknownAttributes` holds the uAs of the nodes a `.leo` file does not otherwise store -- the ones an importer or a sentinel file builds -- keyed by each node's position under the one that carries it. This port wrote back the blob it read, so after an insert, delete or move Leo's `restoreDescendentAttributes` handed those uAs to whichever node then sat at each position.
+
+  The read now gives the blob's uAs to the nodes it names, once the external files are read, and the write rebuilds it from the tree, as Leo does. `pickle` reads and writes the part of Python's protocol 1 that Leo's blobs use: all 79 blobs in a leo-editor checkout parse, and re-emitting one gives CPython's own bytes back, so a blob nothing changed leaves no diff. One outside that subset stays as it was read, and a structural change drops it rather than let it name other nodes, with `SaveResult::dropped_descendent_uas` naming the tree -- in leotui's message too, because nothing in the outline records it afterwards.
+
+  `promote`, `demote`, `move_to` and undo's `relink` move children without `link_child` or `cut_link`, so they now say so themselves; only the three linking primitives did, and a blob survived every one of those four.
+
+- **A hard link was broken by the atomic rename.** The rename replaces the inode, so every other name for the file kept the old contents. Such a file is written in place, which is the one case where atomicity is given up for it. Leo writes every file in place.
+
+- **A move inside an `@<file>` tree reaches the file.** `Document::move_to` set the dirty bit on the node it moved, where the write asks the `@<file>` node above it, so `find_files_to_write` had nothing to write. An `@file` tree lives in its file rather than in the `.leo` file, so the next read gave the old order back. Undo already marked both trees (`undo::relink`).
+
+- **A re-read clone's children each gained a second parent link.** The scan cleared an existing vnode's children without removing it from their parent lists, so the nodes the read then relinked looked cloned, and `is_cloned` answered true for them.
+
+- **An `@tabwidth` or `@lineending` value the port cannot use hid the ancestor's.** The scan stopped at the first directive of that name and fell back to the default. Leo's patterns do not match an unusable value, so the scan continues; `@tabwidth wide` in a node no longer discards the width its ancestor declares. `@encoding` and `@pagewidth` take the same route.
+
+- **A `@comment` or `@delims` directive no longer loses the tree below it.** Python sentinels carry a space between the delimiter and the `@`, `# @+others`, and the `@+leo` line is the only place a reader can learn that. The scan took a later directive's delimiter literally, so every sentinel after it stopped matching: the file read back as one body, with no error, and the next save wrote that body over it. The space now carries across a directive. Leo drops it too and loses the same trees, so this port reads a file Leo wrote and Leo does not; the writer is unchanged, and still produces Leo's bytes.
+
+- **The sentinel reader's warnings are reported.** They were collected and dropped, so a file with a line the reader kept but did not understand (#2213), or more `@first` lines than the header has, read silently. They arrive in `ReadResult::warnings`, on the channel the importers already use.
+
+### Added
+
+- **One corpus case per feature.** `demo/cases/directives` held six `@<file>` kinds in one outline, and nothing at all held `@path`, `@others`, `@all`, `@ignore`, `@first`, `@last`, `@comment`, `@delims`, `@language`, `@tabwidth`, `@section-delims`, a section reference, a doc part or a uA. There are 26 feature cases now, one directive each, and `demo/README.md` indexes them. A case has to read as Python Leo reads it, rewrite its `.leo` file unchanged and leave its external files alone; leo-editor's copy is held to the same three. The tangle test gates on each file rather than each case, and fails a case none of whose files it compared: `@nosent` and `@asis` are never read, so their own cases record `read_external: false`, and the per-case gate had skipped the only two kinds whose files are write-only.
+
+  Building them found that Leo reads a section reference back with its delimiters regex-escaped, `\{ imports \}`, because the reader assigns the escaped delimiters to `section_delim1` (`leoAtFile.py:4016`). This port keeps what the file spells, and `corpus.rs`'s `KNOWN` records the difference. Two further Leo bugs they turned up, and cannot hold, are in `TODO.md`.
+
+### Changed
+
+- **`external::replace_file`'s third parameter is `ignore_line_endings: bool`.** It was an `encoding` the function never read.
+
+- **`outline::is_valid_encoding` answers for the shape of a name, not a list of seven.** It decides whether an `@encoding` names an encoding at all; what this port can write is `external::encoding_is_supported`, which it already was.
+
+- **`Outline::mod_time_cache` holds a `SystemTime`** rather than whole seconds since the epoch.
+
 ## [0.3.0]
 
 ### Fixed

@@ -39,6 +39,8 @@ impl Default for Config {
             // Leo's *code* default. leoSettings.leo ships 80; nothing in the
             // writer depends on it, but check before adding anything that does.
             page_width: 132,
+            // The sign picks the character, not the width: 4 indents with a
+            // tab every 4 columns, -4 with 4 spaces. Leo ships -4.
             tab_width: -4,
             target_language: "python".to_string(),
             create_nonexistent_directories: false,
@@ -74,7 +76,7 @@ pub struct Outline {
     pub expanded: HashSet<String>,
     pub window_geometry: WindowGeometry,
     /// Last-seen mtime per @clean node, so an unchanged file is not re-read.
-    pub mod_time_cache: HashMap<String, u64>,
+    pub mod_time_cache: HashMap<String, std::time::SystemTime>,
     /// `(gnx, path, headline)` for every external file this outline has read
     /// or written. See [`Outline::may_overwrite`].
     pub read_paths: HashSet<(String, String, String)>,
@@ -83,6 +85,10 @@ pub struct Outline {
     /// Size and mtime of each file as last read or written, by path. See
     /// [`Outline::changed_on_disk`].
     pub file_stamps: HashMap<String, util::FileStamp>,
+    /// Headlines of the nodes whose descendent-uA blob a structural change
+    /// dropped. Reported and cleared by [`crate::save_all`]; see
+    /// [`Outline::invalidate_descendent_uas`].
+    pub dropped_descendent_uas: Vec<String>,
 }
 
 pub const HIDDEN_ROOT_GNX: &str = "hidden-root-vnode-gnx";
@@ -102,6 +108,7 @@ impl Outline {
             window_geometry: WindowGeometry::default(),
             mod_time_cache: HashMap::new(),
             file_stamps: HashMap::new(),
+            dropped_descendent_uas: Vec::new(),
             read_paths: HashSet::new(),
             import_warnings: HashMap::new(),
         };
@@ -215,6 +222,14 @@ impl Outline {
 
     /// Insert `child` as parent's nth child, keeping the parent lists correct.
     fn link_child(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
+        self.invalidate_descendent_uas(parent_v);
+        self.link_child_raw(parent_v, n, child);
+    }
+
+    /// `link_child` without dropping the descendent-uA blobs above the parent.
+    ///
+    /// For the readers, which rebuild a subtree the blob still describes.
+    fn link_child_raw(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
         self.generation += 1;
         self.node_mut(parent_v).children.insert(n, child);
         self.node_mut(child).parents.push(parent_v);
@@ -240,12 +255,14 @@ impl Outline {
 
     /// Insert `child` as parent's nth child without touching descendant links.
     fn link_copied_child(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
+        self.invalidate_descendent_uas(parent_v);
         self.generation += 1;
         self.node_mut(parent_v).children.insert(n, child);
         self.node_mut(child).parents.push(parent_v);
     }
 
     fn cut_link(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
+        self.invalidate_descendent_uas(parent_v);
         self.generation += 1;
         debug_assert_eq!(self.node(parent_v).children[n], child);
         self.node_mut(parent_v).children.remove(n);
@@ -317,7 +334,7 @@ impl Outline {
     pub fn new_child_vnode(&mut self, parent_v: VnodeId) -> VnodeId {
         let v = self.new_vnode(None);
         let n = self.node(parent_v).children.len();
-        self.link_child(parent_v, n, v);
+        self.link_child_raw(parent_v, n, v);
         v
     }
 
@@ -409,6 +426,9 @@ impl Outline {
         if children.is_empty() {
             return;
         }
+        // This moves children without `link_child` or `cut_link`, so it says
+        // so itself: a parked blob names the positions it is undoing.
+        self.invalidate_descendent_uas(p.v);
         let n = p.child_index + 1;
         let mut z = self.node(parent_v).children.clone();
         let tail = z.split_off(n);
@@ -497,8 +517,7 @@ impl Outline {
     pub fn set_headline(&mut self, p: &Position, s: &str) {
         let s = s.replace('\n', "");
         self.node_mut(p.v).h = s;
-        let gnx = self.gnx(p.v).to_string();
-        self.mod_time_cache.remove(&gnx);
+        self.forget_mod_time(p.v);
         self.set_dirty(p);
         self.changed = true;
         self.generation += 1;
@@ -506,9 +525,54 @@ impl Outline {
 
     pub fn set_body(&mut self, p: &Position, s: &str) {
         self.node_mut(p.v).b = s.to_string();
+        self.forget_mod_time(p.v);
         self.set_dirty(p);
         self.changed = true;
         self.generation += 1;
+    }
+
+    /// Drop the `descendent*UnknownAttributes` blobs on v and above it.
+    ///
+    /// Leo rebuilds both from the subtree's own uAs on every save, by pickling
+    /// them against each node's archived position. This port reads no pickles,
+    /// so it writes back the blob it read. Restructuring the subtree makes
+    /// those positions name other nodes, and Leo's `restoreDescendentAttributes`
+    /// would then hand a descendant's uAs to a node they do not belong to.
+    /// Dropping the blob loses the uAs of nodes the `.leo` file does not
+    /// otherwise store, which is the lesser of the two.
+    pub(crate) fn invalidate_descendent_uas(&mut self, v: VnodeId) {
+        let mut todo = vec![v];
+        let mut seen: HashSet<VnodeId> = HashSet::new();
+        while let Some(cur) = todo.pop() {
+            if !seen.insert(cur) {
+                continue;
+            }
+            let uas = &mut self.node_mut(cur).uas;
+            let dropped = !uas.is_empty()
+                && [
+                    uas.remove("__native__descendentTnodeUnknownAttributes"),
+                    uas.remove("__native__descendentVnodeUnknownAttributes"),
+                ]
+                .iter()
+                .any(Option::is_some);
+            if dropped {
+                // Named, not counted: the uAs are gone, and the headline is
+                // what a caller can tell the user to look at.
+                let h = self.node(cur).h.clone();
+                if !self.dropped_descendent_uas.contains(&h) {
+                    self.dropped_descendent_uas.push(h);
+                }
+            }
+            todo.extend(self.node(cur).parents.clone());
+        }
+    }
+
+    /// Drop v's cached mtime, as Leo's `setBodyString` and `setHeadString` do.
+    /// An edit to an `@clean` root makes its file out of date, whatever the
+    /// file's own mtime says.
+    fn forget_mod_time(&mut self, v: VnodeId) {
+        let gnx = self.gnx(v).to_string();
+        self.mod_time_cache.remove(&gnx);
     }
 
     pub fn toggle_marked(&mut self, p: &Position) {
@@ -823,7 +887,9 @@ impl Outline {
                     if rest.starts_with(char::is_whitespace) {
                         // @path in an @file body would name a path for the file
                         // that already has one. Leo warns; here it is ignored.
-                        if is_body && p.is_any_at_file_node(self) {
+                        // Only @file and @thin, as Leo's `getPathFromNode`:
+                        // the other @<file> kinds honour a body @path.
+                        if is_body && p.is_at_file_node(self) {
                             continue;
                         }
                         let path = util::strip_path_cruft(rest.trim());
@@ -846,15 +912,29 @@ impl Outline {
         util::finalize_join(&[&self.get_path(p), &name])
     }
 
-    /// The first directive matching `pattern` at or above p, headline before body.
-    fn scan_directive(&self, p: &Position, name: &str) -> Option<String> {
+    /// The first `name` directive at or above p whose value `read` accepts,
+    /// headline before body.
+    ///
+    /// The scan does not stop at a value it cannot use, as Leo's patterns do
+    /// not match one: `@tabwidth wide` in a node used to hide the `@tabwidth`
+    /// its ancestor declares, and the writer indented with the default.
+    fn scan_directive<T>(
+        &self,
+        p: &Position,
+        name: &str,
+        read: impl Fn(&str) -> Option<T>,
+    ) -> Option<T> {
         for p2 in p.self_and_parents(self) {
             for s in [p2.h(self), p2.b(self)] {
                 for line in s.lines() {
-                    if let Some(rest) = line.strip_prefix(name) {
-                        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-                            return Some(rest.trim().to_string());
-                        }
+                    let Some(rest) = line.strip_prefix(name) else {
+                        continue;
+                    };
+                    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+                        continue;
+                    }
+                    if let Some(value) = read(rest.split_whitespace().next().unwrap_or("")) {
+                        return Some(value);
                     }
                 }
             }
@@ -863,41 +943,29 @@ impl Outline {
     }
 
     pub fn get_encoding(&self, p: &Position) -> String {
-        if let Some(s) = self.scan_directive(p, "@encoding") {
-            let enc = s.split_whitespace().next().unwrap_or("");
-            if is_valid_encoding(enc) {
-                return enc.to_string();
-            }
-        }
-        self.config.default_derived_file_encoding.clone()
+        self.scan_directive(p, "@encoding", |s| {
+            is_valid_encoding(s).then(|| s.to_string())
+        })
+        .unwrap_or_else(|| self.config.default_derived_file_encoding.clone())
     }
 
     pub fn get_line_ending(&self, p: &Position) -> String {
-        if let Some(s) = self.scan_directive(p, "@lineending") {
-            let name = s.split_whitespace().next().unwrap_or("");
-            if ["cr", "crlf", "lf", "nl", "platform"].contains(&name) {
-                return util::get_output_newline(name);
-            }
-        }
-        String::new()
+        self.scan_directive(p, "@lineending", |s| {
+            ["cr", "crlf", "lf", "nl", "platform"]
+                .contains(&s)
+                .then(|| util::get_output_newline(s))
+        })
+        .unwrap_or_default()
     }
 
     pub fn get_page_width(&self, p: &Position) -> i32 {
-        if let Some(s) = self.scan_directive(p, "@pagewidth") {
-            if let Ok(n) = s.split_whitespace().next().unwrap_or("").parse::<i32>() {
-                return n;
-            }
-        }
-        self.config.page_width
+        self.scan_directive(p, "@pagewidth", |s| s.parse::<i32>().ok())
+            .unwrap_or(self.config.page_width)
     }
 
     pub fn get_tab_width(&self, p: &Position) -> i32 {
-        if let Some(s) = self.scan_directive(p, "@tabwidth") {
-            if let Ok(n) = s.split_whitespace().next().unwrap_or("").parse::<i32>() {
-                return n;
-            }
-        }
-        self.config.tab_width
+        self.scan_directive(p, "@tabwidth", |s| s.parse::<i32>().ok())
+            .unwrap_or(self.config.tab_width)
     }
 
     /// The comment delimiters in effect at p: (single, block-start, block-end).
@@ -1056,12 +1124,20 @@ pub fn is_valid_language(language: &str) -> bool {
             || langdata::delegate_language_dict().contains_key(language))
 }
 
-/// Encodings the model can actually decode. Leo asks Python's codec registry.
+/// True if `encoding` names an encoding at all.
+///
+/// Leo asks Python's codec registry, which this port has no equivalent of.
+/// The test is the shape of a codec name, so an `@encoding` this port cannot
+/// produce reaches [`crate::external::encoding_is_supported`] and is refused.
+/// A list of the names it knows would instead fall back to utf-8 and rewrite
+/// the file in it. Leo falls back for a name `codecs.lookup` rejects; here a
+/// misspelled encoding leaves the file unread and reported, which cannot lose
+/// its bytes.
 pub fn is_valid_encoding(encoding: &str) -> bool {
-    matches!(
-        encoding.to_lowercase().replace('_', "-").as_str(),
-        "utf-8" | "utf8" | "ascii" | "us-ascii" | "latin-1" | "latin1" | "iso-8859-1"
-    )
+    !encoding.is_empty()
+        && encoding
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 pub fn set_delims_from_language(language: &str) -> (String, String, String) {
@@ -1138,6 +1214,42 @@ mod tests {
         assert_eq!(o.all_unique_positions().len(), 2);
         o.set_headline(&clone, "renamed");
         assert_eq!(child.h(&o), "renamed");
+    }
+
+    #[test]
+    fn a_value_a_directive_cannot_use_does_not_hide_an_ancestors() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_body(&root, "@tabwidth -8\n@lineending crlf\n@encoding ascii\n");
+        let child = o.insert_as_last_child(&root);
+        o.set_body(
+            &child,
+            "@tabwidth wide\n@lineending sometimes\n@encoding \n",
+        );
+        assert_eq!(o.get_tab_width(&child), -8);
+        assert_eq!(o.get_line_ending(&child), "\r\n");
+        assert_eq!(o.get_encoding(&child), "ascii");
+    }
+
+    #[test]
+    fn a_body_at_path_holds_for_every_at_file_kind_but_at_file() {
+        // Leo's `getPathFromNode` skips a body @path only in @file and @thin.
+        let mut o = Outline::new_empty();
+        o.file_name = "/outlines/x.leo".to_string();
+        let root = o.root_position().unwrap();
+        for (headline, want) in [
+            ("@clean a.py", "/outlines/sub/a.py"),
+            ("@auto a.py", "/outlines/sub/a.py"),
+            ("@edit a.py", "/outlines/sub/a.py"),
+            ("@nosent a.py", "/outlines/sub/a.py"),
+            ("@asis a.py", "/outlines/sub/a.py"),
+            ("@file a.py", "/outlines/a.py"),
+            ("@thin a.py", "/outlines/a.py"),
+        ] {
+            o.set_headline(&root, headline);
+            o.set_body(&root, "@path sub\n");
+            assert_eq!(o.full_path(&root), want, "{headline}");
+        }
     }
 
     #[test]

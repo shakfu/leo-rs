@@ -15,8 +15,16 @@ use quick_xml::Reader;
 use crate::error::{Error, Result};
 use crate::node::{status, Ua, VnodeId};
 use crate::outline::{Outline, HIDDEN_ROOT_GNX};
+use crate::pickle;
 use crate::position::Position;
 use crate::util;
+
+/// The `<v>` attributes holding the uAs of nodes the file does not otherwise
+/// store, parked under a `__native__` key until the read applies them.
+const DESCENDENT_UA_KEYS: [&str; 2] = [
+    "descendentTnodeUnknownAttributes",
+    "descendentVnodeUnknownAttributes",
+];
 
 /// Attributes of a `<v>` element that Leo interprets itself.
 const NATIVE_VNODE_ATTRIBUTES: &[&str] = &[
@@ -277,10 +285,7 @@ impl VnodeVisitor<'_> {
                             // the file does not otherwise store. Nothing here
                             // unpickles them, so they are kept verbatim and
                             // written back on the node that carried them.
-                            for key in [
-                                "descendentTnodeUnknownAttributes",
-                                "descendentVnodeUnknownAttributes",
-                            ] {
+                            for key in DESCENDENT_UA_KEYS {
                                 if let Some(val) = e.attr(key) {
                                     self.o
                                         .node_mut(v)
@@ -331,10 +336,18 @@ fn put_v_elements(o: &mut Outline, out: &mut String) {
     }
     out.push_str("<vnodes>\n");
     let mut written: HashSet<String> = HashSet::new();
+    // Whether any node has a uA at all, asked once: a blob is rebuilt from
+    // the subtree of every `<v>` element, and almost no outline has one.
+    let any_uas = (0..o.node_count()).any(|v| {
+        o.node(VnodeId(v as u32))
+            .uas
+            .keys()
+            .any(|k| !k.starts_with("__native__"))
+    });
     if let Some(root) = o.root_position() {
         for p in root.self_and_siblings(o) {
             let ignore = p.is_at_ignore_node(o);
-            put_v_element(o, out, &p, ignore, &mut written);
+            put_v_element(o, out, &p, ignore, any_uas, &mut written);
         }
     }
     out.push_str("</vnodes>\n");
@@ -345,6 +358,7 @@ fn put_v_element(
     out: &mut String,
     p: &Position,
     is_ignore: bool,
+    any_uas: bool,
     written: &mut HashSet<String>,
 ) {
     // An external file holds its own tree, so the .leo file stores only the
@@ -366,7 +380,7 @@ fn put_v_element(
     if force_write {
         o.node_mut(p.v).set_bit(status::WRITE);
     }
-    let attrs = descendent_ua_attrs(o, p);
+    let attrs = descendent_ua_attrs(o, p, any_uas);
     let v_head = format!("<v t=\"{gnx}\"{attrs}>");
     if written.contains(&gnx) {
         out.push_str(&v_head);
@@ -380,7 +394,7 @@ fn put_v_element(
         out.push_str(&v_head);
         out.push('\n');
         for child in p.children(o) {
-            put_v_element(o, out, &child, is_ignore, written);
+            put_v_element(o, out, &child, is_ignore, any_uas, written);
         }
         out.push_str("</v>\n");
     } else {
@@ -389,24 +403,176 @@ fn put_v_element(
     }
 }
 
-/// The `descendent*UnknownAttributes` blobs this node was read with.
+/// The `descendentVnodeUnknownAttributes` attribute for this node.
 ///
-/// Leo regenerates them by pickling the descendants' uAs. Nothing here reads a
-/// pickle, so the blob is written back as it arrived. That is exact while the
-/// uAs and the subtree shape are untouched, and this crate never changes
-/// either; a caller that restructures an `@auto` tree should expect Leo to
-/// rebuild the blob on its next save.
-fn descendent_ua_attrs(o: &Outline, p: &Position) -> String {
+/// Leo writes one for every `<v>` element, holding the uAs of each node in
+/// its subtree keyed by that node's position relative to it
+/// (`fc.putDescendentVnodeUas`). It is the only place the uAs of a node the
+/// file does not otherwise store -- one an importer or a sentinel file
+/// builds -- can live, so it is rebuilt here rather than copied: a copy names
+/// the positions the tree had when it was read.
+///
+/// A blob [`crate::pickle`] could not read is still a copy, and still goes
+/// back as it arrived. `Outline::invalidate_descendent_uas` drops that one
+/// when the subtree changes, because its positions no longer hold.
+fn descendent_ua_attrs(o: &Outline, p: &Position, any_uas: bool) -> String {
     let mut out = String::new();
-    for key in [
-        "descendentTnodeUnknownAttributes",
-        "descendentVnodeUnknownAttributes",
-    ] {
+    for key in DESCENDENT_UA_KEYS {
         if let Some(ua) = o.node(p.v).uas.get(&format!("__native__{key}")) {
             out.push_str(&format!(" {key}=\"{}\"", ua.as_file_text()));
         }
     }
+    // A blob still parked is one the read did not apply, either because it
+    // could not be read or because the outline was opened without its
+    // external files. Rebuilding beside it would write the same uAs twice.
+    if !out.is_empty() {
+        return out;
+    }
+    if let Some(hex) = rebuild_descendent_uas(o, p, any_uas) {
+        out.push_str(&format!(" descendentVnodeUnknownAttributes=\"{hex}\""));
+    }
     out
+}
+
+/// The blob for p's subtree, or None when no node in it has a uA.
+fn rebuild_descendent_uas(o: &Outline, p: &Position, any_uas: bool) -> Option<String> {
+    if !any_uas {
+        return None; // The common case: nothing to walk for.
+    }
+    let mut items: Vec<(pickle::Value, pickle::Value)> = Vec::new();
+    for q in p.self_and_subtree(o) {
+        let uas = node_uas_as_values(o, q.v);
+        if !uas.is_empty() {
+            items.push((
+                pickle::Value::Str(archived_position(o, &q, p)),
+                pickle::Value::Dict(uas),
+            ));
+        }
+    }
+    match items.is_empty() {
+        true => None,
+        false => Some(pickle::dumps_hexlify(&pickle::Value::Dict(items))),
+    }
+}
+
+/// A node's own uAs as pickle values, in the order the `.leo` file spells
+/// them. The parked blobs are not uAs of this node and stay out.
+fn node_uas_as_values(o: &Outline, v: VnodeId) -> Vec<(pickle::Value, pickle::Value)> {
+    let mut out = Vec::new();
+    for (key, val) in &o.node(v).uas {
+        if key.starts_with("__native__") {
+            continue;
+        }
+        let value = match val {
+            // A `str_` or `json_` value is text in the file, so it is text
+            // here; anything else is already a pickle of the value itself.
+            Ua::Text(s) => pickle::Value::Str(s.clone()),
+            Ua::Opaque(hex) => match pickle::unhexlify_loads(hex) {
+                Ok(value) => value,
+                // Not readable, so not rebuildable: leaving it out of the
+                // blob is what `invalidate_descendent_uas` would do anyway.
+                Err(_) => continue,
+            },
+        };
+        out.push((pickle::Value::Str(key.clone()), value));
+    }
+    out
+}
+
+/// p's position relative to `root`, as Leo's `p.archivedPosition(root_p)`
+/// spells it: the child index of each node from the root down, the root
+/// itself as 0, joined with periods.
+fn archived_position(o: &Outline, p: &Position, root: &Position) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for q in p.self_and_parents(o) {
+        if q == *root {
+            parts.push("0".to_string());
+            break;
+        }
+        parts.push(q.child_index.to_string());
+    }
+    parts.reverse();
+    parts.join(".")
+}
+
+/// The vnode an archived position names, relative to `root_v`.
+///
+/// Leo's `fc.resolveArchivedPosition`. The first index stands for the root
+/// itself, whatever it says, and the rest are child indices from there.
+fn resolve_archived_position(o: &Outline, root_v: VnodeId, key: &str) -> Option<VnodeId> {
+    let mut steps = key.split('.');
+    steps.next()?; // The root.
+    let mut v = root_v;
+    for step in steps {
+        let n: usize = step.parse().ok()?;
+        v = *o.node(v).children.get(n)?;
+    }
+    Some(v)
+}
+
+/// Give the nodes named by the `descendent*UnknownAttributes` blobs their uAs.
+///
+/// Leo's `fc.restoreDescendentAttributes`, called once the external files are
+/// read: the nodes a `V` blob names by position are the ones an importer or a
+/// sentinel file has just built, and the ones a `T` blob names by gnx may be
+/// among them. The blob is consumed, because the write rebuilds it from the
+/// tree; one this port cannot read stays parked and is written back as it is.
+///
+/// Reading a `.leo` file without its external files leaves every blob parked,
+/// as Leo leaves them: the nodes they name are not there to take them.
+pub fn restore_descendent_uas(o: &mut Outline) {
+    for v in o.all_unique_nodes() {
+        for key in DESCENDENT_UA_KEYS {
+            let parked = format!("__native__{key}");
+            let Some(ua) = o.node(v).uas.get(&parked) else {
+                continue;
+            };
+            let Ok(blob) = pickle::unhexlify_loads(ua.as_file_text()) else {
+                continue; // Left where it is, and written back unchanged.
+            };
+            let Some(items) = blob.as_dict() else {
+                continue;
+            };
+            let by_gnx = key.starts_with("descendentTnode");
+            let mut restored: Vec<(VnodeId, Vec<(String, Ua)>)> = Vec::new();
+            for (name, value) in items {
+                let (Some(name), Some(uas)) = (name.as_str(), value.as_dict()) else {
+                    continue;
+                };
+                let target = match by_gnx {
+                    true => o.find_gnx(name),
+                    false => resolve_archived_position(o, v, name),
+                };
+                let Some(target) = target else {
+                    continue; // The node is not there: nothing to give it to.
+                };
+                let uas = uas
+                    .iter()
+                    .filter_map(|(k, val)| Some((k.as_str()?.to_string(), ua_from_value(k, val))))
+                    .collect();
+                restored.push((target, uas));
+            }
+            o.node_mut(v).uas.remove(&parked);
+            for (target, uas) in restored {
+                for (k, val) in uas {
+                    o.node_mut(target).uas.insert(k, val);
+                }
+            }
+        }
+    }
+}
+
+/// A blob value as this port stores a uA: text for the keys Leo leaves as
+/// text, and the value's own pickle for the rest, which is what a `<t>`
+/// element would have spelled.
+fn ua_from_value(key: &pickle::Value, value: &pickle::Value) -> Ua {
+    let text_key = key
+        .as_str()
+        .is_some_and(|k| k.starts_with("str_") || k.starts_with("json_"));
+    match (text_key, value.as_str()) {
+        (true, Some(s)) => Ua::Text(s.to_string()),
+        _ => Ua::Opaque(pickle::dumps_hexlify(value)),
+    }
 }
 
 fn put_t_elements(o: &Outline, out: &mut String) {
@@ -434,12 +600,14 @@ fn put_unknown_attributes(o: &Outline, v: VnodeId) -> String {
         if key.starts_with("__native__") {
             continue;
         }
-        match val {
-            Ua::Text(s) => out.push_str(&format!(" {key}={}", util::xml_quoteattr(s))),
-            // Not escaped, as Leo's `fc.pickle` does not escape it either: the
-            // value is a hexlified pickle, so there is nothing in it to escape.
-            Ua::Opaque(s) => out.push_str(&format!(" {key}=\"{s}\"")),
-        }
+        // Both kinds are escaped. Leo's `fc.pickle` writes a hexlified
+        // pickle, which quoting leaves byte for byte as it is; a value some
+        // other writer put there is what the read unescaped, and writing it
+        // raw made the `.leo` file unreadable by both implementations.
+        out.push_str(&format!(
+            " {key}={}",
+            util::xml_quoteattr(val.as_file_text())
+        ));
     }
     out
 }
@@ -486,7 +654,8 @@ fn write_xml(o: &mut Outline, path: &str) -> Result<()> {
         });
     }
     let s = outline_to_xml_string(o);
-    crate::external::replace_file(path, &s, "utf-8")?;
+    // A body can hold a '\r' of its own, so the compare stays byte for byte.
+    crate::external::replace_file(path, &s, false)?;
     o.record_file_stamp(path, util::file_stamp(path));
     Ok(())
 }
@@ -615,6 +784,71 @@ mod tests {
         assert_eq!(p.b(&o), "1 < 2\n\t>\r\n'");
         let ua = &o.node(p.v).uas["str_k"];
         assert_eq!(ua, &Ua::Text("x\ny\tz <".to_string()));
+    }
+
+    #[test]
+    fn an_opaque_ua_is_written_so_the_file_reads_back() {
+        // A pickled uA holds hex, which needs no escaping. One some other
+        // writer put there does: the read unescapes it, and writing it raw
+        // ended the attribute early and broke the file.
+        let mut o = read("<t tx=\"a.1\" k=\"a &quot;b&quot; &lt;c&gt;\"></t>").unwrap();
+        let p = &o.all_positions()[0];
+        assert_eq!(o.node(p.v).uas["k"], Ua::Opaque("a \"b\" <c>".to_string()));
+        let xml = outline_to_xml_string(&mut o);
+        let mut o2 = Outline::new("");
+        read_leo_string(&mut o2, &xml).unwrap();
+        let q = &o2.all_positions()[0];
+        assert_eq!(o2.node(q.v).uas["k"], o.node(p.v).uas["k"]);
+    }
+
+    #[test]
+    fn a_pickled_ua_is_written_byte_for_byte() {
+        let hex = "80049503000000000000008c0161942e";
+        let mut o = read(&format!("<t tx=\"a.1\" k=\"{hex}\"></t>")).unwrap();
+        assert!(
+            outline_to_xml_string(&mut o).contains(&format!("k=\"{hex}\"")),
+            "{}",
+            outline_to_xml_string(&mut o)
+        );
+    }
+
+    /// An `@auto` node carrying a blob of its descendants' pickled uAs.
+    fn outline_with_a_descendent_blob() -> Outline {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
+             <v t=\"a.1\" descendentVnodeUnknownAttributes=\"80049501\">\
+             <vh>@auto x.py</vh><v t=\"a.2\"><vh>one</vh></v></v></vnodes>\
+             <tnodes></tnodes></leo_file>\n";
+        let mut o = Outline::new("");
+        read_leo_string(&mut o, xml).unwrap();
+        o
+    }
+
+    #[test]
+    fn a_descendent_ua_blob_is_written_back_when_nothing_moved() {
+        let mut o = outline_with_a_descendent_blob();
+        assert!(outline_to_xml_string(&mut o).contains("descendentVnodeUnknownAttributes="));
+    }
+
+    #[test]
+    fn a_descendent_ua_blob_goes_when_its_subtree_is_restructured() {
+        // The blob names its descendants by archived position. Leo would
+        // restore a moved node's uAs onto whatever now sits at that position.
+        let mut o = outline_with_a_descendent_blob();
+        let root = o.root_position().unwrap();
+        let child = root.children(&o)[0].clone();
+        o.insert_before(&child);
+        assert!(!outline_to_xml_string(&mut o).contains("descendentVnodeUnknownAttributes="));
+    }
+
+    #[test]
+    fn a_descendent_ua_blob_survives_an_edit_outside_its_subtree() {
+        let mut o = outline_with_a_descendent_blob();
+        let root = o.root_position().unwrap();
+        let after = o.insert_after(&root);
+        o.set_headline(&after, "elsewhere");
+        let sub = o.insert_as_last_child(&after);
+        o.set_headline(&sub, "below elsewhere");
+        assert!(outline_to_xml_string(&mut o).contains("descendentVnodeUnknownAttributes="));
     }
 
     #[test]

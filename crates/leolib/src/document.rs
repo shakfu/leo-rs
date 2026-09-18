@@ -209,6 +209,8 @@ impl Document {
             );
         }
         self.undoer.end_group();
+        // Moves children directly, as `Outline::promote` does.
+        self.outline.invalidate_descendent_uas(p.v);
         self.outline
             .node_mut(parent_v)
             .children
@@ -370,6 +372,8 @@ impl Document {
             self.outline.node_mut(p.v).parents.remove(i);
         }
         let n = index.min(self.outline.node(parent).children.len());
+        self.outline.invalidate_descendent_uas(from_parent);
+        self.outline.invalidate_descendent_uas(parent);
         self.outline.node_mut(parent).children.insert(n, p.v);
         self.outline.node_mut(p.v).parents.push(parent);
         self.outline.generation += 1;
@@ -382,7 +386,12 @@ impl Document {
                 to: (parent, n),
             },
         );
-        self.outline.node_mut(p.v).set_bit(status::DIRTY);
+        // Both trees, and through the `@<file>` node above each: setting the
+        // bit on the node alone left `find_files_to_write` with nothing to
+        // write, so a move inside an external tree never reached its file and
+        // was gone on the next read. Undo already did this (`undo::relink`).
+        self.outline.set_dirty_vnode(from_parent);
+        self.outline.set_dirty_vnode(p.v);
         crate::undo::position_of(&self.outline, p.v).unwrap_or_else(|| p.clone())
     }
 
@@ -413,7 +422,15 @@ impl Document {
             Ok(_) => self.write_external_files(true),
             Err(_) => WriteResult::default(),
         };
-        crate::SaveResult { leo, files }
+        let dropped_descendent_uas = match leo {
+            Ok(_) => std::mem::take(&mut self.outline.dropped_descendent_uas),
+            Err(_) => Vec::new(),
+        };
+        crate::SaveResult {
+            leo,
+            files,
+            dropped_descendent_uas,
+        }
     }
 
     /// Write a copy of the `.leo` file to `path`, as Leo's `save-to`.

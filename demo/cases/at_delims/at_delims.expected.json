@@ -1,0 +1,18 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file delims.css",
+   "b": "@delims /* */\n@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "rule",
+   "b": "body {\n    margin: 0;\n}\n"
+  }
+ ]
+}

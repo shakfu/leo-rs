@@ -26,14 +26,24 @@ const KNOWN: &[(&str, &str)] = &[
          nothing in it and reports it unread; this port imports the empty tree",
     ),
     (
-        "cases/encoding/encoding.leo",
+        "cases/at_encoding/at_encoding.leo",
         "a file that is not UTF-8 is left unread; Leo decodes it with its own encoding",
+    ),
+    (
+        "cases/at_section_delims/at_section_delims.leo",
+        "Leo assigns the regex-escaped delimiters to section_delim1 and section_delim2 \
+         (leoAtFile.py:4016), so the section reference it reads back reads \\{ imports \\}; \
+         this port keeps the delimiters the file spells",
     ),
 ];
 
 /// External files this port does not tangle to the bytes on disk, and why.
 /// As with KNOWN, an entry that no longer differs fails the test.
-const KNOWN_TANGLE: &[(&str, &str)] = &[];
+const KNOWN_TANGLE: &[(&str, &str)] = &[(
+    "cases/empty_auto/empty_auto.leo",
+    "an @auto tree that writes nothing is refused, as Leo's writeOneAtAutoNode \
+         refuses it: writing would truncate the file to the 0 bytes it already holds",
+)];
 
 fn demo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demo")
@@ -163,20 +173,41 @@ fn the_leo_writer_reproduces_every_outline() {
 fn every_external_file_tangles_to_the_bytes_on_disk() {
     let mut checked = 0;
     let mut differ = Vec::new();
+    // Cases this test says nothing about. The split into one case per feature
+    // put @nosent and @asis in cases of their own, where `read_external` is
+    // false because neither kind is ever read; a per-case gate then skipped
+    // the only two kinds whose files are write-only.
+    let mut uncompared = Vec::new();
     for case in cases() {
-        if !expected(&case)["read_external"].as_bool().unwrap() {
-            continue;
-        }
-        let (o, report) = leolib::open_outline_with_report(&case.to_string_lossy(), true).unwrap();
+        let read_external = expected(&case)["read_external"].as_bool().unwrap();
+        let (o, report) =
+            leolib::open_outline_with_report(&case.to_string_lossy(), read_external).unwrap();
         // A file the read could not take in has nothing in the outline to reproduce.
         let unread: Vec<&str> = report.errors.iter().map(|e| e.headline.as_str()).collect();
         let (files, _ignored) = external::find_files_to_write(&o, false);
+        // Every file on disk must be compared, or named in `unread`. A case
+        // where neither happens is one the test walks over in silence.
+        let (mut on_disk, mut accounted) = (0, 0);
         for p in &files {
+            let path = o.full_path(p);
+            if !Path::new(&path).exists() {
+                continue; // An @ignore tree's file, or LeoPyRef's sources.
+            }
+            on_disk += 1;
             if unread.iter().any(|h| *h == p.h(&o)) {
+                accounted += 1;
                 continue;
             }
-            let disk = std::fs::read(o.full_path(p)).unwrap();
+            // Reading an external file fills in bodies the .leo file does not
+            // hold, so a tree read without them cannot reproduce its file.
+            // @nosent and @asis are never read, so their text is in the .leo
+            // file whatever `read_external` says.
+            if !read_external && !(p.is_at_nosent_node(&o) || p.is_at_asis_node(&o)) {
+                continue;
+            }
+            let disk = std::fs::read(&path).unwrap();
             checked += 1;
+            accounted += 1;
             match external::file_contents(&o, p) {
                 Ok((text, newline, encoding)) => {
                     if encode(&text.replace('\n', &newline), &encoding) != disk {
@@ -186,7 +217,14 @@ fn every_external_file_tangles_to_the_bytes_on_disk() {
                 Err(e) => differ.push(format!("{}: {}: {e}", name(&case), p.h(&o))),
             }
         }
+        if on_disk > 0 && accounted == 0 {
+            uncompared.push(name(&case));
+        }
     }
+    assert!(
+        uncompared.is_empty(),
+        "cases whose external files nothing compared: {uncompared:?}"
+    );
     assert!(checked > 10, "only {checked} external files in the corpus");
     let unexpected: Vec<&String> = differ
         .iter()
@@ -321,4 +359,26 @@ fn collect(path: &Path, out: &mut Vec<PathBuf>) {
             collect(&p, out);
         }
     }
+}
+
+/// The `@ignore` case is the one case whose point is a file that is *not*
+/// written. Nothing above would notice if it were: the other tests compare
+/// the files that are written, and a file that appears would only be a file
+/// they do not look at.
+#[test]
+fn the_at_ignore_case_reaches_neither_the_reader_nor_the_writer() {
+    let case = demo().join("cases/at_ignore/at_ignore.leo");
+    let o = leolib::open_outline(&case.to_string_lossy(), true).unwrap();
+    let root = o.root_position().unwrap();
+    let heads = |ps: &[leolib::Position]| -> Vec<String> {
+        ps.iter().map(|p| p.h(&o).to_string()).collect()
+    };
+    let (to_read, _) = external::find_files_to_read(&o, &root, true);
+    let (to_write, _) = external::find_files_to_write(&o, false);
+    assert_eq!(heads(&to_read), vec!["@file written.py"]);
+    assert_eq!(heads(&to_write), vec!["@file written.py"]);
+    // The tree is skipped whole, so the `@file` inside it is not reported as
+    // ignored either: only an `@ignore` node that is itself an `@<file>` node
+    // reaches those lists.
+    assert!(!case.with_file_name("ignored.py").exists());
 }

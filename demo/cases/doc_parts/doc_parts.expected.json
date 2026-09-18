@@ -1,0 +1,12 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file doc.py",
+   "b": "@doc\nProse, written as comments.\n@c\nx = 1\n"
+  }
+ ]
+}

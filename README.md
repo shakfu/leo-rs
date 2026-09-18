@@ -19,7 +19,7 @@ Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor 
 | `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
 | `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
 
-Those figures come from runs against a leo-editor checkout. What `cargo test` checks every time is the conformance corpus in `demo/`: each outline there has an expected file written by Python Leo (`scripts/make_corpus.py`), and leo-editor checks Python Leo against a copy of the same files. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
+Those figures come from runs against a leo-editor checkout. What `cargo test` checks every time is the conformance corpus in `demo/`: each outline there has an expected file written by Python Leo (`scripts/make_corpus.py`), and leo-editor checks Python Leo against a copy of the same files. One case per feature, indexed in `demo/README.md`. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
 
 ## Layout
 

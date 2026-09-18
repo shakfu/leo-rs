@@ -1,0 +1,10 @@
+/*@+leo-ver=5-thin*/
+/*@+node:corpus.20260911000000.1: * @file delims.css*/
+/*@delims /* */ */
+/*@+others*/
+/*@+node:corpus.20260911000000.2: ** rule*/
+body {
+    margin: 0;
+}
+/*@-others*/
+/*@-leo*/

@@ -1,0 +1,24 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file all.py",
+   "b": "@all\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "first",
+   "b": "x = 1\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.3",
+   "h": "second",
+   "b": "y = 2\n"
+  }
+ ]
+}

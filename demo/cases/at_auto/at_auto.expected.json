@@ -1,0 +1,18 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto auto.py",
+   "b": "import os\n\n\n@others\n@language python\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "function: f",
+   "b": "def f():\n    return 1\n"
+  }
+ ]
+}
