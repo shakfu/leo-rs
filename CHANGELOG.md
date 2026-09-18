@@ -140,7 +140,6 @@ The crates.io 0.2.0 was built from `f4adad3`, not the `0.2.0` tag. It already co
 
 - **`make audit`** runs `cargo audit` against `Cargo.lock`. It is kept out of `make check`, as it fetches the advisory database.
 
-
 - **`Ctrl-w <` and `Ctrl-w >`**, vim's window-width keys, narrow and widen the pane that has focus. macOS takes `Ctrl-Left` and `Ctrl-Right` for Mission Control, so those never reached leotui there.
 
 - **`:bufdo %s/pattern/replacement/[flags]`**, vim's `:bufdo` with each node's body a buffer: `:s` in every body, as one undo step. A clone's body is changed once. Headlines are left alone, as a buffer's name is in vim.
