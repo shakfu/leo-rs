@@ -1,30 +1,16 @@
 # TODO
 
-Most entries below come from the review of 2026-09-15: a conformance run of both implementations against leo-editor `e3b3841f64`, and a usability pass driven with `--dump --press` and tmux. Each was reproduced unless it says otherwise.
-
-## Can lose or corrupt text
-
-- **`@clean` mtimes are whole seconds.** `atclean.rs` skips the read when the cached second is at or after the file's. An outside edit in the same second as a write is never read, and the next write reverts it. Leo compares float mtimes. `util::FileStamp` already holds a `SystemTime`.
-- **Opaque uAs are written unescaped.** `leofile.rs` unescapes attribute values on read and writes them raw. A `"` or `<` in a uA makes the saved `.leo` file unreadable by both implementations.
-- **The descendent-uA blob goes stale.** `descendentVnodeUnknownAttributes` is written back verbatim, but `Document`'s inserts, deletes and moves change the subtree it indexes. Leo then restores uAs onto the wrong nodes. Regenerate it as `fc.putDescendentVnodeUas` does.
-- **`@path` in an `@clean`, `@auto`, `@edit`, `@nosent` or `@asis` body is ignored.** `Outline::get_path_from_node` skips every `@<file>` kind; Leo skips only `@file` and `@thin` (`leoOutline.py:594`). `@clean` and `@nosent` are exempt from `may_overwrite`, so the write can land on an unrelated file.
-- **Unedited CRLF files are rewritten as LF.** `replace_file` compares bytes, where Leo's `compareIgnoringLineEndings` ignores `\r`. A write-all rewrites every CRLF file. A CRLF `.leo` file also keeps `\r` in its bodies, which an XML parser would normalise.
-- **An `@auto` tree that writes empty truncates its file.** Leo reports "not written" (`leoAtFile.py:1686`).
-- **`@edit`:** an empty file on disk replaces the body with `@nocolor`, and a node with children is written. Leo keeps the body, and refuses the write (`leoAtFile.py:1802`).
-- **A hard link is broken by the atomic rename.** Writing in place when the link count is above 1 keeps it, at the cost of atomicity. Inferred, not reproduced.
-
-## Encoding names
-
-- `@encoding cp1252` is not in `outline::is_valid_encoding`'s list, so `get_encoding` falls back to utf-8 and the file is written as UTF-8 without a report. Refuse it, as `@encoding latin-1` is refused.
-- `HEADER_PATTERN` in `atfile_read.rs` keeps the comma of `-encoding=utf8,.`. The writer emits that header for any encoding spelled other than `utf-8`, so an `@encoding utf8` file does not read back. Leo strips the comma (`leoAtFile.py:1069`). The failure is safe: the node stays empty and the write is refused.
+Most entries below come from the review of 2026-09-15: a conformance run of both implementations against leo-editor `e3b3841f64`, and a usability pass driven with `--dump --press` and tmux. Each was reproduced unless it says otherwise. The review's two sections on losing text and on encoding names are done; the CHANGELOG has them.
 
 ## Reader differences
 
-- A clone shared by two `@file` trees gains duplicate parent links. Case 3 in `atfile_read.rs` clears an existing clone's children without removing it from their parent lists, and `is_cloned` then answers true for nodes that are not clones.
+- **Leo's `descendentVnodeUnknownAttributes` blob is not stable across a read.** Its pickled dict comes back in another key order, so opening a `.leo` file with two uAs on one node and saving it rewrites the file with no edit. `demo/cases/uas` puts one uA per node to stay inside leo-editor's "rewritten unchanged" test. Leo's bug: this port rebuilds the blob from the tree, in the key order the tree gives, so it does not reproduce it.
+- **Leo reads a section reference back with its delimiters regex-escaped** when `@section-delims` set them (`leoAtFile.py:4016` assigns `re.escape`'d delims to `section_delim1`), so `{ imports }` becomes `\{ imports \}` in the body it hands back. This port keeps what the file spells. Report upstream; `corpus.rs`'s `KNOWN` holds it meanwhile.
+- **`external::read_files` drops the `@clean` mod-time cache before every read.** Leo drops it only in `refresh-from-disk` (`commanderFileCommands.py:463`); the open path honours it (`readOneAtCleanNode`). Nothing observable follows: the cache is session-scoped and empty at open, and `leotui` reaches `read_files` alone, so the #4385 skip never fires here at all.
 - `@auto` on an extension with no importer (`.txt`, `.json`, `.yaml`, `.toml`, `.sh`, `.css`, `.go`, `.rst` and others) is reported unread. Leo puts the whole file in the body with `@language` set (`leoImport.py:673`).
 - `@jupytext` is read and written as a sentinel `@file`.
-- Reader warnings are collected in `atfile_read.rs` and never returned.
-- An unparseable `@tabwidth` or `@lineending` hides the ancestor's value, where Leo's pattern falls through to it. Read from code.
+- `@pagewidth` is scanned and never read: `Outline::get_page_width` has no caller. Leo reflows a doc part to it.
+- No corpus case covers `@verbatim` alone, `@auto-rst`, `@auto-otl` or `@auto-vim-outline`. `sentinel_lookalikes` exercises `@verbatim` in three kinds.
 
 ## `w` has Leo's name and a different meaning
 

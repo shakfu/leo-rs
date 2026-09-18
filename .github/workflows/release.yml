@@ -1,0 +1,169 @@
+# Builds leotui for each platform when a version tag is pushed, and publishes
+# the archives to a GitHub release whose notes are that version's CHANGELOG.md
+# section. Tags are bare versions, such as 0.4.0.
+#
+# Run by hand with no tag, it checks and builds the branch chosen and keeps the
+# archives as the run's artifacts, publishing nothing: a way to try every
+# platform's build before tagging. Either way the archives are collected into
+# one `leotui-all-platforms` artifact, so a run is a single download.
+#
+# `ci.yml` runs on the tag's push as well, and it is the one that checks the
+# corpus against Python Leo. This workflow checks only that what it is about
+# to ship builds and passes.
+name: release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing tag to release, such as 0.4.0; empty builds the branch without releasing
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # The tag to release, or empty for a build that publishes nothing.
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.sha }}
+
+      - name: The tag matches the workspace version
+        if: env.TAG != ''
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if [ "$version" != "$TAG" ]; then
+            echo "tag $TAG does not match version $version in Cargo.toml"
+            exit 1
+          fi
+
+      - name: Release notes from CHANGELOG.md
+        if: env.TAG != ''
+        run: |
+          awk -v v="$TAG" '$0 == "## [" v "]" {found = 1; next} found && /^## \[/ {exit} found' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no ## [$TAG] section"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: env.TAG != ''
+        with:
+          name: notes
+          path: notes.md
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: make check
+        run: make check
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04, so the binaries run on glibc 2.35 and later.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # leolib is a library; leotui is the only binary in the workspace.
+      # --locked builds with the Cargo.lock in the tree, as a release should.
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p leotui
+
+      - name: Package
+        shell: bash
+        # A build that releases nothing is named by its commit.
+        run: |
+          version="${TAG:-$(git rev-parse --short HEAD)}"
+          staging="leotui-$version-${{ matrix.target }}"
+          mkdir "$staging"
+          cp README.md CHANGELOG.md LICENSE "$staging/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "target/${{ matrix.target }}/release/leotui.exe" "$staging/"
+            7z a "$staging.zip" "$staging" > /dev/null
+          else
+            cp "target/${{ matrix.target }}/release/leotui" "$staging/"
+            tar czf "$staging.tar.gz" "$staging"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: leotui-${{ matrix.target }}
+          path: leotui-*-${{ matrix.target }}.*
+
+  # Every platform's archive in one artifact, so a run is a single download.
+  bundle:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: leotui-*
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum leotui-* > SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: leotui-all-platforms
+          path: dist
+
+  release:
+    needs: bundle
+    if: github.event_name == 'push' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The bundle holds every platform's archive and the checksums already.
+      - uses: actions/download-artifact@v8
+        with:
+          name: leotui-all-platforms
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: notes
+          path: dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" dist/leotui-* dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file dist/notes.md

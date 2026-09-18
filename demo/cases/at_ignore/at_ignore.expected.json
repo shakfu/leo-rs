@@ -1,0 +1,30 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@ignore",
+   "b": "Nothing below here reaches the disk.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@file ignored.py",
+   "b": "@others\n"
+  },
+  {
+   "level": 2,
+   "gnx": "corpus.20260911000000.3",
+   "h": "f",
+   "b": "def f():\n    return 1\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.4",
+   "h": "@file written.py",
+   "b": "x = 1\n"
+  }
+ ]
+}

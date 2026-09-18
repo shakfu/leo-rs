@@ -1,0 +1,24 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file section_delims.py",
+   "b": "@section-delims { }\n\\{ imports \\}\n\n\n@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "{ imports }",
+   "b": "import os\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.3",
+   "h": "f",
+   "b": "def f():\n    return os.sep\n"
+  }
+ ]
+}

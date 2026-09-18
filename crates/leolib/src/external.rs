@@ -263,6 +263,13 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool> {
 fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
+    o.remember_read_path(p, &path);
+    // Leo's #391: an empty file leaves the node alone. Replacing the body
+    // with the `@language` line alone would drop the text the node holds,
+    // which for `@edit` is the only copy of it once the file is empty.
+    if contents.is_empty() {
+        return Ok(false);
+    }
     let kids = p.children(o);
     for child in kids.iter().rev() {
         o.delete_position(child);
@@ -282,7 +289,6 @@ fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool> {
         }
     };
     o.node_mut(p.v).b = format!("{head}{contents}");
-    o.remember_read_path(p, &path);
     o.clear_dirty_in_tree(p);
     Ok(true)
 }
@@ -482,7 +488,7 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
                 path,
                 error,
             }),
-            Ok((contents, newline, encoding)) => {
+            Ok((contents, newline, _encoding)) => {
                 let contents = if newline != "\n" {
                     contents.replace('\r', "").replace('\n', &newline)
                 } else {
@@ -522,7 +528,10 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
                         continue;
                     }
                 }
-                match replace_file(&path, &contents, &encoding) {
+                // Leo corrects the line endings of a file whose tree asks
+                // for them; without the directive it leaves them alone.
+                let explicit_line_ending = !o.get_line_ending(&p).is_empty();
+                match replace_file(&path, &contents, !explicit_line_ending) {
                     Ok(true) => {
                         o.record_file_stamp(&path, util::file_stamp(&path));
                         result.written.push(path.clone());
@@ -577,16 +586,30 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     }
     if p.is_at_auto_node(o) {
         let path = o.full_path(p);
-        return Ok((
-            crate::importers::write_string(o, p, &path)?,
-            newline,
-            encoding,
-        ));
+        let contents = crate::importers::write_string(o, p, &path)?;
+        // Leo's `writeOneAtAutoNode`: empty contents are reported rather than
+        // written, or an importer that produced nothing would truncate the
+        // file it was read from.
+        if contents.is_empty() {
+            return Err(Error::Write {
+                detail: format!("not written, nothing to write: {path}"),
+            });
+        }
+        return Ok((contents, newline, encoding));
     }
     if p.is_at_asis_node(o) {
         return Ok((write_asis(o, p), newline, encoding));
     }
     if p.is_at_edit_node(o) {
+        // Leo's `writeOneAtEditNode`: only the node's own body reaches the
+        // file, so writing one with children would drop every child's text.
+        if !p.children(o).is_empty() {
+            return Err(Error::Write {
+                detail: "@edit nodes must not have children; convert the node to \
+                         @auto, @file or @clean to keep them"
+                    .to_string(),
+            });
+        }
         return Ok((write_at_edit(o, p), newline, encoding));
     }
     let sentinels = !(p.is_at_clean_node(o) || p.is_at_nosent_node(o));
@@ -636,14 +659,25 @@ fn first_non_utf8_byte_opt(path: &str) -> Option<usize> {
     std::str::from_utf8(&bytes).err().map(|e| e.valid_up_to())
 }
 
-fn file_mtime(path: &str) -> Option<u64> {
-    std::fs::metadata(path)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_secs())
+/// True if another name refers to this file. Always false off unix, which
+/// has no comparable link count in `std`.
+#[cfg(unix)]
+fn hard_linked(path: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).is_ok_and(|m| m.nlink() > 1)
+}
+
+#[cfg(not(unix))]
+fn hard_linked(_path: &str) -> bool {
+    false
+}
+
+fn strip_cr(b: &[u8]) -> Vec<u8> {
+    b.iter().copied().filter(|c| *c != b'\r').collect()
+}
+
+fn file_mtime(path: &str) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 /// Write `contents` to `path`. Returns whether the file on disk changed.
@@ -659,7 +693,7 @@ fn file_mtime(path: &str) -> Option<u64> {
 /// the link would replace it with a copy and leave its target stale. A
 /// read-only file is refused, which a rename would otherwise bypass. The
 /// directory must exist.
-pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool> {
+pub fn replace_file(path: &str, contents: &str, ignore_line_endings: bool) -> Result<bool> {
     let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
     let real;
     let path = match is_link {
@@ -676,6 +710,12 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool>
         if old == contents.as_bytes() {
             return Ok(false);
         }
+        // Leo's `compareIgnoringLineEndings`: without an explicit
+        // `@lineending`, a file that differs only in its line endings is
+        // unchanged. Comparing bytes rewrote every CRLF file on a write-all.
+        if ignore_line_endings && strip_cr(&old) == strip_cr(contents.as_bytes()) {
+            return Ok(false);
+        }
         // The last guard, for the paths that reach here without a read:
         // `@clean` and `@nosent` are exempt from `may_overwrite`, and a front
         // end can approve an overwrite. Replacing bytes this port cannot
@@ -687,6 +727,14 @@ pub fn replace_file(path: &str, contents: &str, _encoding: &str) -> Result<bool>
             let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
             return Err(Error::io(path, denied));
         }
+    }
+    // A rename replaces the inode, so every other name for the file would
+    // keep the old contents. Leo writes every file in place; here only this
+    // case gives up atomicity for it.
+    if hard_linked(path) {
+        return std::fs::write(path, contents.as_bytes())
+            .map(|()| true)
+            .map_err(|e| Error::io(path, e));
     }
     let tmp = format!("{path}.leo-rs-tmp");
     std::fs::write(&tmp, contents.as_bytes()).map_err(|e| Error::io(&tmp, e))?;

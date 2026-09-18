@@ -1,0 +1,18 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file tabwidth.py",
+   "b": "@tabwidth 4\nclass C:\n\t@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "m",
+   "b": "def m(self):\n    return 1\n"
+  }
+ ]
+}

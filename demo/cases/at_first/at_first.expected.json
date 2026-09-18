@@ -1,0 +1,12 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file first.py",
+   "b": "@first #!/usr/bin/env python3\nx = 1\n"
+  }
+ ]
+}

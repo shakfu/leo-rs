@@ -774,7 +774,8 @@ impl<'a> AtWrite<'a> {
         self.put_indent(self.indent);
         let start = self.start_comment.clone();
         self.os(&start);
-        // Blacken python sentinels.
+        // Blacken python sentinels. The reader takes the space from the
+        // `@+leo` line: see `scan_lines`.
         if self.language == "python" {
             self.os(" ");
         }

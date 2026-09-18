@@ -135,7 +135,13 @@ pub fn scan_header(lines: &[String]) -> Option<Header> {
             return Some(Header {
                 delim1: m.get(1).map(|x| x.as_str()).unwrap_or("").to_string(),
                 delim2: m.get(8).map(|x| x.as_str()).unwrap_or("").to_string(),
-                encoding: m.get(6).map(|x| x.as_str()).unwrap_or("").to_string(),
+                // Leo 4.2 and after write `-encoding=<name>,.`; the comma is
+                // not part of the name (`at.parseLeoSentinel`).
+                encoding: m
+                    .get(6)
+                    .map(|x| x.as_str().trim_end_matches(','))
+                    .unwrap_or("")
+                    .to_string(),
                 first_lines,
                 start: i + 1,
             });
@@ -165,8 +171,24 @@ pub fn read_into_root(o: &mut Outline, contents: &str, path: &str, root: &Positi
     // Leo clears only the root's children, which leaves a re-read adding a
     // second parent link to every node below.
     o.detach_subtree(root.v);
-    let mut scanner = Scanner::new(o, root, path);
-    scanner.scan_lines(&header, &lines);
+    let warnings = {
+        let mut scanner = Scanner::new(o, root, path);
+        scanner.scan_lines(&header, &lines);
+        std::mem::take(&mut scanner.warnings)
+    };
+    // The scan's own notes, on the channel the importers already use: a
+    // front end reads them from `ReadResult::warnings`. They were collected
+    // and dropped, so a file with a line the reader kept but did not
+    // understand read silently.
+    if !warnings.is_empty() {
+        // The read may have taken the root's gnx from the file (#3931).
+        let gnx = o.gnx(root.v).to_string();
+        let note = warnings.join("; ");
+        o.import_warnings
+            .entry(gnx)
+            .and_modify(|s| *s = format!("{s}; {note}"))
+            .or_insert(note);
+    }
     Ok(())
 }
 
@@ -190,6 +212,17 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_lines(&mut self, header: &Header, lines: &[String]) {
+        // A python file's sentinels carry a space between the delimiter and
+        // the `@`, and the `@+leo` line is the only place the reader can
+        // learn that. Keep it for a delimiter a later `@comment` or `@delims`
+        // names, or every sentinel after that directive stops matching and
+        // the whole file reads as one body. Leo drops it (leoAtFile.py:4016
+        // does the same for section delims) and loses the tree.
+        let blacken = header.delim1.ends_with(' ');
+        let keep_blacken = |d: String| match blacken && !d.is_empty() && !d.ends_with(' ') {
+            true => format!("{d} "),
+            false => d,
+        };
         let mut comment_delim1 = header.delim1.clone();
         let mut comment_delim2 = header.delim2.clone();
         self.pats = Patterns::new(&comment_delim1, &comment_delim2);
@@ -330,7 +363,7 @@ impl<'a> Scanner<'a> {
                     self.o.gnx_dict.insert(new_gnx.clone(), root_v);
                     gnx = new_gnx;
                     gnx2body.insert(gnx.clone(), Vec::new());
-                    self.o.node_mut(root_v).children.clear();
+                    self.o.delete_all_children(root_v);
                     continue;
                 }
 
@@ -349,7 +382,7 @@ impl<'a> Scanner<'a> {
                     self.o.node_mut(v).h = head;
                     level_stack.truncate(level.saturating_sub(1));
                     level_stack.push((v, clone_v));
-                    self.o.node_mut(v).children.clear();
+                    self.o.delete_all_children(v);
                     self.o.node_mut(parent_v).children.push(v);
                     self.o.node_mut(v).parents.push(parent_v);
                     continue;
@@ -359,7 +392,10 @@ impl<'a> Scanner<'a> {
                 let v = match existing {
                     Some(v) => {
                         clone_v = Some(v);
-                        self.o.node_mut(v).children.clear();
+                        // Not `children.clear()`: each child keeps a parent
+                        // link to v, and re-reading the subtree pushed a
+                        // second one, so every node in it looked cloned.
+                        self.o.delete_all_children(v);
                         v
                     }
                     None => self.o.new_vnode(Some(&new_gnx)),
@@ -466,10 +502,10 @@ impl<'a> Scanner<'a> {
                     .push(format!("@comment {delims}\n"));
                 let (d1, d2, d3) = util::set_delims_from_string(&delims);
                 if !d1.is_empty() {
-                    comment_delim1 = d1;
+                    comment_delim1 = keep_blacken(d1);
                     comment_delim2 = String::new();
                 } else {
-                    comment_delim1 = d2;
+                    comment_delim1 = keep_blacken(d2);
                     comment_delim2 = d3;
                 }
                 doc_skip = [format!("{comment_delim1}\n"), format!("{comment_delim2}\n")];
@@ -489,7 +525,7 @@ impl<'a> Scanner<'a> {
                 let mut parts = delims.split_whitespace();
                 match parts.next() {
                     Some(d1) => {
-                        comment_delim1 = d1.replace("__", "\n").replace('_', " ");
+                        comment_delim1 = keep_blacken(d1.replace("__", "\n").replace('_', " "));
                         comment_delim2 = parts
                             .next()
                             .map(|d| d.replace("__", "\n").replace('_', " "))
@@ -704,6 +740,92 @@ mod tests {
             got[0].2,
             "@first #!/usr/bin/env python3\nx = 1\n@last # tail\n"
         );
+    }
+
+    /// `@comment` and `@delims` name the delimiter the sentinels are written
+    /// with. Leo blackens a python file's sentinels, `# @+others`, and then
+    /// takes the delimiter from the directive when reading, without the
+    /// space: nothing after the directive matches, the tree collapses into
+    /// one body, and no error says so. A save then writes that one body over
+    /// the file.
+    #[test]
+    fn a_directive_that_changes_the_delimiter_still_reads_back() {
+        for body in [
+            "@comment ;\n@others\n",
+            "@comment /* */\n@others\n",
+            "@delims ;\n@others\n",
+        ] {
+            let mut o = Outline::new_empty();
+            let root = o.root_position().unwrap();
+            o.set_headline(&root, "@file test.py");
+            o.set_body(&root, body);
+            let a = o.insert_as_last_child(&root);
+            o.set_headline(&a, "f");
+            o.set_body(&a, "x = 1\n");
+
+            let got = round_trip(&mut o);
+            let heads: Vec<&str> = got.iter().map(|(_, h, _)| h.as_str()).collect();
+            assert_eq!(heads, vec!["@file test.py", "f"], "{body:?}");
+            assert_eq!(got[0].2, body, "{body:?}");
+            assert_eq!(got[1].2, "x = 1\n", "{body:?}");
+        }
+    }
+
+    /// The same file as Leo writes it, sentinels blackened after the
+    /// directive. Reading it must not depend on this port having written it.
+    #[test]
+    fn a_blackened_delimiter_after_a_directive_reads_back() {
+        let text = concat!(
+            "; @+leo-ver=5-thin\n",
+            "; @+node:corpus.1: * @file comment.py\n",
+            "; @@comment ;\n",
+            "; @+others\n",
+            "; @+node:corpus.2: ** f\n",
+            "x = 1\n",
+            "; @-others\n",
+            "; @-leo\n",
+        );
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file comment.py");
+        read_into_root(&mut o, text, "comment.py", &root).unwrap();
+        let root = o.root_position().unwrap();
+        assert_eq!(root.b(&o), "@comment ;\n@others\n");
+        let kids = root.children(&o);
+        assert_eq!(kids.len(), 1);
+        assert_eq!(kids[0].h(&o), "f");
+        assert_eq!(kids[0].b(&o), "x = 1\n");
+    }
+
+    #[test]
+    fn a_clone_with_children_reads_back_with_one_parent_link_each() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file test.py");
+        o.set_body(&root, "@others\n");
+        let a = o.insert_as_last_child(&root);
+        o.set_headline(&a, "shared");
+        o.set_body(&a, "@others\n");
+        let a1 = o.insert_as_last_child(&a);
+        o.set_headline(&a1, "inside");
+        o.set_body(&a1, "inside = 1\n");
+        o.clone_node(&a);
+        let text = tangle(&o, &root).unwrap();
+
+        let mut o2 = Outline::new_empty();
+        let root2 = o2.root_position().unwrap();
+        o2.set_headline(&root2, "@file test.py");
+        assert!(read_into_root(&mut o2, &text, "test.py", &root2).is_ok());
+        // "inside" is one node under a cloned parent, so it has one link to
+        // it. Clearing the clone's children without unlinking them left the
+        // second read pushing a second link, and `is_cloned` said true.
+        let inside: Vec<_> = o2
+            .all_unique_positions()
+            .into_iter()
+            .filter(|p| p.h(&o2) == "inside")
+            .collect();
+        assert_eq!(inside.len(), 1);
+        assert_eq!(o2.node(inside[0].v).parents.len(), 1);
     }
 
     #[test]

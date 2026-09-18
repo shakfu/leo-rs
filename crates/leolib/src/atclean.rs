@@ -107,11 +107,7 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool> 
         return Err(Error::NotFound { path });
     }
     // #4385: do nothing if the file has not changed since we last saw it.
-    let new_mod_time = std::fs::metadata(&path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs());
+    let new_mod_time = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     let gnx = root.gnx(o).to_string();
     if let (Some(old), Some(new)) = (o.mod_time_cache.get(&gnx).copied(), new_mod_time) {
         if old >= new {

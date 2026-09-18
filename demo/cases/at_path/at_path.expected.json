@@ -1,0 +1,24 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@path sub",
+   "b": "Files below here live in sub/.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@file inside.py",
+   "b": "@others\n"
+  },
+  {
+   "level": 2,
+   "gnx": "corpus.20260911000000.3",
+   "h": "f",
+   "b": "def f():\n    return 1\n"
+  }
+ ]
+}

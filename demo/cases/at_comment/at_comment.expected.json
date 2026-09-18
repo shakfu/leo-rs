@@ -1,0 +1,18 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@file comment.txt",
+   "b": "@comment ;\n@others\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "f",
+   "b": "x = 1\n"
+  }
+ ]
+}

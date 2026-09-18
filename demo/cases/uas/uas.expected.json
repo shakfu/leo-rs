@@ -1,0 +1,18 @@
+{
+ "read_external": false,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "a node with a text uA",
+   "b": "Its uA is text, and needs escaping.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "a node with a pickled uA",
+   "b": "Its uA is a hexlified pickle.\n"
+  }
+ ]
+}

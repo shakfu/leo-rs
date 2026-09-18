@@ -591,7 +591,10 @@ impl App {
             true if self.save_files => {
                 let result = self.doc.save_all("");
                 match result.leo {
-                    Ok(_) => return self.report_save(format!("saved {name}"), result.files),
+                    Ok(_) => {
+                        self.report_save(format!("saved {name}"), result.files);
+                        return self.note_dropped_uas(result.dropped_descendent_uas);
+                    }
                     Err(e) => format!("save failed: {e}"),
                 }
             }
@@ -616,6 +619,20 @@ impl App {
             0 => message,
             n => format!("{message}; {} not written", plural(n, "external file")),
         }
+    }
+
+    /// Name the trees whose descendants' unknown attributes the save dropped.
+    ///
+    /// The blob that held them is keyed by position and only Leo can rebuild
+    /// it, so restructuring such a tree loses them. The save is the one place
+    /// that can say so: nothing in the outline records it afterwards.
+    fn note_dropped_uas(&mut self, dropped: Vec<String>) {
+        let note = match dropped.len() {
+            0 => return,
+            1 => format!("dropped the descendant uAs under {}", dropped[0]),
+            n => format!("dropped the descendant uAs under {n} trees"),
+        };
+        self.message = format!("{}; {note}", self.message);
     }
 
     /// Say what saving the `.leo` file did, then what writing the files did.
@@ -1289,6 +1306,7 @@ impl App {
                     Ok(path) => {
                         let leo = format!("saved {}", leolib::util::short_file_name(&path));
                         self.report_save(leo, result.files);
+                        self.note_dropped_uas(result.dropped_descendent_uas);
                     }
                     Err(e) => self.message = self.held_back(format!("save failed: {e}")),
                 }

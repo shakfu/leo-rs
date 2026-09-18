@@ -1,0 +1,18 @@
+{
+ "read_external": false,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@asis asis.txt",
+   "b": "First part, as is.\n"
+  },
+  {
+   "level": 1,
+   "gnx": "corpus.20260911000000.2",
+   "h": "more",
+   "b": "Second part.\n"
+  }
+ ]
+}
