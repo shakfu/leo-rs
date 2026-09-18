@@ -41,19 +41,42 @@ use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::Terminal;
 
 use app::App;
+use clap::Parser;
 use leolib::Document;
 
+/// A terminal front end for leolib.
+#[derive(Parser)]
+#[command(name = "leotui", version)]
 struct Args {
+    /// The outline to open. Without one, leotui starts an unsaved outline.
+    #[arg(value_name = "FILE.leo")]
     path: Option<String>,
+    /// Print one composed frame and exit, with no terminal.
+    #[arg(long)]
     dump: bool,
+    /// Print the binding table and exit.
+    #[arg(long = "keys")]
     list_keys: bool,
+    /// Print one binding spec per line and exit.
+    #[arg(long = "key-specs")]
     list_key_specs: bool,
-    version: bool,
+    /// Press keys before drawing: binding specs separated by commas. May be repeated.
+    #[arg(long, value_name = "KEYS", action = clap::ArgAction::Append)]
     press: Vec<String>,
-    kitty_keys: bool,
+    /// Decode keys as a plain terminal sends them, without the kitty protocol.
+    #[arg(long)]
+    no_kitty_keys: bool,
+    /// Width of the `--dump` frame.
+    #[arg(long, value_name = "N", default_value_t = 100)]
     width: u16,
+    /// Height of the `--dump` frame.
+    #[arg(long, value_name = "N", default_value_t = 30)]
     height: u16,
-    read_external: bool,
+    /// Open the outline without reading its external files.
+    #[arg(long)]
+    no_external: bool,
+    /// Use this theme for one launch, without saving it.
+    #[arg(long, value_name = "NAME")]
     theme: Option<String>,
 }
 
@@ -63,72 +86,8 @@ struct Args {
 /// only a default and holds whatever the user has on disk under that name.
 const DEFAULT_THEME: &str = "sonokai";
 
-fn parse_args() -> Result<Args, String> {
-    let mut args = Args {
-        path: None,
-        dump: false,
-        list_keys: false,
-        list_key_specs: false,
-        version: false,
-        press: Vec::new(),
-        kitty_keys: true,
-        width: 100,
-        height: 30,
-        read_external: true,
-        theme: None,
-    };
-    let mut it = std::env::args().skip(1);
-    while let Some(arg) = it.next() {
-        match arg.as_str() {
-            "--dump" => args.dump = true,
-            "--keys" => args.list_keys = true,
-            "--key-specs" => args.list_key_specs = true,
-            "-V" | "--version" => args.version = true,
-            "--press" => {
-                let spec = it.next().ok_or("--press needs a key sequence")?;
-                args.press = spec.split(',').map(|s| s.trim().to_string()).collect();
-            }
-            "--no-external" => args.read_external = false,
-            "--theme" => args.theme = Some(it.next().ok_or("--theme needs a name")?),
-            "--no-kitty-keys" => args.kitty_keys = false,
-            "--width" => {
-                args.width = it
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .ok_or("--width needs a number")?
-            }
-            "--height" => {
-                args.height = it
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .ok_or("--height needs a number")?
-            }
-            "-h" | "--help" => return Err(usage()),
-            _ if arg.starts_with('-') => return Err(format!("unknown option: {arg}\n{}", usage())),
-            _ => args.path = Some(arg),
-        }
-    }
-    Ok(args)
-}
-
-fn usage() -> String {
-    "usage: leotui [FILE.leo] [--dump] [--keys] [--key-specs] [--press KEYS] \
-[--no-external] [--no-kitty-keys] [--width N] [--height N] [--theme NAME] [--version]"
-        .to_string()
-}
-
 fn main() {
-    let args = match parse_args() {
-        Ok(args) => args,
-        Err(message) => {
-            eprintln!("{message}");
-            std::process::exit(2);
-        }
-    };
-    if args.version {
-        println!("leotui {}", env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
-    }
+    let args = Args::parse();
     if args.list_keys {
         print_keys();
         std::process::exit(0);
@@ -140,7 +99,7 @@ fn main() {
         std::process::exit(0);
     }
     let doc = match &args.path {
-        Some(path) => match Document::open(path, args.read_external) {
+        Some(path) => match Document::open(path, !args.no_external) {
             Ok(doc) => doc,
             Err(e) => {
                 eprintln!("leotui: {e}");
@@ -182,7 +141,12 @@ fn main() {
 
     // Pressing keys before drawing makes any state reachable headlessly,
     // which is how the help overlay and the modes are checked.
-    for spec in &args.press {
+    let specs = args
+        .press
+        .iter()
+        .flat_map(|arg| arg.split(','))
+        .map(str::trim);
+    for spec in specs {
         for key in keys::parse(spec) {
             app.handle_key(crossterm::event::KeyEvent::new(key.code, key.mods));
         }
@@ -191,7 +155,7 @@ fn main() {
     let code = if args.dump {
         dump(&mut app, args.width, args.height)
     } else {
-        run(&mut app, args.kitty_keys)
+        run(&mut app, !args.no_kitty_keys)
     };
     std::process::exit(code);
 }

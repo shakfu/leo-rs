@@ -40,6 +40,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ### Changed
 
+- **leotui parses its command line with `clap`.** The hand-written parser printed `--help` to stderr with exit status 2, and a second file argument silently replaced the first. `--help` now prints to stdout and exits 0, and a second file is an error. `--press` may be repeated, its specs joining in order. clap adds 377KB to the release binary, 13.09MB to 13.47MB.
+
 - **`Ctrl-s`, `:w`, `:w path` and `:saveas` write the dirty external files after the `.leo` file.** They wrote the `.leo` file alone and reported `saved`, leaving `@file` edits only in memory. An `@clean` edit was lost on reopen: its text is in the `.leo` file, but the read merges the unwritten file over it. Leo's `save`, `save-to` and `save-as` write both. `:write-outline-only` writes the `.leo` file alone.
 
   The `.leo` file goes first, where Leo writes it last, so the outline's edits reach disk however the files fare. A file that fails does not stop the others; it stays dirty, and the next save retries it. If the `.leo` file is not saved, by an error or a declined prompt, no file is written. `@nosent` and `@asis` files are never read back, so one newer than its `.leo` file would reopen stale and be overwritten by the next write.

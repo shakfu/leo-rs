@@ -28,7 +28,7 @@ crates/leolib     the model. No view, ever.
 crates/leotui     the terminal front end.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leotui` adds `ratatui` and `crossterm`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leotui` adds `ratatui`, `crossterm` and `clap`.
 
 ## Installing
 
