@@ -66,7 +66,9 @@ An `@<file>` headline and an `@path` directive can name any path: an absolute on
 Three guards narrow this without closing it:
 
 - `Outline::may_overwrite` refuses a file the outline has not read.
+
 - A write refuses a file changed on disk since the outline read or wrote it (`Error::ChangedOnDisk`).
+
 - A write refuses a directory that does not exist, unless `Config::create_nonexistent_directories` is set. Leo's default is the same.
 
 None of them stops a new file in an existing directory. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
