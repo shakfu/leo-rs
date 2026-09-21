@@ -36,7 +36,9 @@ Formatters need the other direction. `atclean.rs` ports Leo's `@clean` update al
 ### vim's shell commands and quickfix list
 
 - `:!cmd` runs a command. `%` expands to the current node's external file: `:!quarto render %`.
+
 - `:[range]!cmd` filters body lines through a command and replaces them with its output: `:%!ruff format -`.
+
 - A quickfix list, as vim's `:cexpr`, `:cnext` and `:copen`, reads `file:line:col: message` lines from any tool and steps through them with the mapping above.
 
 These cover ripgrep, ruff, compilers and quarto with no code specific to any of them, and without plugins. They follow vim, as `:s`, `/`, `:set` and `Ctrl-w` did.
@@ -44,24 +46,37 @@ These cover ripgrep, ruff, compilers and quarto with no code specific to any of 
 ## Ranking
 
 1. File-line to node-line mapping, as `leolib` API.
+
 2. `:!`, `:[range]!` and a quickfix list.
+
 3. `:messages`, a log of status messages.
+
 4. A built-in fuzzy node picker.
+
 5. Later: MCP as a separate binary, after leotui can reload changed files. Several outlines open, once moving nodes between files is needed.
+
 6. Not now: the terminal pane. LSP is deferred, since quickfix over `ruff check` gives Python its diagnostics.
 
 ## Constraints any of these must respect
 
 - `leolib` stays free of TUI and tool dependencies; `README.md` says nothing in it depends on `leotui`. The mapping belongs in `leolib`, and running tools belongs in `leotui`.
+
 - Tools are found on `PATH` at run time. A missing tool gets a status-line message, not a build requirement.
+
 - A tool that draws on the terminal, such as fzf, needs leotui to leave raw mode and the alternate screen, then restore both.
+
 - leotui reads external files at startup and on `:e`, and not again; `leolib`'s `mod_time_cache` only lets a read skip an unchanged `@clean` file. So a running leotui never sees an outside writer: a formatter, an MCP server, another editor. `w` would then overwrite that writer's changes without asking, because the file counts as read. Reload-on-change must come before MCP or in-place formatting.
+
 - The release binary is 12MB, mostly tree-sitter grammars (CHANGELOG, 0.2.0). LSP and MCP crates would add to it; how much is not measured.
 
 ## Open questions
 
 - Who uses leotui: one person inside tmux, or others on plain terminals? The first makes a terminal pane redundant.
+
 - Which languages fill the outlines in use? If mostly Python, ruff with quickfix covers most of what LSP would.
+
 - Do other editors change these files while leotui is open? If so, reload-on-change comes first, before anything above.
+
 - Does leotui replace leo-editor, or run beside it? Beside it, scripting stays in leo-editor, and "no scripting" costs nothing here.
+
 - Is binary size a constraint?
