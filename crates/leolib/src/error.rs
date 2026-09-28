@@ -9,6 +9,7 @@
 
 /// What went wrong. The `Display` text is meant to be shown as it is.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// The OS refused the file.
     Io {

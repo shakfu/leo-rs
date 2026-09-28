@@ -99,6 +99,19 @@ pub enum Change {
     },
 }
 
+impl Change {
+    /// The same change with another count, as vim's `3.` asks for.
+    pub fn with_count(mut self, n: usize) -> Change {
+        match &mut self {
+            Change::Operator { count, .. }
+            | Change::Simple { count, .. }
+            | Change::Insert { count, .. }
+            | Change::OperatorInsert { count, .. } => *count = n,
+        }
+        self
+    }
+}
+
 /// What `y` and `d` put in the register, and what `p` takes out.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Register {

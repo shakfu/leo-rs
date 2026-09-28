@@ -4,7 +4,16 @@
 //! `"Shift-Down"`, `"Ctrl-r"`, `"Alt--"` -- and parsed here. That keeps the
 //! table readable, which matters because the same table is the help screen.
 
+use crate::editor::parse::{push_digit, MAX_COUNT};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// Whether a Ctrl or Alt chord is held, which types no text. Ctrl and Alt
+/// together are AltGr on Windows, which types `@` or `{` on many layouts.
+pub fn is_chord(mods: KeyModifiers) -> bool {
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    ctrl != alt
+}
 
 /// One keypress, normalized so a table entry and a terminal event compare equal.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -156,7 +165,7 @@ impl Pending {
 
     /// The count to apply, defaulting to 1.
     pub fn count(&self) -> usize {
-        self.count.unwrap_or(1).max(1)
+        self.count.unwrap_or(1).clamp(1, MAX_COUNT)
     }
 
     /// Add a digit to the count. `0` only continues a count already started.
@@ -164,7 +173,7 @@ impl Pending {
         if d == 0 && self.count.is_none() {
             return false;
         }
-        self.count = Some(self.count.unwrap_or(0) * 10 + d);
+        self.count = Some(push_digit(self.count, d));
         true
     }
 

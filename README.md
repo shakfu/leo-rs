@@ -97,12 +97,16 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 | mode | how you get there | how you leave |
 |---|---|---|
 | `NORMAL` | the default | |
-| `INSERT` | `i` `a` `I` `A` `o` `O` `s` `S` `c` `C` in the body | `Escape` commits, `Ctrl-c` abandons |
+| `INSERT` | `i` `a` `I` `A` `o` `O` `s` `S` `c` `C` in the body | `Escape` commits |
 | `VISUAL` | `v` `V` in the body | an operator, or `Escape` |
 | `HEADLINE` | `e` in the outline | `Enter` commits, `Escape` abandons |
 | `COMMAND` | `:` | `Enter` runs it, `Escape` abandons |
 | `SEARCH` | `/` `?` | `Enter` keeps the match, `Escape` goes back |
 | `HELP` | `F1` | `q` |
+
+`Ctrl-c` in any mode keeps what you typed, closes what is open, and asks to quit if anything is unsaved. In a yes/no prompt it answers no.
+
+In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor and `Ctrl-u` the text before it. Other Ctrl and Alt chords type nothing.
 
 ### Cheatsheet
 
@@ -121,12 +125,14 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 | `{` `}` | previous, next sibling |
 | `[m` `]m` | previous, next marked node |
 | `]c` `Alt-n` | next clone of this node |
+| `Alt-Left` `Alt-Right` | back, forward through the nodes selected |
 
 **Outline: folding**
 
 | | |
 |---|---|
 | `Space` `za` | fold or unfold this node |
+| `zh` `zH` | hoist this node, dehoist (`:clear-all-hoists` undoes every hoist) |
 | `zo` `Alt-]` | unfold this node |
 | `zc` `Alt-[` | fold this node |
 | `zR` | unfold every node |
@@ -162,6 +168,13 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 | `yy` `p` | copy, paste after this node |
 | `` ` `` | clone this node |
 | `m` `M` | mark or unmark this node, clear every mark |
+| `Alt-a` | sort this node and its siblings (`:sort-children` sorts its children) |
+
+`:cfa pattern` (`:clone-find-all`) clones every node matching `pattern` under a new last top-level node, `Found N:pattern`, as Leo's `clone-find-all`. `:cff` (`:clone-find-all-flattened`) also searches below each match. The pattern is matched as `/` matches it; with none, the last search is used.
+
+`:extract` moves the VISUAL lines, or the cursor's line, into a new first child, as Leo's `extract`: a `<< section >>` first line names the child and stays behind, a definition line names it, or else the first line does.
+
+`:mark-subheads`, `:mark-node-and-parents`, `:unmark-node-and-parents`, `:clone-marked-nodes`, `:copy-marked-nodes` and `:delete-marked-nodes` are Leo's commands of those names. Each is one undo step.
 
 **Body: a vim buffer**
 
@@ -179,6 +192,7 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 | `v V` | select charwise, linewise |
 | `p P` | put the text register after, before |
 | `.` | repeat the last change |
+| `gd` | go to the node defining the `<< section >>` on this line |
 
 Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 

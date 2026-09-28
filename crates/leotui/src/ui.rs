@@ -300,7 +300,7 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
         let hint = match (pending.is_empty(), app.mode) {
             (false, _) => pending,
             (true, Mode::Help) => "q closes".to_string(),
-            (true, Mode::Insert) => "Esc commits, Ctrl-c abandons".to_string(),
+            (true, Mode::Insert) => "Esc commits".to_string(),
             (true, Mode::Visual) => "d c y > < to operate, Esc cancels".to_string(),
             _ => "F1 help".to_string(),
         };

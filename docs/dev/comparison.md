@@ -1,18 +1,23 @@
 # leo-rs and leo-editor
 
-A comparison of leo-rs (`leolib` and `leotui`) with the Qt-based leo-editor, measured on 2026-09-10. Versions: leo-rs `929774f` with the uncommitted regex cache in `atfile_read.rs`, leo-editor `3acfadd8d0`, Python 3.14.7, macOS.
+A comparison of leo-rs (`leolib` and `leotui`) with the Qt-based leo-editor.
+
+- Code, tests and commands were measured on 2026-09-28: leo-rs `dcf413a` with that day's uncommitted work, leo-editor `e3b3841f64`.
+- Load time was measured on 2026-09-10 and not since: leo-rs `929774f` with the uncommitted regex cache in `atfile_read.rs`, leo-editor `3acfadd8d0`, Python 3.14.7, macOS.
+
+`delta.md` sets each Leo command, directive and node kind against leotui.
 
 ## Measured
 
 | | leo-rs | leo-editor |
 |---|---|---|
-| code | 23,933 lines of Rust, 4,375 of them generated tables | 94,125 lines of Python in `core` and `commands`, plus 98,340 in `plugins` |
-| tests | 308 | 967 unit tests |
-| commands | 86 | 934 distinct names |
+| code | 29,166 lines of Rust, 4,375 of them generated tables | 94,129 lines of Python in `core` and `commands`, plus 98,349 in `plugins` |
+| tests | 442 | 975 unit tests |
+| commands | 114 | 936 distinct names |
 | scripting (`@button`, `@command`, `execute-script`) | none | central |
 | settings | `config.toml`, two keys | `@settings` trees, `myLeoSettings.leo` |
 | plugins | none | 98k lines |
-| load `LeoPyRef.leo` and its external files | 0.09s | 0.48s, of which 0.10s is Python and bridge startup |
+| load `LeoPyRef.leo` and its external files (2026-09-10) | 0.09s | 0.48s, of which 0.10s is Python and bridge startup |
 
 How each row was measured:
 
@@ -44,7 +49,7 @@ With `--no-external`, leotui opens the outline in 4ms, so almost all of its 0.09
 
 - **No scripting.** leo-editor's distinguishing feature is Python run against the outline, through `c`, `g`, `p` and `@button`. Without it, leo-rs is an outliner that reads and writes Leo's formats. This is judgement, not measurement.
 
-- **Breadth.** 86 commands against 934, no plugins, one import command.
+- **Breadth.** 114 commands against 936, no plugins, one import command.
 
 ## Open question: what leo-rs is for
 

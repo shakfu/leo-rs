@@ -33,10 +33,10 @@ fn repeat(app: &mut App, count: usize, f: impl Fn(&mut App)) {
     }
 }
 
-/// Move the selection, if the motion has anywhere to go.
+/// Move the selection, if the motion has anywhere to go inside the hoist.
 fn go(app: &mut App, count: usize, f: impl Fn(&App, &Position) -> Option<Position>) {
     for _ in 0..count {
-        let Some(next) = f(app, &app.current) else {
+        let Some(next) = f(app, &app.current).filter(|p| app.in_view(p)) else {
             break;
         };
         app.select(next);
@@ -70,8 +70,8 @@ pub static COMMANDS: &[Command] = &[
         "goto-first-visible-node",
         "select the first node",
         |app, _| {
-            if let Some(p) = app.outline().root_position() {
-                app.select(p);
+            if let Some(row) = app.rows().first() {
+                app.select(row.position.clone());
             }
         },
     ),
@@ -79,8 +79,8 @@ pub static COMMANDS: &[Command] = &[
         "goto-last-visible-node",
         "select the last visible node",
         |app, _| {
-            if let Some(p) = app.outline().last_visible_position() {
-                app.select(p);
+            if let Some(row) = app.rows().last() {
+                app.select(row.position.clone());
             }
         },
     ),
@@ -94,6 +94,26 @@ pub static COMMANDS: &[Command] = &[
         "select the previous marked node",
         |app, n| go(app, n, |app, p| app.outline().prev_marked(p)),
     ),
+    c(
+        "open-url-under-cursor",
+        "go to the section a << reference >> names",
+        |app, _| app.goto_section_definition(),
+    ),
+    c("hoist", "show only this node and its subtree", |app, _| {
+        app.hoist()
+    }),
+    c("dehoist", "undo the last hoist", |app, _| app.dehoist()),
+    c("clear-all-hoists", "undo every hoist", |app, _| {
+        app.clear_hoists()
+    }),
+    c(
+        "go-back",
+        "select the previously selected node",
+        |app, n| app.go_history(-1, n),
+    ),
+    c("go-forward", "select the node go-back left", |app, n| {
+        app.go_history(1, n)
+    }),
     c(
         "goto-next-clone",
         "select the next clone of this node",
@@ -173,6 +193,9 @@ pub static COMMANDS: &[Command] = &[
     ),
     c("clone-node", "clone this node", |app, _| {
         let p = app.current.clone();
+        if app.hoist_refuses(&p, false) {
+            return;
+        }
         let new = app.doc.clone_node(&p);
         app.select(new);
     }),
@@ -180,6 +203,69 @@ pub static COMMANDS: &[Command] = &[
         let p = app.current.clone();
         app.doc.toggle_marked(&p);
     }),
+    c("mark-subheads", "mark this node's children", |app, _| {
+        let p = app.current.clone();
+        let n = app.doc.mark_subheads(&p);
+        app.message = format!("marked {n}");
+    }),
+    c(
+        "mark-node-and-parents",
+        "mark this node and its ancestors",
+        |app, _| {
+            let p = app.current.clone();
+            let n = app.doc.mark_node_and_parents(&p);
+            app.message = format!("marked {n}");
+        },
+    ),
+    c(
+        "unmark-node-and-parents",
+        "unmark this node and its ancestors",
+        |app, _| {
+            let p = app.current.clone();
+            let n = app.doc.unmark_node_and_parents(&p);
+            app.message = format!("unmarked {n}");
+        },
+    ),
+    c(
+        "clone-marked-nodes",
+        "clone the marked nodes under a new node",
+        |app, _| {
+            let p = app.current.clone();
+            match app.doc.clone_marked(&p) {
+                Some(new) => app.select(new),
+                None => app.message = "no marked nodes".to_string(),
+            }
+        },
+    ),
+    c(
+        "copy-marked-nodes",
+        "copy the marked nodes under a new node",
+        |app, _| {
+            let p = app.current.clone();
+            match app.doc.copy_marked(&p) {
+                Some(new) => app.select(new),
+                None => app.message = "no marked nodes".to_string(),
+            }
+        },
+    ),
+    c(
+        "delete-marked-nodes",
+        "delete every marked node",
+        |app, _| {
+            let n = app.doc.delete_marked();
+            app.message = match n {
+                0 => "no marked nodes".to_string(),
+                n => format!("deleted {n}"),
+            };
+            // The selection may have gone with a marked ancestor.
+            if !app.outline().position_is_linked(&app.current) {
+                if let Some(root) = app.outline().root_position() {
+                    app.select(root);
+                }
+            }
+            app.clamp_current();
+        },
+    ),
     c("unmark-all", "clear every mark in the outline", |app, _| {
         let n = app.doc.unmark_all();
         app.message = format!("unmarked {n}");
@@ -187,6 +273,9 @@ pub static COMMANDS: &[Command] = &[
     c("move-outline-up", "move this node up", |app, n| {
         repeat(app, n, |app| {
             let p = app.current.clone();
+            if app.hoist_refuses(&p, false) {
+                return;
+            }
             match app.doc.move_up(&p) {
                 Some(new) => app.select(new),
                 None => app.message = "cannot move up".to_string(),
@@ -196,6 +285,9 @@ pub static COMMANDS: &[Command] = &[
     c("move-outline-down", "move this node down", |app, n| {
         repeat(app, n, |app| {
             let p = app.current.clone();
+            if app.hoist_refuses(&p, false) {
+                return;
+            }
             match app.doc.move_down(&p) {
                 Some(new) => app.select(new),
                 None => app.message = "cannot move down".to_string(),
@@ -208,6 +300,9 @@ pub static COMMANDS: &[Command] = &[
         |app, n| {
             repeat(app, n, |app| {
                 let p = app.current.clone();
+                if app.hoist_refuses(&p, true) {
+                    return;
+                }
                 match app.doc.move_left(&p) {
                     Some(new) => app.select(new),
                     None => app.message = "cannot move left".to_string(),
@@ -221,6 +316,9 @@ pub static COMMANDS: &[Command] = &[
         |app, n| {
             repeat(app, n, |app| {
                 let p = app.current.clone();
+                if app.hoist_refuses(&p, false) {
+                    return;
+                }
                 match app.doc.move_right(&p) {
                     Some(new) => app.select(new),
                     None => app.message = "cannot move right".to_string(),
@@ -229,10 +327,48 @@ pub static COMMANDS: &[Command] = &[
         },
     ),
     c(
+        "clone-find-all",
+        "clone every match under a Found node (:cfa pattern)",
+        |app, _| app.clone_find_all("", false),
+    ),
+    c(
+        "clone-find-all-flattened",
+        "clone-find-all, searching below each match too (:cff pattern)",
+        |app, _| app.clone_find_all("", true),
+    ),
+    c(
+        "extract",
+        "move the selected lines into a new child",
+        |app, _| app.extract(),
+    ),
+    c(
+        "sort-siblings",
+        "sort this node and its siblings",
+        |app, _| {
+            let p = app.current.clone();
+            if app.hoist_refuses(&p, false) {
+                return;
+            }
+            match app.doc.sort_siblings(&p) {
+                Some(new) => app.select(new),
+                None => app.message = "already sorted".to_string(),
+            }
+        },
+    ),
+    c("sort-children", "sort this node's children", |app, _| {
+        let p = app.current.clone();
+        if !app.doc.sort_children(&p) {
+            app.message = "already sorted".to_string();
+        }
+    }),
+    c(
         "promote",
         "make this node's children its siblings",
         |app, _| {
             let p = app.current.clone();
+            if app.hoist_refuses(&p, false) {
+                return;
+            }
             if !app.doc.promote(&p) {
                 app.message = "no children".to_string();
             }

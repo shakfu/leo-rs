@@ -14,6 +14,7 @@ use crate::position::Position;
 
 /// The inverse of one edit.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Bead {
     Body {
         v: VnodeId,
@@ -45,6 +46,12 @@ pub enum Bead {
     Mark {
         v: VnodeId,
         was_marked: bool,
+    },
+    /// A parent's children were put in another order.
+    Sort {
+        parent: VnodeId,
+        old: Vec<VnodeId>,
+        new: Vec<VnodeId>,
     },
     /// Several edits that undo as one, such as a paste or a demote.
     Group {
@@ -174,6 +181,10 @@ fn apply(o: &mut Outline, bead: &Bead, undo: bool) -> Option<Position> {
             relink(o, dst.0, dst.1, *v);
             position_of(o, *v)
         }
+        Bead::Sort { parent, old, new } => {
+            set_children(o, *parent, if undo { old } else { new });
+            position_of(o, *parent)
+        }
         Bead::Mark { v, was_marked } => {
             let marked = if undo { *was_marked } else { !*was_marked };
             if marked {
@@ -229,6 +240,18 @@ fn relink(o: &mut Outline, parent: VnodeId, index: usize, v: VnodeId) {
     o.node_mut(parent).children.insert(n, v);
     o.node_mut(v).parents.push(parent);
     o.set_dirty_vnode(v);
+    o.changed = true;
+    o.generation += 1;
+}
+
+/// Put `parent`'s children in `order`, the same vnodes in another order.
+pub(crate) fn set_children(o: &mut Outline, parent: VnodeId, order: &[VnodeId]) {
+    o.invalidate_descendent_uas(parent);
+    o.node_mut(parent).children = order.to_vec();
+    // The order is the `@others` order, so the file must be written again.
+    if parent != o.hidden_root {
+        o.set_dirty_vnode(parent);
+    }
     o.changed = true;
     o.generation += 1;
 }

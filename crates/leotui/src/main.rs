@@ -17,6 +17,7 @@ mod commands;
 mod config;
 mod editor;
 mod highlight;
+mod history;
 mod keys;
 mod keywords;
 mod minibuffer;

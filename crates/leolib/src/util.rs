@@ -189,6 +189,25 @@ pub fn skip_leading_ws_with_indent(s: &str, mut i: usize, tab_width: i32) -> (us
     (i, count)
 }
 
+/// s without up to `width` columns of leading whitespace, as
+/// `g.removeLeadingWhitespace`. A tab that crosses `width` is removed whole.
+pub fn remove_leading_whitespace(s: &str, width: i32, tab_width: i32) -> &str {
+    let (width, tw) = (width.abs(), tab_width.abs().max(1));
+    let (mut j, mut ws) = (0, 0);
+    for b in s.bytes() {
+        if ws >= width {
+            break;
+        }
+        match b {
+            b' ' => ws += 1,
+            b'\t' => ws += tw - (ws % tw),
+            _ => break,
+        }
+        j += 1;
+    }
+    &s[j..]
+}
+
 /// Whitespace `width` columns wide, using tabs when tab_width > 1.
 pub fn compute_leading_whitespace(width: i32, tab_width: i32) -> String {
     if width <= 0 {
@@ -488,6 +507,15 @@ pub fn xml_quoteattr(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_leading_whitespace_counts_columns_and_takes_a_tab_whole() {
+        assert_eq!(remove_leading_whitespace("      x", 4, 4), "  x");
+        assert_eq!(remove_leading_whitespace("  x", 4, 4), "x");
+        // The tab reaches column 4 from column 2, past width 3.
+        assert_eq!(remove_leading_whitespace("  \tx", 3, 4), "x");
+        assert_eq!(remove_leading_whitespace("x", 4, 4), "x");
+    }
 
     #[test]
     fn split_lines_keeps_endings() {

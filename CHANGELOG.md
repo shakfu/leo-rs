@@ -4,6 +4,44 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## Unreleased
 
+## [0.5.0]
+
+### Added
+
+- **`go-back` and `go-forward`, on `Alt-Left` and `Alt-Right` in both panes.** They walk Leo's node history: every selected node, each vnode once, as `leoHistory.NodeHistory` keeps it since #3800. Leo leaves both unbound. Alt-arrows over vim's `Ctrl-o`, which Leo binds to `open-outline`. Two edge cases differ from Leo; `docs/dev/porting-notes.md` has them.
+
+- **`clone-find-all` (`:cfa`) and `clone-find-all-flattened` (`:cff`).** Each node that matches is cloned once under a new last top-level node, `Found N:pattern`, whose body starts with `@nosearch` so a later search skips it. `@nosearch` and `@ignore` trees are not searched, and, unflattened, neither is a match's subtree. The pattern is matched as `/` matches it, honouring `:set search=headlines`; with no pattern the last search is used, and a new one becomes the last search. `leolib::Document::clone_find_all` takes the match as a predicate, so the search rules stay the front end's.
+
+- **`extract`, from `:`.** The VISUAL lines, or the cursor's line, become the current node's first child, as one undo step. The child's headline is a section reference on the first line, which stays in the body; else the name a Python, JavaScript, CoffeeScript or Clojure definition line defines; else the first line, which leaves the body. Leo's code and its docstring disagree on that last case; this follows the code. Leo's `Shift-Ctrl-D` reaches a terminal as `Ctrl-d`, so there is no key. `leolib::Document::extract` does the work, and `util::remove_leading_whitespace` ports `g.removeLeadingWhitespace`.
+
+- **`sort-siblings` on `Alt-a`, as in Leo, and `sort-children` from `:`.** Headlines are compared ignoring case, and equal ones keep their order, as Leo's `sortSiblings` does. A sort under an `@file` node marks it dirty, since the order is the file's `@others` order. `leolib::Document` gains both, recorded by a new `Bead::Sort` that restores the old order in one step.
+
+- **Leo's marked-node commands:** `mark-subheads`, `mark-node-and-parents`, `unmark-node-and-parents`, `clone-marked-nodes`, `copy-marked-nodes` and `delete-marked-nodes`, from `:`. Each is one undo step. `delete-marked-nodes` keeps the last top-level node, as `delete-node` does; Leo has no such guard. It also keeps the selection where it was, if it survives, rather than folding the whole outline. `move-marked-nodes`, which Leo cannot undo, is not ported.
+
+- **`hoist`, `dehoist` and `clear-all-hoists`, on `zh` and `zH` in the outline.** A hoist shows one node and its subtree as the whole outline, as Leo's does. Moves that would take a node out of the hoisted tree, or move the hoisted node itself, are refused. Selecting a node outside it, by search, `gd` or `go-back`, dehoists until it shows, as `c.selectPosition` does. Leo leaves hoist unbound; its alternative `Ctrl-Shift-h` reaches a terminal as `Ctrl-h`.
+
+- **`gd` in the body selects the node a `<< section >>` reference names.** It is the section branch of Leo's `open-url-under-cursor`, which also opens urls, unls and gnxs; those are not ported. The headline is matched as the `@file` writer matches it, so `gd` lands on the node the file includes. `go-back` returns.
+
+### Changed
+
+- **`leolib::Error` and `leolib::undo::Bead` are `#[non_exhaustive]`.** A new variant, such as this release's `Bead::Sort`, no longer breaks a caller's exhaustive `match`. Such a match needs a wildcard arm once.
+
+- **`Ctrl-c` quits, in every mode, and never discards text.** In INSERT it abandoned the session with no undo, which lost the typing of anyone pressing it to leave. It now commits the open edit (an INSERT session or a headline), cancels a `:` or `/` line, and runs `quit`, which asks before losing unsaved work. In a yes/no prompt it answers no. Quit over vim's leave-INSERT: a user pressing `Ctrl-c` most likely wants out, and the prompt makes a mistaken quit harmless.
+
+### Fixed
+
+- **The bindings shared by both panes work in the body.** In body focus every key went to the vim grammar, so `Ctrl-s`, `Ctrl-f`, `Ctrl-b`, `Ctrl-d`, `Ctrl-u`, `PageUp`, `PageDown` and `F1` answered "no such command". A key the grammar does not know now falls through to the binding table. Paging in the body also moves the cursor, as vim's does; it moved only the view, and the next motion snapped the view back.
+
+- **A `:` line ends VISUAL, as in vim.** The mode returned to NORMAL, but the selection stayed set.
+
+- **A modified arrow, `Home` or `End` in the body reaches the binding table.** The vim grammar took `Alt-Left` as `Left`, whatever the modifier.
+
+- **A Ctrl or Alt chord types nothing in INSERT or a one-line input.** It typed its letter. `Ctrl-w` and `Ctrl-u` now delete the word and the text before the cursor, as in vim and readline. Ctrl and Alt together still type, because Windows sends AltGr as that pair.
+
+- **A long count no longer panics or hangs.** Typing digits multiplied without a bound, so `99999999K` panicked in a debug build and looped for 1.9s in release. Counts now saturate and are capped at 99,999. `gg` takes the raw count, so a line number is not capped.
+
+- **A count on `.` replaces the change's count, as in vim.** `2dw` then `3.` deleted six words and recorded three undo beads; it now runs `3dw` once. The old loop let `9999.` record thousands of beads, each holding the old and new body.
+
 ## [0.4.0]
 
 ### Fixed

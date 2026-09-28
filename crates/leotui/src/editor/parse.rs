@@ -27,7 +27,8 @@ pub enum Action {
     },
     /// `o` in VISUAL.
     SwapEnds,
-    Repeat(usize),
+    /// `.`, with the count typed before it, if any.
+    Repeat(Option<usize>),
     Undo(usize),
     Redo(usize),
     SearchForward,
@@ -44,10 +45,15 @@ pub enum Action {
         count: usize,
     },
     Command,
+    /// `gd`: select the node defining the section reference on this line.
+    GotoDefinition,
     FocusTree,
     Escape,
     /// A count is being typed, or an operator is waiting for its range.
     Pending,
+    /// A key the grammar does not know, with nothing but a count before it.
+    /// The binding table may know it: `Ctrl-d`, `PageDown`, `F1`.
+    Unbound(usize),
     Unknown,
 }
 
@@ -61,6 +67,15 @@ pub struct Parser {
     prefix: Option<char>,
     /// True while a VISUAL selection is live: `i`/`a` then mean text objects.
     pub visual: bool,
+}
+
+/// The largest count a command runs with. A longer count is a typo, and
+/// `99999999p` would otherwise paste until memory runs out.
+pub const MAX_COUNT: usize = 99_999;
+
+/// Append a digit to a count, saturating rather than overflowing.
+pub fn push_digit(count: Option<usize>, d: usize) -> usize {
+    count.unwrap_or(0).saturating_mul(10).saturating_add(d)
 }
 
 /// The pending prefix after `Ctrl-w`: Ctrl-W's own control code, which no
@@ -101,8 +116,8 @@ impl Parser {
 
     fn total_count(&self) -> usize {
         match (self.count, self.operator_count) {
-            (Some(a), Some(b)) => a * b,
-            (Some(a), None) | (None, Some(a)) => a,
+            (Some(a), Some(b)) => a.saturating_mul(b).min(MAX_COUNT),
+            (Some(a), None) | (None, Some(a)) => a.min(MAX_COUNT),
             (None, None) => 1,
         }
     }
@@ -157,6 +172,7 @@ impl Parser {
             return Action::Pending;
         }
 
+        let bare = self.operator.is_none() && self.prefix.is_none();
         if ctrl {
             let count = self.total_count();
             self.reset();
@@ -167,7 +183,7 @@ impl Parser {
                 // speaking the enhancement protocol can deliver.
                 Some('z') if shift => Action::Redo(count),
                 Some('z') => Action::Undo(count),
-                Some('c') => Action::Escape,
+                _ if bare => Action::Unbound(count),
                 _ => Action::Unknown,
             };
         }
@@ -186,28 +202,40 @@ impl Parser {
                 self.reset();
                 return Action::FocusTree;
             }
-            KeyCode::Left => return self.finish_motion(Motion::Left, self.take_count()),
-            KeyCode::Right => return self.finish_motion(Motion::Right, self.take_count()),
-            KeyCode::Up => return self.finish_motion(Motion::Up, self.take_count()),
-            KeyCode::Down => return self.finish_motion(Motion::Down, self.take_count()),
-            KeyCode::Home => return self.finish_motion(Motion::LineStart, 1),
-            KeyCode::End => return self.finish_motion(Motion::LineEnd, 1),
             _ => {}
+        }
+        // A modified arrow is left to the binding table: `Alt-Left` is go-back.
+        if key.mods.is_empty() {
+            match key.code {
+                KeyCode::Left => return self.finish_motion(Motion::Left, self.take_count()),
+                KeyCode::Right => return self.finish_motion(Motion::Right, self.take_count()),
+                KeyCode::Up => return self.finish_motion(Motion::Up, self.take_count()),
+                KeyCode::Down => return self.finish_motion(Motion::Down, self.take_count()),
+                KeyCode::Home => return self.finish_motion(Motion::LineStart, 1),
+                KeyCode::End => return self.finish_motion(Motion::LineEnd, 1),
+                _ => {}
+            }
         }
 
         let Some(c) = ch else {
+            let count = self.total_count();
             self.reset();
-            return Action::Unknown;
+            return if bare {
+                Action::Unbound(count)
+            } else {
+                Action::Unknown
+            };
         };
 
         // A count, unless `0` starts one (where it is a motion).
         if c.is_ascii_digit() && !(c == '0' && self.digits_empty()) {
             let d = c as usize - '0' as usize;
-            if self.operator.is_some() {
-                self.operator_count = Some(self.operator_count.unwrap_or(0) * 10 + d);
+            let n = if self.operator.is_some() {
+                &mut self.operator_count
             } else {
-                self.count = Some(self.count.unwrap_or(0) * 10 + d);
-            }
+                &mut self.count
+            };
+            *n = Some(push_digit(*n, d));
             return Action::Pending;
         }
 
@@ -249,6 +277,10 @@ impl Parser {
                 self.reset();
                 self.finish_motion(Motion::GotoLine(n), 1)
             }
+            ('g', 'd') => {
+                self.reset();
+                Action::GotoDefinition
+            }
             ('g', 'e') => {
                 self.reset();
                 self.finish_motion(Motion::WordEndBackward { big: false }, count)
@@ -282,6 +314,7 @@ impl Parser {
 
     fn simple_key(&mut self, c: char) -> Action {
         let count = self.total_count();
+        let typed = self.count.is_some() || self.operator_count.is_some();
         // An operator waiting for a range, doubled, is linewise.
         if let Some(op) = self.operator {
             if operator_key(op) == c || (op == Operator::Change && c == 'c') {
@@ -354,7 +387,7 @@ impl Parser {
             },
             'v' => Action::Visual { linewise: false },
             'V' => Action::Visual { linewise: true },
-            '.' => Action::Repeat(count),
+            '.' => Action::Repeat(typed.then_some(count)),
             'u' => Action::Undo(count),
             '/' => Action::SearchForward,
             '?' => Action::SearchBackward,
@@ -477,6 +510,35 @@ mod tests {
             parse_keys("w"),
             Action::Move(Motion::WordForward { big: false }, 1)
         );
+    }
+
+    #[test]
+    fn a_long_count_is_capped_and_does_not_overflow() {
+        let digits = "9".repeat(40);
+        assert_eq!(
+            parse_keys(&format!("{digits}d{digits}w")),
+            Action::Operate {
+                operator: Operator::Delete,
+                range: Range::Motion(Motion::WordForward { big: false }),
+                count: MAX_COUNT,
+            }
+        );
+    }
+
+    #[test]
+    fn a_key_outside_the_grammar_is_left_to_the_binding_table() {
+        assert_eq!(parse_keys("Ctrl-d"), Action::Unbound(1));
+        assert_eq!(parse_keys("3 Ctrl-d"), Action::Unbound(3));
+        assert_eq!(parse_keys("PageDown"), Action::Unbound(1));
+        // An operator waiting for its range is not a bare key.
+        assert_eq!(parse_keys("d Ctrl-d"), Action::Unknown);
+        assert_eq!(parse_keys("Alt-Left"), Action::Unbound(1));
+    }
+
+    #[test]
+    fn dot_says_whether_a_count_was_typed() {
+        assert_eq!(parse_keys("."), Action::Repeat(None));
+        assert_eq!(parse_keys("1."), Action::Repeat(Some(1)));
     }
 
     #[test]

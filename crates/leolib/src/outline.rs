@@ -472,25 +472,52 @@ impl Outline {
 
     /// An unlinked copy of p's tree with fresh gnxs. Paste links it back in.
     pub fn copy_tree(&mut self, p: &Position) -> VnodeId {
-        self.copy_tree_helper(p.v)
+        self.copy_tree_helper(p.v, false)
     }
 
     /// An unlinked copy of one vnode's tree, for a second paste of a clipboard.
     pub fn copy_tree_of_vnode(&mut self, v: VnodeId) -> VnodeId {
-        self.copy_tree_helper(v)
+        self.copy_tree_helper(v, false)
     }
 
-    fn copy_tree_helper(&mut self, v: VnodeId) -> VnodeId {
+    /// `copy_tree`, keeping marks, as Leo's `copyWithNewVnodes(copyMarked=True)`.
+    pub(crate) fn copy_tree_with_marks(&mut self, v: VnodeId) -> VnodeId {
+        self.copy_tree_helper(v, true)
+    }
+
+    fn copy_tree_helper(&mut self, v: VnodeId, marks: bool) -> VnodeId {
         let v2 = self.new_vnode(None);
         self.node_mut(v2).h = self.node(v).h.clone();
         self.node_mut(v2).b = self.node(v).b.clone();
         self.node_mut(v2).uas = self.node(v).uas.clone();
+        if marks && self.node(v).is_marked() {
+            self.node_mut(v2).set_bit(node::status::MARKED);
+        }
         let kids = self.node(v).children.clone();
         for k in kids {
-            let k2 = self.copy_tree_helper(k);
+            let k2 = self.copy_tree_helper(k, marks);
             self.node_mut(v2).children.push(k2);
         }
         v2
+    }
+
+    /// Link `v` as `parent`'s nth child: a clone if `v` is already linked,
+    /// or an unlinked tree from `copy_tree`.
+    pub(crate) fn link_as_nth_child(
+        &mut self,
+        parent: &Position,
+        n: usize,
+        v: VnodeId,
+    ) -> Position {
+        if self.node(v).parents.is_empty() {
+            self.link_copied_child(parent.v, n, v);
+            self.add_descendant_parent_links(v);
+        } else {
+            self.link_child(parent.v, n, v);
+        }
+        let mut stack = parent.stack.clone();
+        stack.push((parent.v, parent.child_index));
+        Position::new(v, n, stack)
     }
 
     /// Link an unlinked tree (from [`copy_tree`](Self::copy_tree)) after `p`.

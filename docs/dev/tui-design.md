@@ -210,30 +210,32 @@ Vim habits that must not be errors:
 
 ### 6.1 The v1 command set
 
-Every name is Leo's. "have" means `leolib` implements the operation today.
+Every name is Leo's. Status as of 2026-09-28; `delta.md` sets every Leo command against leotui.
 
 | command | status |
 |---|---|
-| `insert-node` `insert-child` `insert-node-before` | have |
-| `delete-node` `cut-node` `copy-node` `paste-node` | have |
-| `clone-node` | have |
-| `move-outline-up` `-down` `-left` `-right` | have |
-| `promote` | have |
-| `demote` | add (mirror of promote) |
-| `mark` `unmark-all` | have |
-| `undo` `redo` | have |
-| `save` `save-to` | have |
-| `read-at-file-nodes` `write-at-file-nodes` `write-dirty-at-file-nodes` | have |
-| `save` writes the `.leo` file; `write-outline-only` is its Leo name | have |
-| `expand-node` `contract-node` `expand-all` `contract-all` | add (view state) |
-| `expand-to-level-1`..`-9` `expand-next-level` `contract-all-other-nodes` | add |
-| `goto-next-visible` `goto-prev-visible` `goto-parent` | add (trivial) |
-| `goto-first-node` `goto-last-node` `goto-next-sibling` `goto-prev-sibling` | add |
-| `goto-next-marked` `goto-prev-marked` `goto-next-clone` | add |
-| `sort-children` `sort-siblings` | add |
-| `hoist` `dehoist` | add (view state) |
-| `clone-marked-nodes` `delete-marked-nodes` `copy-marked-nodes` `move-marked-nodes` | add |
-| `edit-headline` | have |
+| `insert-node` `insert-child` `insert-node-before` | built |
+| `delete-node` `cut-node` `copy-node` `paste-node` | built |
+| `clone-node` | built |
+| `move-outline-up` `-down` `-left` `-right` | built |
+| `promote` `demote` | built |
+| `mark` `unmark-all` | built |
+| `undo` `redo` | built |
+| `save` `save-to` | built |
+| `read-at-file-nodes` `write-at-file-nodes` | built; `write-at-file-nodes` writes only dirty files (`TODO.md`) |
+| `write-dirty-at-file-nodes` | not built; `write-at-file-nodes` does its job |
+| `save` writes the `.leo` file; `write-outline-only` is its Leo name | built |
+| `expand-node` `contract-node` `expand-all` `contract-all` | built |
+| `expand-to-level-1`..`-9` `expand-next-level` `contract-all-other-nodes` | built |
+| `goto-next-visible` `goto-prev-visible` `goto-parent` | built |
+| `goto-first-node` `goto-last-node` | built as `goto-first-visible-node` and `goto-last-visible-node` |
+| `goto-next-sibling` `goto-prev-sibling` | built |
+| `goto-next-marked` `goto-prev-marked` `goto-next-clone` | built |
+| `sort-children` `sort-siblings` | built |
+| `hoist` `dehoist` | built, with `clear-all-hoists` |
+| `clone-marked-nodes` `delete-marked-nodes` `copy-marked-nodes` | built |
+| `move-marked-nodes` | not built: Leo cannot undo it |
+| `edit-headline` | built |
 
 **Q4.** Is that the right v1 line? The additions are all small; `hoist` and the expand family need per-view state that `leolib::Outline` already carries.
 
@@ -604,7 +606,7 @@ The pty harness in `examples/keyprobe.rs` measures what a terminal delivers; `--
 
 ### 14.4 Not in stage 1
 
-`:` and search are stage 2; the vim body editor is stage 3. Body NORMAL is navigation only, and `i` opens the same line editor as before -- with one change, from Q2: **Escape commits** and `Ctrl-c` abandons, where the old TUI had `Ctrl-s` commit and Escape abandon.
+`:` and search are stage 2; the vim body editor is stage 3. Body NORMAL is navigation only, and `i` opens the same line editor as before -- with one change, from Q2: **Escape commits** and `Ctrl-c` abandons, where the old TUI had `Ctrl-s` commit and Escape abandon. (Since 0.5.0 `Ctrl-c` commits and asks to quit, in every mode; see `CHANGELOG.md`.)
 
 ---
 
@@ -667,18 +669,22 @@ Blockwise VISUAL, named registers, marks, macros, `:s///`. The register file is 
 
 ## 17. Where the TUI stands
 
-Measured, not estimated:
+Measured, not estimated, on 2026-09-28:
 
 | | lines |
 |---|---|
-| `keys.rs`, `bindings.rs`, `commands.rs` | 1,044 |
-| `app.rs` | 1,622 |
-| `editor/` | 2,130 |
-| `minibuffer.rs`, `search.rs` | 577 |
-| `ui.rs`, `main.rs` | 670 |
-| **total** | **6,043**, with 107 tests |
+| `keys.rs`, `bindings.rs`, `commands.rs` | 1,403 |
+| `app/`, of which `tests.rs` is 1,607 | 3,775 |
+| `editor/` | 2,268 |
+| `minibuffer.rs`, `search.rs`, `substitute.rs` | 1,292 |
+| `ui.rs`, `main.rs` | 1,400 |
+| `highlight.rs`, `treesit.rs`, `theme.rs` | 2,002 |
+| `config.rs`, `history.rs` | 477 |
+| **total** | **12,617**, with 268 tests |
 
-Section 13 estimated ~3,200 lines. The gap is tests, which that estimate counted separately and undercounted: they are 40% of the editor.
+`keywords.rs`, 3,788 lines, is generated and not counted.
+
+At the end of stage 3 the total was 6,043 lines with 107 tests, against section 13's estimate of ~3,200. The gap was tests, which that estimate counted separately and undercounted: they were 40% of the editor.
 
 Everything above the key layer is testable without a terminal: `--press` applies binding specs before drawing, `--dump` renders one frame, `--keys` prints the table. `examples/keyprobe.rs` measures what a terminal delivers.
 
@@ -795,7 +801,7 @@ Error recovery handles a missing enclosing scope. Only Leo's own lines break a p
 
 `highlight` parses the whole body, and the body pane redraws on every key. Measured, release build, generated Python: 48 lines 0.55ms, 500 lines 2.2ms, 5000 lines 22.7ms. The last row is real -- an `@edit` node holds a whole file in one body -- so `Colouring` keeps the last result, keyed on a hash of the lines and the language.
 
-Incremental re-parse would beat a cache. It costs threading `InputEdit` out of every vim operator in `app.rs`, for a body whose median length in `LeoPyRef.leo` is 12 lines.
+Incremental re-parse would beat a cache. It costs threading `InputEdit` out of every vim operator in `app/body.rs`, for a body whose median length in `LeoPyRef.leo` is 12 lines.
 
 ### 19.7 The theme
 

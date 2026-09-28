@@ -54,6 +54,12 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, TREE, "]m", "goto-next-marked"),
     b(Mode::Normal, TREE, "]c", "goto-next-clone"),
     b(Mode::Normal, TREE, "Alt-n", "goto-next-clone"),
+    // Leo's own binding.
+    b(Mode::Normal, BOTH, "Alt-a", "sort-siblings"),
+    // Leo leaves these unbound, and gives Ctrl-o, vim's jump back, to
+    // open-outline. Alt-arrows are a browser's back and forward.
+    b(Mode::Normal, BOTH, "Alt-Left", "go-back"),
+    b(Mode::Normal, BOTH, "Alt-Right", "go-forward"),
     // --- Tree: structure --------------------------------------------------
     b(Mode::Normal, TREE, "o", "insert-node"),
     b(Mode::Normal, TREE, "Insert", "insert-node"),
@@ -96,6 +102,9 @@ pub static BINDINGS: &[Binding] = &[
     // --- Tree: folding, on vim's z family ---------------------------------
     b(Mode::Normal, TREE, "Space", "toggle-node"),
     b(Mode::Normal, TREE, "za", "toggle-node"),
+    // Leo leaves hoist unbound; its Ctrl-Shift-h alternative is Ctrl-h here.
+    b(Mode::Normal, TREE, "zh", "hoist"),
+    b(Mode::Normal, TREE, "zH", "dehoist"),
     b(Mode::Normal, TREE, "zo", "expand-node"),
     b(Mode::Normal, TREE, "Alt-]", "expand-node"),
     b(Mode::Normal, TREE, "zc", "contract-node"),
@@ -138,6 +147,7 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BODY, "v V", "body-visual"),
     b(Mode::Normal, BODY, "p P", "body-put"),
     b(Mode::Normal, BODY, ".", "body-repeat"),
+    b(Mode::Normal, BODY, "gd", "open-url-under-cursor"),
     b(Mode::Normal, BODY, "Escape", "focus-to-tree"),
     // Leo's own rule: Tab leaves the pane it is pressed in. Shift-Tab cycles
     // the other way, which with two panes lands in the same place.
@@ -263,6 +273,17 @@ mod tests {
         "save-to",
         "write-outline-only",
         "revert",
+        "clear-all-hoists",
+        "mark-subheads",
+        "mark-node-and-parents",
+        "unmark-node-and-parents",
+        "clone-marked-nodes",
+        "copy-marked-nodes",
+        "delete-marked-nodes",
+        "sort-children",
+        "extract",
+        "clone-find-all",
+        "clone-find-all-flattened",
     ];
 
     #[test]

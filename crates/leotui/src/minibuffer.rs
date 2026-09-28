@@ -382,6 +382,8 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("h", "help"),
     ("e", "open"),
     ("edit", "open"),
+    ("cfa", "clone-find-all"),
+    ("cff", "clone-find-all-flattened"),
 ];
 
 /// One parsed command line.

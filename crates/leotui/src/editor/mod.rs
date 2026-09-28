@@ -462,11 +462,6 @@ impl Editor {
         Some(change)
     }
 
-    /// Abandon an INSERT session without recording a change.
-    pub fn cancel_insert(&mut self) {
-        self.insert = None;
-    }
-
     // --- VISUAL -----------------------------------------------------------
 
     pub fn start_visual(&mut self, kind: Kind) {
@@ -515,6 +510,24 @@ impl Editor {
 }
 
 // --- Buffer helpers -------------------------------------------------------
+
+/// Where vim's INSERT Ctrl-w stops: back over spaces, then over one run of
+/// word characters or of punctuation. Columns are in chars.
+pub fn word_start_before(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().take(col).collect();
+    let mut i = chars.len();
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    if let Some(&last) = chars[..i].last() {
+        let kind = word(last);
+        while i > 0 && !chars[i - 1].is_whitespace() && word(chars[i - 1]) == kind {
+            i -= 1;
+        }
+    }
+    i
+}
 
 pub fn line_len(lines: &[String], row: usize) -> usize {
     lines.get(row).map(|l| l.chars().count()).unwrap_or(0)
@@ -678,4 +691,19 @@ pub fn join(lines: &[String]) -> String {
         return String::new();
     }
     format!("{}\n", lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_start_before_takes_spaces_then_one_run() {
+        assert_eq!(word_start_before("foo bar", 7), 4);
+        assert_eq!(word_start_before("foo bar  ", 9), 4);
+        assert_eq!(word_start_before("foo.bar", 7), 4);
+        assert_eq!(word_start_before("foo..", 5), 3);
+        assert_eq!(word_start_before("   ", 3), 0);
+        assert_eq!(word_start_before("", 0), 0);
+    }
 }

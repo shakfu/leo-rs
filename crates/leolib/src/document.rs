@@ -11,6 +11,44 @@ use crate::outline::Outline;
 use crate::position::Position;
 use crate::undo::{Bead, Undoer};
 use crate::{external, leofile, util};
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+/// `extractDef_patterns` in `commanderEditCommands.py`: definition lines in
+/// Clojure, Python, JavaScript and CoffeeScript, the name in group 1.
+static EXTRACT_DEF: Lazy<Vec<Regex>> = Lazy::new(|| {
+    [
+        r"\((?:def|defn|defui|deftype|defrecord|defonce)\s+(\S+)",
+        r"^\s*(?:def|class)\s+(\w+)",
+        r"^\bvar\s+(\w+)\s*=\s*function\b",
+        r"^(?:export\s)?\s*function\s+(\w+)\s*\(",
+        r"\b(\w+)\s*:\s*function\s",
+        r"\.(\w+)\s*=\s*function\b",
+        r"(?:export\s)?\b(\w+)\s*=\s(?:=>|->)",
+        r"(?:export\s)?\b(\w+)\s*=\s(?:\([^)]*\))\s*(?:=>|->)",
+        r"\b(\w+)\s*:\s(?:=>|->)",
+        r"\b(\w+)\s*:\s(?:\([^)]*\))\s*(?:=>|->)",
+    ]
+    .iter()
+    .map(|s| Regex::new(s).unwrap())
+    .collect()
+});
+
+/// The name a definition line defines, as `extractDef`.
+fn extract_def(s: &str) -> Option<String> {
+    EXTRACT_DEF
+        .iter()
+        .find_map(|re| re.captures(s))
+        .map(|m| m[1].to_string())
+}
+
+/// Whether s holds a section name, as `extractRef`: `<<` before `>>`, or
+/// `@<` before `@>`.
+fn extract_ref(s: &str) -> bool {
+    [("<<", ">>"), ("@<", "@>")]
+        .iter()
+        .any(|(a, b)| matches!((s.find(a), s.find(b)), (Some(i), Some(j)) if i < j))
+}
 
 pub struct Document {
     pub outline: Outline,
@@ -296,6 +334,328 @@ impl Document {
         marked.len()
     }
 
+    /// Leo's `sort-siblings`: order p's siblings by headline, ignoring case,
+    /// keeping equal ones in their order. Returns p's new position, or None if
+    /// they were already in order.
+    pub fn sort_siblings(&mut self, p: &Position) -> Option<Position> {
+        self.sort("sort-siblings", p)
+    }
+
+    /// Leo's `sort-children`: `sort_siblings` on p's children. Returns
+    /// whether anything moved.
+    pub fn sort_children(&mut self, p: &Position) -> bool {
+        p.first_child(&self.outline)
+            .and_then(|c| self.sort("sort-children", &c))
+            .is_some()
+    }
+
+    fn sort(&mut self, name: &str, p: &Position) -> Option<Position> {
+        let parent = p.parent_vnode(&self.outline);
+        let old = self.outline.node(parent).children.clone();
+        let mut new = old.clone();
+        new.sort_by_cached_key(|v| self.outline.node(*v).h.to_lowercase());
+        if new == old {
+            return None;
+        }
+        let index = new.iter().position(|v| *v == p.v)?;
+        crate::undo::set_children(&mut self.outline, parent, &new);
+        self.undoer.push(name, Bead::Sort { parent, old, new });
+        Some(Position::new(p.v, index, p.stack.clone()))
+    }
+
+    /// Leo's `extract`: move body lines `first..=last` of p into a new first
+    /// child. Returns the child, or None if the lines are not in the body.
+    ///
+    /// The headline is a section reference on the first line, which stays in
+    /// p's body; else a name a definition line defines; else the first line,
+    /// which then leaves the body. The lines lose the first one's indent.
+    pub fn extract(&mut self, p: &Position, first: usize, last: usize) -> Option<Position> {
+        let old = p.b(&self.outline).to_string();
+        let all: Vec<&str> = old.split_inclusive('\n').collect();
+        if first > last || last >= all.len() {
+            return None;
+        }
+        let tab_width = self.outline.get_tab_width(p);
+        let (_, ws) = util::skip_leading_ws_with_indent(all[first], 0, tab_width);
+        let lines: Vec<&str> = all[first..=last]
+            .iter()
+            .map(|s| util::remove_leading_whitespace(s, ws, tab_width))
+            .collect();
+        let head = lines[0].trim().to_string();
+        // Leo looks only at the first line in these two languages.
+        let language = self.outline.get_language(p).to_lowercase();
+        let def_lines = if matches!(language.as_str(), "javascript" | "typescript") {
+            &lines[..1]
+        } else {
+            &lines[..]
+        };
+        let (h, b, middle) = if extract_ref(&head) {
+            let middle = format!("{}{}", " ".repeat(ws as usize), lines[0]);
+            (head, lines[1..].concat(), middle)
+        } else if let Some(name) = def_lines.iter().find_map(|l| extract_def(l.trim())) {
+            (name, lines.concat(), String::new())
+        } else {
+            (head, lines[1..].concat(), String::new())
+        };
+        let new = format!(
+            "{}{middle}{}",
+            all[..first].concat(),
+            all[last + 1..].concat()
+        );
+        self.undoer.begin_group("extract");
+        let child = self.outline.insert_as_nth_child(p, 0);
+        self.outline.set_headline(&child, &h);
+        self.outline.set_body(&child, &b);
+        self.undoer.push(
+            "extract",
+            Bead::Insert {
+                parent: p.v,
+                index: 0,
+                v: child.v,
+            },
+        );
+        self.set_body(p, &new);
+        self.undoer.end_group();
+        self.outline.expand(p);
+        self.outline.changed = true;
+        Some(child)
+    }
+
+    /// Leo's `clone-find-all` (`flatten` false) and `clone-find-all-flattened`.
+    ///
+    /// Clones each node `matches` accepts, once, under a new last top-level
+    /// node headed `Found N:pattern`, sorted by headline. `@nosearch` and
+    /// `@ignore` trees are skipped. Unflattened, a match's subtree is not
+    /// searched. `status` names the search settings in the found node's body.
+    /// Returns the found node and the count, or None if nothing matched.
+    pub fn clone_find_all(
+        &mut self,
+        pattern: &str,
+        status: &str,
+        flatten: bool,
+        matches: impl Fn(&Outline, &Position) -> bool,
+    ) -> Option<(Position, usize)> {
+        static NOSEARCH: Lazy<Regex> = Lazy::new(|| Regex::new(r"(^@|\n@)nosearch\b").unwrap());
+        let o = &self.outline;
+        let mut found: Vec<VnodeId> = Vec::new();
+        let mut p = o.root_position();
+        while let Some(cur) = p {
+            // An ancestor that is @nosearch was skipped whole, so only cur
+            // needs the test `g.inAtNosearch` makes of every ancestor.
+            p = if cur.is_at_ignore_node(o) || NOSEARCH.is_match(cur.b(o)) {
+                cur.node_after_tree(o)
+            } else if matches(o, &cur) {
+                if !found.contains(&cur.v) {
+                    found.push(cur.v);
+                }
+                if flatten {
+                    cur.thread_next(o)
+                } else {
+                    cur.node_after_tree(o)
+                }
+            } else {
+                cur.thread_next(o)
+            };
+        }
+        if found.is_empty() {
+            return None;
+        }
+        let n = found.len();
+        let mut last = o.root_position()?;
+        while let Some(next) = last.next(o) {
+            last = next;
+        }
+        found.sort_by_cached_key(|v| o.node(*v).h.to_lowercase());
+        let organizer = self.outline.insert_after(&last);
+        self.outline
+            .set_headline(&organizer, &format!("Found {n}:{pattern}"));
+        let flat = if flatten { "flattened, " } else { "" };
+        self.outline.set_body(
+            &organizer,
+            &format!("@nosearch\n\n# {flat}{status}\n\n# found {n} nodes"),
+        );
+        for (i, v) in found.into_iter().enumerate() {
+            self.outline.link_as_nth_child(&organizer, i, v);
+        }
+        // Undo unlinks the organizer, and its clones with it.
+        self.undoer.push(
+            "clone-find-all",
+            Bead::Insert {
+                parent: organizer.parent_vnode(&self.outline),
+                index: organizer.child_index,
+                v: organizer.v,
+            },
+        );
+        self.outline.changed = true;
+        Some((organizer, n))
+    }
+
+    /// Mark or unmark each of `positions`, as one undo step named `name`.
+    /// Returns how many changed.
+    fn set_marks(&mut self, name: &str, positions: &[Position], marked: bool) -> usize {
+        let todo: Vec<VnodeId> = positions
+            .iter()
+            .filter(|p| p.is_marked(&self.outline) != marked)
+            .map(|p| p.v)
+            .collect();
+        if todo.is_empty() {
+            return 0;
+        }
+        self.undoer.begin_group(name);
+        for &v in &todo {
+            let was_marked = !marked;
+            self.undoer.push(name, Bead::Mark { v, was_marked });
+            if marked {
+                self.outline.node_mut(v).set_bit(status::MARKED);
+            } else {
+                self.outline.node_mut(v).clear_bit(status::MARKED);
+            }
+        }
+        self.undoer.end_group();
+        self.outline.changed = true;
+        todo.len()
+    }
+
+    /// Leo's `mark-subheads`: mark p's children. Returns how many changed.
+    pub fn mark_subheads(&mut self, p: &Position) -> usize {
+        let kids = p.children(&self.outline);
+        self.set_marks("mark-subheads", &kids, true)
+    }
+
+    /// Leo's `mark-node-and-parents`.
+    pub fn mark_node_and_parents(&mut self, p: &Position) -> usize {
+        let line = p.self_and_parents(&self.outline);
+        self.set_marks("mark-node-and-parents", &line, true)
+    }
+
+    /// Leo's `unmark-node-and-parents`.
+    pub fn unmark_node_and_parents(&mut self, p: &Position) -> usize {
+        let line = p.self_and_parents(&self.outline);
+        self.set_marks("unmark-node-and-parents", &line, false)
+    }
+
+    /// The first marked position in outline order.
+    fn first_marked(&self) -> Option<Position> {
+        let o = &self.outline;
+        let mut p = o.root_position();
+        while let Some(cur) = p {
+            if cur.is_marked(o) {
+                return Some(cur);
+            }
+            p = cur.thread_next(o);
+        }
+        None
+    }
+
+    /// Each marked vnode once, in outline order, skipping those below
+    /// another: they come with it.
+    fn top_marked_vnodes(&self) -> Vec<VnodeId> {
+        let o = &self.outline;
+        let mut out: Vec<VnodeId> = Vec::new();
+        let mut p = o.root_position();
+        while let Some(cur) = p {
+            if cur.is_marked(o) {
+                if !out.contains(&cur.v) {
+                    out.push(cur.v);
+                }
+                p = cur.node_after_tree(o);
+            } else {
+                p = cur.thread_next(o);
+            }
+        }
+        out
+    }
+
+    /// Leo's `clone-marked-nodes`: a new node after p whose children are
+    /// clones of the marked nodes. None if nothing is marked.
+    pub fn clone_marked(&mut self, p: &Position) -> Option<Position> {
+        self.gather_marked(p, "clone-marked-nodes", "Clones of marked nodes", false)
+    }
+
+    /// Leo's `copy-marked-nodes`: as `clone_marked`, with copies that keep
+    /// their marks.
+    pub fn copy_marked(&mut self, p: &Position) -> Option<Position> {
+        self.gather_marked(p, "copy-marked-nodes", "Copies of marked nodes", true)
+    }
+
+    fn gather_marked(
+        &mut self,
+        p: &Position,
+        name: &str,
+        headline: &str,
+        copy: bool,
+    ) -> Option<Position> {
+        let marked = self.top_marked_vnodes();
+        if marked.is_empty() {
+            return None;
+        }
+        self.undoer.begin_group(name);
+        let parent = self.outline.insert_after(p);
+        self.outline.set_headline(&parent, headline);
+        self.undoer.push(
+            name,
+            Bead::Insert {
+                parent: parent.parent_vnode(&self.outline),
+                index: parent.child_index,
+                v: parent.v,
+            },
+        );
+        for (n, v) in marked.into_iter().enumerate() {
+            let v = if copy {
+                self.outline.copy_tree_with_marks(v)
+            } else {
+                v
+            };
+            self.outline.link_as_nth_child(&parent, n, v);
+            self.undoer.push(
+                name,
+                Bead::Insert {
+                    parent: parent.v,
+                    index: n,
+                    v,
+                },
+            );
+        }
+        self.undoer.end_group();
+        self.outline.expand(&parent);
+        self.outline.changed = true;
+        Some(parent)
+    }
+
+    /// Leo's `delete-marked-nodes`: delete every marked node, with its tree.
+    /// Returns how many were deleted. The last top-level node is kept, as
+    /// `delete_node` keeps it.
+    ///
+    /// One at a time, searching again after each: under a cloned parent one
+    /// link shows at several positions, so positions found up front go stale.
+    pub fn delete_marked(&mut self) -> usize {
+        let mut n = 0;
+        while let Some(p) = self.first_marked() {
+            let o = &self.outline;
+            if p.parent(o).is_none() && p.back(o).is_none() && p.next(o).is_none() {
+                break;
+            }
+            if n == 0 {
+                self.undoer.begin_group("delete-marked-nodes");
+            }
+            self.undoer.push(
+                "delete-marked-nodes",
+                Bead::Delete {
+                    parent: p.parent_vnode(&self.outline),
+                    index: p.child_index,
+                    v: p.v,
+                },
+            );
+            self.outline.delete_position(&p);
+            n += 1;
+        }
+        if n > 0 {
+            self.undoer.end_group();
+            self.outline.changed = true;
+        }
+        n
+    }
+
     /// Copy p's tree with fresh gnxs, ready to paste.
     pub fn copy_node(&mut self, p: &Position) {
         self.clipboard = Some(self.outline.copy_tree(p));
@@ -540,6 +900,253 @@ mod tests {
             .iter()
             .map(|p| format!("{}{}", "  ".repeat(p.level()), p.h(&d.outline)))
             .collect()
+    }
+
+    /// a, b with child b1, c; `marked` names the nodes to mark.
+    fn marked(marked: &[&str]) -> Document {
+        let (mut d, all) = abc();
+        let b1 = d.outline.insert_as_nth_child(&all[1], 0);
+        d.set_headline(&b1, "b1");
+        for p in d.outline.all_positions() {
+            if marked.contains(&p.h(&d.outline)) {
+                d.outline.toggle_marked(&p);
+            }
+        }
+        d.undoer.clear();
+        d
+    }
+
+    fn marks(d: &Document) -> Vec<String> {
+        d.outline
+            .all_positions()
+            .iter()
+            .filter(|p| p.is_marked(&d.outline))
+            .map(|p| p.h(&d.outline).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn clone_marked_gathers_each_top_marked_node_once_and_undoes_as_one() {
+        // b1 comes with b, so it is not gathered on its own.
+        let mut d = marked(&["b", "b1", "c"]);
+        let a = d.outline.root_position().unwrap();
+        let parent = d.clone_marked(&a).unwrap();
+        assert_eq!(
+            heads(&d),
+            vec![
+                "a",
+                "Clones of marked nodes",
+                "  b",
+                "    b1",
+                "  c",
+                "b",
+                "  b1",
+                "c"
+            ]
+        );
+        assert!(parent
+            .first_child(&d.outline)
+            .unwrap()
+            .is_cloned(&d.outline));
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "b", "  b1", "c"]);
+        d.redo();
+        assert_eq!(heads(&d).len(), 8);
+    }
+
+    #[test]
+    fn copy_marked_makes_new_nodes_that_keep_their_marks() {
+        let mut d = marked(&["b"]);
+        let a = d.outline.root_position().unwrap();
+        let parent = d.copy_marked(&a).unwrap();
+        let copy = parent.first_child(&d.outline).unwrap();
+        assert!(!copy.is_cloned(&d.outline));
+        assert_eq!(marks(&d), vec!["b", "b"]);
+        assert_eq!(heads(&d)[1..4], ["Copies of marked nodes", "  b", "    b1"]);
+    }
+
+    #[test]
+    fn nothing_marked_gathers_nothing() {
+        let mut d = marked(&[]);
+        let a = d.outline.root_position().unwrap();
+        assert!(d.clone_marked(&a).is_none());
+        assert!(!d.undoer.can_undo());
+    }
+
+    #[test]
+    fn delete_marked_takes_every_marked_tree_and_undoes_as_one() {
+        let mut d = marked(&["a", "b1", "c"]);
+        assert_eq!(d.delete_marked(), 3);
+        assert_eq!(heads(&d), vec!["b"]);
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "b", "  b1", "c"]);
+    }
+
+    #[test]
+    fn delete_marked_survives_a_marked_child_of_a_cloned_parent() {
+        // b is cloned, so b1's one link shows at two positions.
+        let mut d = marked(&["b1"]);
+        let b = d.outline.all_positions()[1].clone();
+        d.outline.clone_node(&b);
+        assert_eq!(d.delete_marked(), 1);
+        assert_eq!(heads(&d), vec!["a", "b", "b", "c"]);
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "b", "  b1", "b", "  b1", "c"]);
+    }
+
+    #[test]
+    fn delete_marked_keeps_the_last_top_level_node() {
+        let mut d = marked(&["a", "b", "c"]);
+        assert_eq!(d.delete_marked(), 2);
+        assert_eq!(heads(&d), vec!["c"]);
+    }
+
+    #[test]
+    fn mark_commands_change_only_what_needs_it_as_one_undo() {
+        let mut d = marked(&["b"]);
+        let b1 = d.outline.all_positions()[2].clone();
+        assert_eq!(d.mark_node_and_parents(&b1), 1);
+        assert_eq!(marks(&d), vec!["b", "b1"]);
+        assert_eq!(d.unmark_node_and_parents(&b1), 2);
+        assert!(marks(&d).is_empty());
+        d.undo();
+        assert_eq!(marks(&d), vec!["b", "b1"]);
+        let b = d.outline.all_positions()[1].clone();
+        d.unmark_all();
+        assert_eq!(d.mark_subheads(&b), 1);
+        assert_eq!(marks(&d), vec!["b1"]);
+    }
+
+    #[test]
+    fn sort_siblings_ignores_case_keeps_ties_in_order_and_undoes() {
+        let (mut d, all) = abc();
+        d.set_headline(&all[0], "b");
+        d.set_headline(&all[1], "C");
+        d.set_headline(&all[2], "B");
+        d.undoer.clear();
+        let first_b = all[0].v;
+        let new = d.sort_siblings(&all[1]).unwrap();
+        assert_eq!(heads(&d), vec!["b", "B", "C"]);
+        assert_eq!(d.outline.all_positions()[0].v, first_b);
+        assert_eq!(new.h(&d.outline), "C");
+        assert!(d.outline.position_exists(&new));
+        assert!(d.sort_siblings(&new).is_none());
+        d.undo();
+        assert_eq!(heads(&d), vec!["b", "C", "B"]);
+        d.redo();
+        assert_eq!(heads(&d), vec!["b", "B", "C"]);
+    }
+
+    #[test]
+    fn sort_children_sorts_below_and_dirties_the_file() {
+        let (mut d, all) = abc();
+        d.set_headline(&all[0], "@file x.py");
+        // Each is inserted first, so the children read z, y.
+        for h in ["y", "z"] {
+            let k = d.outline.insert_as_nth_child(&all[0], 0);
+            d.set_headline(&k, h);
+        }
+        d.outline.node_mut(all[0].v).clear_bit(status::DIRTY);
+        assert!(d.sort_children(&all[0]));
+        assert_eq!(heads(&d)[1..3], ["  y", "  z"]);
+        assert!(all[0].is_dirty(&d.outline));
+        assert_eq!(d.undoer.undo_name(), Some("sort-children"));
+    }
+
+    fn body_of(d: &Document, p: &Position) -> String {
+        p.b(&d.outline).to_string()
+    }
+
+    #[test]
+    fn extract_a_section_keeps_the_reference_and_undoes_as_one() {
+        // Leo's test_leoUndo.test_extract_test.
+        let (mut d, all) = abc();
+        let before = "before\n    << section >>\n    sec line 1\n        sec line 2 indented\nsec line 3\nafter\n";
+        d.set_body(&all[0], before);
+        d.undoer.clear();
+        let child = d.extract(&all[0], 1, 4).unwrap();
+        assert_eq!(body_of(&d, &all[0]), "before\n    << section >>\nafter\n");
+        assert_eq!(child.h(&d.outline), "<< section >>");
+        assert_eq!(
+            body_of(&d, &child),
+            "sec line 1\n    sec line 2 indented\nsec line 3\n"
+        );
+        d.undo();
+        assert_eq!(body_of(&d, &all[0]), before);
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+        d.redo();
+        assert_eq!(body_of(&d, &all[0]), "before\n    << section >>\nafter\n");
+        d.undo();
+        assert_eq!(body_of(&d, &all[0]), before);
+    }
+
+    #[test]
+    fn extract_names_a_definition_and_keeps_every_line() {
+        let (mut d, all) = abc();
+        d.set_body(
+            &all[0],
+            "x = 1\n    # helper\n    def spam(a):\n        return a\n",
+        );
+        let child = d.extract(&all[0], 1, 3).unwrap();
+        assert_eq!(child.h(&d.outline), "spam");
+        assert_eq!(
+            body_of(&d, &child),
+            "# helper\ndef spam(a):\n    return a\n"
+        );
+        assert_eq!(body_of(&d, &all[0]), "x = 1\n");
+    }
+
+    #[test]
+    fn extract_otherwise_heads_the_child_with_the_first_line() {
+        let (mut d, all) = abc();
+        d.set_body(&all[0], "title\nline\n");
+        let child = d.extract(&all[0], 0, 1).unwrap();
+        assert_eq!(child.h(&d.outline), "title");
+        assert_eq!(body_of(&d, &child), "line\n");
+        assert_eq!(body_of(&d, &all[0]), "");
+        assert!(d.extract(&all[0], 0, 0).is_none());
+    }
+
+    fn has_b(o: &Outline, p: &Position) -> bool {
+        p.h(o).contains('b')
+    }
+
+    #[test]
+    fn clone_find_all_skips_a_match_subtree_unless_flattened() {
+        let mut d = marked(&[]);
+        let (found, n) = d.clone_find_all("b", "Head", false, has_b).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(found.h(&d.outline), "Found 1:b");
+        assert!(found.b(&d.outline).starts_with("@nosearch\n"));
+        assert_eq!(
+            heads(&d),
+            vec!["a", "b", "  b1", "c", "Found 1:b", "  b", "    b1"]
+        );
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "b", "  b1", "c"]);
+        d.redo();
+        assert_eq!(heads(&d).len(), 7);
+        d.undo();
+        let (_, n) = d.clone_find_all("b", "Head", true, has_b).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(heads(&d)[4..], ["Found 2:b", "  b", "    b1", "  b1"]);
+    }
+
+    #[test]
+    fn clone_find_all_skips_nosearch_trees_and_its_own_results() {
+        let mut d = marked(&[]);
+        let b = d.outline.all_positions()[1].clone();
+        d.set_body(&b, "text\n@nosearch\n");
+        let c = d.outline.all_positions()[3].clone();
+        d.set_headline(&c, "cb");
+        let (_, n) = d.clone_find_all("b", "Head", false, has_b).unwrap();
+        assert_eq!(n, 1);
+        // The first organizer is @nosearch, so its clones are not found again.
+        let (_, n) = d.clone_find_all("b", "Head", false, has_b).unwrap();
+        assert_eq!(n, 1);
+        assert!(d
+            .clone_find_all("zzz", "Head", false, |_, _| false)
+            .is_none());
     }
 
     #[test]

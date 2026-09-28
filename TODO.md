@@ -25,12 +25,6 @@
 
 ### leotui
 
-- [ ] In body focus, `Ctrl-s`, `Ctrl-f`, `Ctrl-b`, `Ctrl-d`, `Ctrl-u`, `PageUp`, `PageDown` and `F1` answer "no such command", though the README lists them for both panes. `editor/parse.rs` knows only `Ctrl-r`, `Ctrl-z`, `Ctrl-c` and `Ctrl-w`.
-
-- [ ] Ctrl and Alt chords type their letter in INSERT and in every one-line input. `Ctrl-w` and `Ctrl-u` do nothing there.
-
-- [ ] `Ctrl-c` in INSERT discards the whole session, with no undo bead.
-
 - [ ] `:set wrap` does not wrap: `ui.rs` cuts each run to the pane width first.
 
 - [ ] The body cursor is placed by character index, so it drifts on tabs and wide characters. There is no horizontal scroll, so typing past the pane's edge is invisible.
@@ -41,15 +35,13 @@
 
 - [ ] `:e` rebuilds `App` and drops the theme, colour depth, text register and last search.
 
-- [ ] Counts overflow, which panics in a debug build, and a failing repeat keeps looping: `99999999K` runs for 1.9s.
-
 - [ ] A failed `/pattern` then Enter prints nothing. Escape leaves open the folds the preview unfolded.
 
 - [ ] The outline's colours are fixed and ignore the theme, `NO_COLOR` and light backgrounds.
 
 - [ ] `leotui new.leo` fails with "not found" instead of starting that outline.
 
-- [ ] Ensure to implement Commands a Leo user reaches for first. In rough order: goto-global-line and its reverse, clone-find-all, hoist, jump to a `<< section >>` definition, go-back and go-forward, extract, the marked-node commands, sort. `tui-design.md` section 6.1 lists hoist, sort and the marked-node commands as v1; none exist. `ideas.md` covers the route to goto-global-line through `:!` and a quickfix list.
+- [ ] Ensure to implement Commands a Leo user reaches for first. In rough order: goto-global-line and its reverse, `move-marked-nodes`. `move-marked-nodes` is not undoable in Leo, which recommends `clone-marked-nodes` and a paste instead. `ideas.md` covers the route to goto-global-line through `:!` and a quickfix list.
 
 ## Medium
 
@@ -59,7 +51,21 @@
 
 - [ ] `Outline::position_exists` checks only a position's last step. `position_is_linked` is the real test, and nothing says so.
 
-- [ ] 258 public items had no doc comment at `825d3b8`, and `Error` is not `#[non_exhaustive]`.
+- [ ] 258 public items had no doc comment at `825d3b8`.
+
+- [ ] `Outline` has public fields whose values depend on each other: `gnx_dict`, `expanded`, `mod_time_cache`, `read_paths`, `file_stamps`, `dropped_descendent_uas`. A caller that edits `read_paths` can defeat the overwrite guard; one that edits `gnx_dict` can break the gnx index. Make them `pub(crate)` behind accessors.
+
+- [ ] `atfile_read` is `pub` only because `tests/corpus.rs` calls `read_into_root`; `atfile_write` is `pub(crate)`. Hide it with `#[doc(hidden)]`, or expose it behind a test-only feature.
+
+### Project
+
+- [ ] No benchmark is committed. `comparison.md`'s load times came from `hyperfine` runs that no script records, so they cannot be re-measured or checked in CI. Add a `criterion` bench over leo-editor's `LeoPyRef.leo`.
+
+- [ ] No fuzz target. The sentinel reader, the pickle reader and the importers are parsers fed untrusted files. Add `cargo-fuzz` targets for `read_into_root` and the pickle reader first.
+
+- [ ] No `SECURITY.md` or `CONTRIBUTING.md`. The README says no write guard stops an outline creating a new file in an existing directory, and that a front end handling untrusted outlines must check `Outline::full_path` itself. `SECURITY.md` should state that threat model: a `.leo` file is as dangerous as a Makefile.
+
+- [ ] `rust-version = "1.90"` limits who can build the crates. Keep it only as a deliberate choice, and say why in `Cargo.toml`.
 
 ### Normalise builtin types across the grammars
 
@@ -72,9 +78,3 @@
 - [ ] `@first` on the rename route. Renaming `@auto` to `@file` and writing with `w` moves a leading shebang to line 3, below the sentinel header. `:import-at-file` adds `@first`; the rename does not. Add `@first` by hand first.
 
 - [ ] Nothing frees a vnode, and the undo stack has no cap. Deleting a node leaves its vnode in the arena, which is what makes undoing a delete a relink rather than a rebuild (`undo.rs`). The stack itself is unbounded. Neither matters for an editing session of ordinary length; together they mean a long-lived process editing a large outline has no steady state. A cap has to drop beads and their vnodes together, or undo starts relinking nodes that are no longer there.
-
-### Low
-
-- [ ] refactor `app.rs` at 3,200 lines
-
-

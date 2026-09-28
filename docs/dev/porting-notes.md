@@ -34,6 +34,16 @@ A rejected external file is reported in `ReadResult::errors` and never recorded 
 
 **gnxs are minted by one allocator per process.** Python leolib shares one the same way (`leo/leolib/api.py`, `_shared_node_indices`). `Outline::new_vnode` also skips a gnx the outline already holds, which Leo does not: another process with the same user id can write the file within the same second, and reusing its gnx merges two nodes on the next read.
 
+**leotui's node history fixes two edges of `leoHistory.NodeHistory`.** `update` lowers the pointer by every bead it removes for the selected vnode, including beads after the pointer. After going back from c to b, selecting c again then files it before b. `history.rs` counts only the beads at or before the pointer. `goPrev` and `goNext` drop a stale bead and stop, so the key does nothing that press; here the step skips to the next bead that still exists.
+
+**`open-url-under-cursor` matches a section as the writer does.** Leo's click compares the stripped line with each stripped headline exactly (`g.openUrlHelper`), so `<< Imports >>` misses a node headed `<<imports>>` that `@file` writes in its place. Here the match is `match_headline`, skipping `@ignore` nodes, as `at.findReference`. Only the section branch is ported.
+
+**`clone-marked-nodes` and `copy-marked-nodes` skip the tree of a node already gathered.** Leo's loop skips a marked node's subtree only the first time it meets the vnode; at a second position of a clone it descends, and gathers marked descendants a second time, inside and outside their ancestor.
+
+**`extract` reads no `@data extract-patterns` node.** Leo tries those patterns before its built-in ones. leolib reads no settings nodes, so only the built-in patterns apply.
+
+**`clone-find-all-flattened` says so in its found node.** Leo's `_cf_helper` passes `flattened=False` to `_cfa_create_nodes` whatever the command, so the body never reads `flattened`.
+
 ## The `@auto` importers
 
 `importers/block.rs` is Leo's `base_importer.py`: comments and strings are blanked out to make **guide lines**, blocks are found in those, and the real lines are edited to insert `@others`. Each language is a `LanguageSpec` -- a table of patterns plus a choice of end-of-block rule -- which is how Leo's 34 importer modules reduce to one algorithm and a table.
