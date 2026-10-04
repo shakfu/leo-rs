@@ -77,13 +77,34 @@ const RUST_NUMBERS: &str = "
 (float_literal) @constant.numeric
 ";
 
+/// tree-sitter-c tags its primitives `@type`, as it tags a typedef's name.
+/// C++'s query starts with C's, so it gets these too.
+const C_BUILTIN_TYPES: &str = "
+(primitive_type) @type.builtin
+(sized_type_specifier) @type.builtin
+";
+
+/// tree-sitter-go tags a predeclared type as any other type name.
+const GO_BUILTIN_TYPES: &str = r#"
+((type_identifier) @type.builtin
+ (#match? @type.builtin "^(any|bool|byte|comparable|complex64|complex128|error|float32|float64|int|int8|int16|int32|int64|rune|string|uint|uint8|uint16|uint32|uint64|uintptr)$"))
+"#;
+
+/// tree-sitter-python tags a builtin type in an annotation as any other.
+/// Called, the same names are `@function.builtin`.
+const PYTHON_BUILTIN_TYPES: &str = r#"
+(type (identifier) @type.builtin
+ (#match? @type.builtin "^(bool|bytearray|bytes|complex|dict|float|frozenset|int|list|memoryview|object|range|set|slice|str|tuple|type)$"))
+"#;
+
 /// The grammar for `language`, under Leo's name for it.
 fn config_for(language: &str) -> Option<&'static HighlightConfiguration> {
     match language {
+        // A pattern appended after a grammar's own wins over it.
         "c" => grammar!(
             "c",
             tree_sitter_c::LANGUAGE.into(),
-            tree_sitter_c::HIGHLIGHT_QUERY
+            &format!("{}{C_BUILTIN_TYPES}", tree_sitter_c::HIGHLIGHT_QUERY)
         ),
         // C++ and TypeScript ship only what they add to the language they
         // extend, so each query is the two concatenated.
@@ -91,7 +112,7 @@ fn config_for(language: &str) -> Option<&'static HighlightConfiguration> {
             "cpp",
             tree_sitter_cpp::LANGUAGE.into(),
             &format!(
-                "{}{}",
+                "{}{C_BUILTIN_TYPES}{}",
                 tree_sitter_c::HIGHLIGHT_QUERY,
                 tree_sitter_cpp::HIGHLIGHT_QUERY
             )
@@ -104,7 +125,7 @@ fn config_for(language: &str) -> Option<&'static HighlightConfiguration> {
         "go" => grammar!(
             "go",
             tree_sitter_go::LANGUAGE.into(),
-            tree_sitter_go::HIGHLIGHTS_QUERY
+            &format!("{}{GO_BUILTIN_TYPES}", tree_sitter_go::HIGHLIGHTS_QUERY)
         ),
         "html" => grammar!(
             "html",
@@ -129,7 +150,10 @@ fn config_for(language: &str) -> Option<&'static HighlightConfiguration> {
         "python" => grammar!(
             "python",
             tree_sitter_python::LANGUAGE.into(),
-            tree_sitter_python::HIGHLIGHTS_QUERY
+            &format!(
+                "{}{PYTHON_BUILTIN_TYPES}",
+                tree_sitter_python::HIGHLIGHTS_QUERY
+            )
         ),
         "rust" => grammar!(
             "rust",

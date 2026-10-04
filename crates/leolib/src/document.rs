@@ -50,9 +50,11 @@ fn extract_ref(s: &str) -> bool {
         .any(|(a, b)| matches!((s.find(a), s.find(b)), (Some(i), Some(j)) if i < j))
 }
 
+/// An outline and its undo history: every edit through a `Document` method
+/// is undoable.
 pub struct Document {
-    pub outline: Outline,
-    pub undoer: Undoer,
+    outline: Outline,
+    undoer: Undoer,
     /// What reading the external files reported when this was opened.
     pub read_report: ReadResult,
     /// An unlinked tree waiting to be pasted, and whether it was cut.
@@ -60,6 +62,66 @@ pub struct Document {
 }
 
 impl Document {
+    /// The outline, to read.
+    pub fn outline(&self) -> &Outline {
+        &self.outline
+    }
+
+    /// The outline, to change outside the undo history: folds, an approved
+    /// overwrite, a test's setup. An edit to a node made here cannot be
+    /// undone, and the history may then name nodes that have changed.
+    pub fn outline_mut_untracked(&mut self) -> &mut Outline {
+        &mut self.outline
+    }
+
+    /// The undo history, to read.
+    pub fn undoer(&self) -> &Undoer {
+        &self.undoer
+    }
+
+    /// Open a group of edits that undo as one step. Pair with `end_group`.
+    pub fn begin_group(&mut self, name: &str) {
+        self.undoer.begin_group(name);
+    }
+
+    /// Close the group `begin_group` opened.
+    pub fn end_group(&mut self) {
+        self.undoer.end_group();
+        self.free_dropped();
+    }
+
+    /// Forget the undo history.
+    pub fn clear_undo(&mut self) {
+        self.undoer.clear();
+        self.free_dropped();
+    }
+
+    /// Keep at most `limit` undo steps.
+    pub fn set_undo_limit(&mut self, limit: usize) {
+        self.undoer.set_limit(limit);
+        self.free_dropped();
+    }
+
+    /// Record one edit, then free what the beads it pushed off named.
+    fn push(&mut self, name: &str, bead: Bead) {
+        self.undoer.push(name, bead);
+        self.free_dropped();
+    }
+
+    /// Free the vnodes only dropped beads named, in batches: each pass walks
+    /// the whole arena.
+    fn free_dropped(&mut self) {
+        const BATCH: usize = 64;
+        if self.undoer.dropped() < BATCH {
+            return;
+        }
+        self.undoer.take_dropped();
+        let mut keep = self.undoer.referenced();
+        keep.extend(self.clipboard);
+        self.outline.free_unreachable(&keep);
+    }
+
+    /// Wrap `outline` with an empty undo history.
     pub fn new(outline: Outline) -> Self {
         Self {
             outline,
@@ -81,19 +143,21 @@ impl Document {
         Ok(doc)
     }
 
+    /// A document holding a new one-node outline named `file_name`.
     pub fn new_empty(file_name: &str) -> Self {
         Self::new(crate::new_outline(file_name))
     }
 
     // --- Editing content --------------------------------------------------
 
+    /// Set p's headline, as one undo step. Newlines are removed.
     pub fn set_headline(&mut self, p: &Position, s: &str) {
         let old = p.h(&self.outline).to_string();
         let new = s.replace('\n', "");
         if old == new {
             return;
         }
-        self.undoer.push(
+        self.push(
             "rename-node",
             Bead::Headline {
                 v: p.v,
@@ -104,12 +168,13 @@ impl Document {
         self.outline.set_headline(p, &new);
     }
 
+    /// Set p's body, as one undo step. An unchanged body records nothing.
     pub fn set_body(&mut self, p: &Position, s: &str) {
         let old = p.b(&self.outline).to_string();
         if old == s {
             return;
         }
-        self.undoer.push(
+        self.push(
             "edit-body",
             Bead::Body {
                 v: p.v,
@@ -120,6 +185,32 @@ impl Document {
         self.outline.set_body(p, s);
     }
 
+    /// Leo's `reformat-paragraph`: wrap the paragraph at or around line `row`
+    /// of p's body to the `@pagewidth` in effect, as one undo step. Returns
+    /// the row of the next paragraph, or `None` if there is no paragraph.
+    pub fn reformat_paragraph(&mut self, p: &Position, row: usize) -> Option<usize> {
+        let o = &self.outline;
+        let (page_width, tab_width) = (o.get_page_width(p), o.get_tab_width(p));
+        let (body, next) = crate::reformat::reformat_paragraph(p.b(o), row, page_width, tab_width)?;
+        self.set_body(p, &body);
+        Some(next)
+    }
+
+    /// Put `@first` on the `#!` and coding lines p's body starts with, so a
+    /// sentinel file keeps them on lines 1 and 2. Returns how many.
+    ///
+    /// `import_at_file` does this; a node renamed to `@file` needs it too.
+    pub fn add_first_directives(&mut self, p: &Position) -> usize {
+        let lines = crate::util::split_lines(p.b(&self.outline));
+        let n = external::first_lines(&lines);
+        if n > 0 {
+            let marked: String = lines[..n].iter().map(|l| format!("@first {l}")).collect();
+            self.set_body(p, &format!("{marked}{}", lines[n..].concat()));
+        }
+        n
+    }
+
+    /// Mark or unmark p, as one undo step.
     pub fn toggle_marked(&mut self, p: &Position) {
         let was_marked = self.outline.node(p.v).is_marked();
         self.undoer
@@ -139,7 +230,7 @@ impl Document {
             self.outline.insert_after(p)
         };
         let parent = new.parent_vnode(&self.outline);
-        self.undoer.push(
+        self.push(
             "insert-node",
             Bead::Insert {
                 parent,
@@ -160,7 +251,7 @@ impl Document {
             .vis_back(&self.outline)
             .or_else(|| p.next(&self.outline))
             .or_else(|| p.parent(&self.outline));
-        self.undoer.push(
+        self.push(
             "delete-node",
             Bead::Delete {
                 parent,
@@ -174,10 +265,11 @@ impl Document {
             .or_else(|| self.outline.root_position())
     }
 
+    /// Clone p, as Leo's `clone-node`. Returns the clone, p's next sibling.
     pub fn clone_node(&mut self, p: &Position) -> Position {
         let new = self.outline.clone_node(p);
         let parent = new.parent_vnode(&self.outline);
-        self.undoer.push(
+        self.push(
             "clone-node",
             Bead::Insert {
                 parent,
@@ -193,7 +285,7 @@ impl Document {
     pub fn insert_child(&mut self, p: &Position) -> Position {
         let new = self.outline.insert_as_nth_child(p, 0);
         let parent = new.parent_vnode(&self.outline);
-        self.undoer.push(
+        self.push(
             "insert-child",
             Bead::Insert {
                 parent,
@@ -210,7 +302,7 @@ impl Document {
     pub fn insert_node_before(&mut self, p: &Position) -> Position {
         let new = self.outline.insert_before(p);
         let parent = new.parent_vnode(&self.outline);
-        self.undoer.push(
+        self.push(
             "insert-node-before",
             Bead::Insert {
                 parent,
@@ -237,7 +329,7 @@ impl Document {
         // Record each move so undo puts the siblings back in order.
         let base = self.outline.node(p.v).children.len();
         for (i, v) in following.iter().enumerate() {
-            self.undoer.push(
+            self.push(
                 "demote",
                 Bead::Move {
                     v: *v,
@@ -246,7 +338,7 @@ impl Document {
                 },
             );
         }
-        self.undoer.end_group();
+        self.end_group();
         // Moves children directly, as `Outline::promote` does.
         self.outline.invalidate_descendent_uas(p.v);
         self.outline
@@ -285,7 +377,7 @@ impl Document {
         self.undoer.begin_group("promote");
         // Each move takes p's first child, so every bead starts at index 0.
         for (i, v) in children.iter().enumerate() {
-            self.undoer.push(
+            self.push(
                 "promote",
                 Bead::Move {
                     v: *v,
@@ -294,7 +386,7 @@ impl Document {
                 },
             );
         }
-        self.undoer.end_group();
+        self.end_group();
         self.outline.promote(p);
         self.outline.set_dirty(p);
         self.outline.changed = true;
@@ -320,7 +412,7 @@ impl Document {
         }
         self.undoer.begin_group("unmark-all");
         for p in &marked {
-            self.undoer.push(
+            self.push(
                 "unmark",
                 Bead::Mark {
                     v: p.v,
@@ -329,7 +421,7 @@ impl Document {
             );
             self.outline.node_mut(p.v).clear_bit(status::MARKED);
         }
-        self.undoer.end_group();
+        self.end_group();
         self.outline.changed = true;
         marked.len()
     }
@@ -359,7 +451,7 @@ impl Document {
         }
         let index = new.iter().position(|v| *v == p.v)?;
         crate::undo::set_children(&mut self.outline, parent, &new);
-        self.undoer.push(name, Bead::Sort { parent, old, new });
+        self.push(name, Bead::Sort { parent, old, new });
         Some(Position::new(p.v, index, p.stack.clone()))
     }
 
@@ -406,7 +498,7 @@ impl Document {
         let child = self.outline.insert_as_nth_child(p, 0);
         self.outline.set_headline(&child, &h);
         self.outline.set_body(&child, &b);
-        self.undoer.push(
+        self.push(
             "extract",
             Bead::Insert {
                 parent: p.v,
@@ -415,7 +507,7 @@ impl Document {
             },
         );
         self.set_body(p, &new);
-        self.undoer.end_group();
+        self.end_group();
         self.outline.expand(p);
         self.outline.changed = true;
         Some(child)
@@ -478,7 +570,7 @@ impl Document {
             self.outline.link_as_nth_child(&organizer, i, v);
         }
         // Undo unlinks the organizer, and its clones with it.
-        self.undoer.push(
+        self.push(
             "clone-find-all",
             Bead::Insert {
                 parent: organizer.parent_vnode(&self.outline),
@@ -504,14 +596,14 @@ impl Document {
         self.undoer.begin_group(name);
         for &v in &todo {
             let was_marked = !marked;
-            self.undoer.push(name, Bead::Mark { v, was_marked });
+            self.push(name, Bead::Mark { v, was_marked });
             if marked {
                 self.outline.node_mut(v).set_bit(status::MARKED);
             } else {
                 self.outline.node_mut(v).clear_bit(status::MARKED);
             }
         }
-        self.undoer.end_group();
+        self.end_group();
         self.outline.changed = true;
         todo.len()
     }
@@ -592,7 +684,7 @@ impl Document {
         self.undoer.begin_group(name);
         let parent = self.outline.insert_after(p);
         self.outline.set_headline(&parent, headline);
-        self.undoer.push(
+        self.push(
             name,
             Bead::Insert {
                 parent: parent.parent_vnode(&self.outline),
@@ -607,7 +699,7 @@ impl Document {
                 v
             };
             self.outline.link_as_nth_child(&parent, n, v);
-            self.undoer.push(
+            self.push(
                 name,
                 Bead::Insert {
                     parent: parent.v,
@@ -616,10 +708,73 @@ impl Document {
                 },
             );
         }
-        self.undoer.end_group();
+        self.end_group();
         self.outline.expand(&parent);
         self.outline.changed = true;
         Some(parent)
+    }
+
+    /// Leo's `move-marked-nodes`: move every marked node, with its tree, under
+    /// a new node, which then goes after `current`'s node. Returns the new
+    /// node and how many moved, or `None` if nothing is marked.
+    ///
+    /// One undo step, where Leo's cannot be undone.
+    pub fn move_marked(&mut self, current: &Position) -> Option<(Position, usize)> {
+        let root = self.outline.root_position()?;
+        self.first_marked()?;
+        let name = "move-marked-nodes";
+        self.undoer.begin_group(name);
+        // First at the top level, so no move shifts it.
+        let parent = self.outline.insert_before(&root);
+        self.outline.set_headline(&parent, "Moved marked nodes");
+        self.push(
+            name,
+            Bead::Insert {
+                parent: self.outline.hidden_root,
+                index: 0,
+                v: parent.v,
+            },
+        );
+        let mut moved = 0;
+        // Searching again after each move, as the positions found go stale.
+        while let Some(p) = self.marked_outside(parent.v) {
+            let n = self.outline.node(parent.v).children.len();
+            self.move_to(&p, parent.v, n);
+            moved += 1;
+        }
+        // After a position of `current`'s node outside the new tree, as Leo.
+        let o = &self.outline;
+        let after = o
+            .all_positions()
+            .into_iter()
+            .find(|q| q.v == current.v && !q.self_and_parents(o).iter().any(|a| a.v == parent.v))
+            .or_else(|| o.root_position()?.self_and_siblings(o).into_iter().last());
+        let parent = match after {
+            Some(q) if q.v != parent.v => {
+                let to = q.parent_vnode(&self.outline);
+                self.move_to(&parent, to, q.child_index + 1)
+            }
+            _ => parent,
+        };
+        self.end_group();
+        self.outline.changed = true;
+        Some((parent, moved))
+    }
+
+    /// The first marked position, in outline order, outside `v`'s tree.
+    fn marked_outside(&self, v: VnodeId) -> Option<Position> {
+        let o = &self.outline;
+        let mut p = o.root_position();
+        while let Some(cur) = p {
+            if cur.v == v {
+                p = cur.node_after_tree(o);
+            } else if cur.is_marked(o) {
+                return Some(cur);
+            } else {
+                p = cur.thread_next(o);
+            }
+        }
+        None
     }
 
     /// Leo's `delete-marked-nodes`: delete every marked node, with its tree.
@@ -638,7 +793,7 @@ impl Document {
             if n == 0 {
                 self.undoer.begin_group("delete-marked-nodes");
             }
-            self.undoer.push(
+            self.push(
                 "delete-marked-nodes",
                 Bead::Delete {
                     parent: p.parent_vnode(&self.outline),
@@ -650,7 +805,7 @@ impl Document {
             n += 1;
         }
         if n > 0 {
-            self.undoer.end_group();
+            self.end_group();
             self.outline.changed = true;
         }
         n
@@ -668,7 +823,7 @@ impl Document {
         let copy = self.outline.copy_tree_of_vnode(v);
         let new = self.outline.paste_after(p, copy);
         let parent = new.parent_vnode(&self.outline);
-        self.undoer.push(
+        self.push(
             "paste-node",
             Bead::Insert {
                 parent,
@@ -738,7 +893,7 @@ impl Document {
         self.outline.node_mut(p.v).parents.push(parent);
         self.outline.generation += 1;
         self.outline.changed = true;
-        self.undoer.push(
+        self.push(
             "move-node",
             Bead::Move {
                 v: p.v,
@@ -757,10 +912,12 @@ impl Document {
 
     // --- Undo -------------------------------------------------------------
 
+    /// Undo one step. Returns the node to select, if it still exists.
     pub fn undo(&mut self) -> Option<Position> {
         self.undoer.undo(&mut self.outline)
     }
 
+    /// Redo one step. Returns the node to select, if it still exists.
     pub fn redo(&mut self) -> Option<Position> {
         self.undoer.redo(&mut self.outline)
     }
@@ -804,18 +961,29 @@ impl Document {
     /// still names the nodes it replaced. The history is cleared.
     pub fn read_files(&mut self, files: Vec<Position>) -> ReadResult {
         let result = external::read_files(&mut self.outline, files);
-        self.undoer.clear();
+        self.clear_undo();
         result
     }
 
+    /// [`Document::read_files`], reading an `@clean` file even if its mtime
+    /// says it is unchanged, as Leo's `refresh-from-disk`.
+    pub fn refresh_files(&mut self, files: Vec<Position>) -> ReadResult {
+        let result = external::refresh_files(&mut self.outline, files);
+        self.clear_undo();
+        result
+    }
+
+    /// Write every `@<file>` tree, or only the dirty ones if `dirty_only`.
     pub fn write_external_files(&mut self, dirty_only: bool) -> WriteResult {
         external::write_external_files(&mut self.outline, dirty_only)
     }
 
+    /// Write the given `@<file>` nodes. See [`external::write_files`].
     pub fn write_files(&mut self, files: Vec<Position>) -> WriteResult {
         external::write_files(&mut self.outline, files)
     }
 
+    /// Read every `@file`, `@clean` and `@edit` tree. The history is kept.
     pub fn read_external_files(&mut self) -> ReadResult {
         external::read_external_files(&mut self.outline)
     }
@@ -863,7 +1031,7 @@ impl Document {
             }
             Ok(needs_write) => {
                 let parent = new.parent_vnode(o);
-                self.undoer.push(
+                self.push(
                     "import-at-file",
                     Bead::Insert {
                         parent,
@@ -971,6 +1139,59 @@ mod tests {
         let a = d.outline.root_position().unwrap();
         assert!(d.clone_marked(&a).is_none());
         assert!(!d.undoer.can_undo());
+    }
+
+    #[test]
+    fn a_long_session_frees_what_undo_can_no_longer_reach() {
+        let (mut d, all) = abc();
+        // Three beads a round, so nine keep three whole rounds.
+        d.set_undo_limit(9);
+        for _ in 0..500 {
+            let p = d.insert_node(&all[0]);
+            d.set_body(&p, &"x".repeat(1000));
+            d.delete_node(&p);
+        }
+        assert!(d.outline.node_count() < 100, "{}", d.outline.node_count());
+        // The steps still kept undo.
+        for _ in 0..9 {
+            assert!(d.undoer.can_undo());
+            d.undo();
+        }
+        assert!(!d.undoer.can_undo());
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+        // A freed slot is reused with a gnx of its own.
+        let p = d.insert_node(&all[0]);
+        assert_eq!(d.outline.find_gnx(p.gnx(&d.outline)), Some(p.v));
+    }
+
+    #[test]
+    fn move_marked_gathers_the_marked_trees_after_the_selection_and_undoes_as_one() {
+        let mut d = marked(&["a", "b1", "c"]);
+        let before = heads(&d);
+        let b = d.outline.all_positions()[1].clone();
+        let (parent, n) = d.move_marked(&b).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(parent.h(&d.outline), "Moved marked nodes");
+        assert_eq!(
+            heads(&d),
+            vec!["b", "Moved marked nodes", "  a", "  b1", "  c"]
+        );
+        d.undo();
+        assert_eq!(heads(&d), before);
+        d.redo();
+        assert_eq!(heads(&d)[1], "Moved marked nodes");
+    }
+
+    #[test]
+    fn move_marked_from_a_marked_node_goes_last() {
+        let mut d = marked(&["a"]);
+        let a = d.outline.root_position().unwrap();
+        d.move_marked(&a).unwrap();
+        assert_eq!(
+            heads(&d),
+            vec!["b", "  b1", "c", "Moved marked nodes", "  a"]
+        );
+        assert!(marked(&[]).move_marked(&a).is_none());
     }
 
     #[test]

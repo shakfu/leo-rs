@@ -222,8 +222,8 @@ Every name is Leo's. Status as of 2026-09-28; `delta.md` sets every Leo command 
 | `mark` `unmark-all` | built |
 | `undo` `redo` | built |
 | `save` `save-to` | built |
-| `read-at-file-nodes` `write-at-file-nodes` | built; `write-at-file-nodes` writes only dirty files (`TODO.md`) |
-| `write-dirty-at-file-nodes` | not built; `write-at-file-nodes` does its job |
+| `read-at-file-nodes` `write-at-file-nodes` | built |
+| `write-dirty-at-file-nodes` | built, on `w` |
 | `save` writes the `.leo` file; `write-outline-only` is its Leo name | built |
 | `expand-node` `contract-node` `expand-all` `contract-all` | built |
 | `expand-to-level-1`..`-9` `expand-next-level` `contract-all-other-nodes` | built |
@@ -303,7 +303,7 @@ Files and history:
 | `Ctrl-r` | `redo` (Leo's Shift-Ctrl-Z is not a distinct control code) |
 | `/` `?` `n` `N` | search headlines (stage 2) |
 | `Ctrl-s` `:w` | `save` (Leo binds Ctrl-S) |
-| `w` | `write-at-file-nodes` |
+| `w` | `write-dirty-at-file-nodes` |
 | `Tab` | `focus-to-body`, as Leo's `focus-to-body !tree = Tab` |
 | `Ctrl-Left` `Ctrl-Right` | resize the split. leotui's own: Leo has no panes |
 | `Ctrl-w <` `Ctrl-w >` | narrow, widen the focused pane, as vim's window keys; macOS takes the Ctrl-arrows |

@@ -24,8 +24,8 @@ impl App {
                 "overwrite {} files this outline has not read, or that changed on disk? (y/n) ",
                 files.len()
             ),
-            (MiniKind::ConfirmRead, _) if self.pending_read.len() == 1 => {
-                let name = self.pending_read[0].h(self.outline()).to_string();
+            (MiniKind::ConfirmRead, _) if self.pending_read.0.len() == 1 => {
+                let name = self.pending_read.0[0].h(self.outline()).to_string();
                 format!("discard edits not written to {name}? (y/n) ")
             }
             (MiniKind::ConfirmQuit, _) => format!("{}. quit anyway? (y/n) ", self.unsaved_work()),
@@ -57,6 +57,7 @@ impl App {
                 scroll: self.body_scroll,
                 hlsearch: self.hlsearch.clone(),
                 last_hit: self.last_hit.clone(),
+                expanded: self.outline().expanded().clone(),
             });
         }
         if kind == MiniKind::Command && self.theme_names.is_empty() {
@@ -258,6 +259,9 @@ impl App {
         self.body_scroll = origin.scroll;
         self.hlsearch = origin.hlsearch.clone();
         self.last_hit = origin.last_hit.clone();
+        self.doc
+            .outline_mut_untracked()
+            .set_expanded(origin.expanded.clone());
     }
 
     /// The cursor, as a search starts from it.
@@ -321,7 +325,7 @@ impl App {
         self.mode = Mode::Normal;
         let text = mini.buffer;
         let refused = std::mem::take(&mut self.pending_overwrite);
-        let to_read = std::mem::take(&mut self.pending_read);
+        let (to_read, refresh) = std::mem::take(&mut self.pending_read);
         let approved = accepted && text.trim().eq_ignore_ascii_case("y");
         if !approved {
             match mini.kind {
@@ -344,7 +348,18 @@ impl App {
         match mini.kind {
             MiniKind::Headline => {
                 let p = self.current.clone();
+                let o = self.outline();
+                let was_file = p.is_at_file_node(o);
+                self.doc.begin_group("rename-node");
                 self.doc.set_headline(&p, &text);
+                // A sentinel header would push a `#!` line down to line 3.
+                if !was_file && p.is_at_file_node(self.outline()) {
+                    let n = self.doc.add_first_directives(&p);
+                    if n > 0 {
+                        self.message = format!("added @first to {}", plural(n, "line"));
+                    }
+                }
+                self.doc.end_group();
             }
             // An existing file is refused as `:saveas` refuses it, which the
             // message names.
@@ -361,16 +376,20 @@ impl App {
             }
             MiniKind::ConfirmRead => {
                 if approved {
-                    self.read_files(to_read);
+                    self.read_files(to_read, refresh);
                 }
             }
             MiniKind::ConfirmOverwrite => {
                 if approved {
                     for p in &refused {
                         let path = self.outline().full_path(p);
-                        self.doc.outline.remember_read_path(p, &path);
+                        self.doc
+                            .outline_mut_untracked()
+                            .remember_read_path(p, &path);
                         let stamp = leolib::util::file_stamp(&path);
-                        self.doc.outline.record_file_stamp(&path, stamp);
+                        self.doc
+                            .outline_mut_untracked()
+                            .record_file_stamp(&path, stamp);
                     }
                     let result = self.doc.write_files(refused);
                     self.report_write(result);
@@ -385,14 +404,29 @@ impl App {
                 self.editor.visual = None;
             }
             MiniKind::SearchForward | MiniKind::SearchBackward => {
-                self.search_origin = None;
+                let origin = self.search_origin.take();
                 if text.is_empty() {
                     return;
                 }
                 remember(&mut self.search_history, &text);
-                // The preview has already landed; only a bad pattern is news.
+                // The preview has already landed; a bad pattern, or none
+                // found, is the news.
                 match search::compile(&text) {
-                    Ok(re) => self.hlsearch = Some(re),
+                    Ok(re) => {
+                        let direction = match mini.kind {
+                            MiniKind::SearchForward => Direction::Forward,
+                            _ => Direction::Backward,
+                        };
+                        let scope = self.options.search_scope;
+                        let found = origin.is_some_and(|origin| {
+                            search::find(self.outline(), &re, &origin.start, direction, scope)
+                                .is_some()
+                        });
+                        if !found {
+                            self.message = format!("not found: {text}");
+                        }
+                        self.hlsearch = Some(re);
+                    }
                     Err(e) => {
                         self.message = e;
                         return;

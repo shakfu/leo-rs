@@ -15,6 +15,7 @@ use crate::outline::Outline;
 use crate::position::Position;
 use crate::util;
 
+/// Build the tree under `im.root` with the `kind` line importer.
 pub fn gen_block(im: &mut Importer, kind: LineImporter) {
     match kind {
         LineImporter::Org => org(im),

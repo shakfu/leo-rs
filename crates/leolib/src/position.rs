@@ -11,14 +11,18 @@ use crate::node::VnodeId;
 use crate::outline::Outline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// One place a vnode appears. Leo's `Position`.
 pub struct Position {
+    /// The vnode at this place.
     pub v: VnodeId,
+    /// 0-based index of `v` among its parent's children.
     pub child_index: usize,
     /// (parent vnode, that parent's own child index), outermost first.
     pub stack: Vec<(VnodeId, usize)>,
 }
 
 impl Position {
+    /// A position from its parts. `stack` is outermost first, as [`Position::stack`].
     pub fn new(v: VnodeId, child_index: usize, stack: Vec<(VnodeId, usize)>) -> Self {
         Self {
             v,
@@ -45,6 +49,7 @@ impl Position {
         out
     }
 
+    /// Depth in the outline. 0 for a top-level node.
     pub fn level(&self) -> usize {
         self.stack.len()
     }
@@ -59,28 +64,34 @@ impl Position {
 
     // --- Reading the node -------------------------------------------------
 
+    /// The headline.
     pub fn h<'a>(&self, o: &'a Outline) -> &'a str {
         &o.node(self.v).h
     }
 
+    /// The body text.
     pub fn b<'a>(&self, o: &'a Outline) -> &'a str {
         &o.node(self.v).b
     }
 
+    /// The vnode's gnx.
     pub fn gnx<'a>(&self, o: &'a Outline) -> &'a str {
         &o.node(self.v).gnx
     }
 
     // --- Navigation -------------------------------------------------------
 
+    /// True if the node has any children.
     pub fn has_children(&self, o: &Outline) -> bool {
         !o.node(self.v).children.is_empty()
     }
 
+    /// How many children the node has.
     pub fn num_children(&self, o: &Outline) -> usize {
         o.node(self.v).children.len()
     }
 
+    /// The child at 0-based index `n`, if any.
     pub fn nth_child(&self, o: &Outline, n: usize) -> Option<Position> {
         let child = *o.node(self.v).children.get(n)?;
         let mut stack = self.stack.clone();
@@ -88,10 +99,12 @@ impl Position {
         Some(Position::new(child, n, stack))
     }
 
+    /// The first child, if any.
     pub fn first_child(&self, o: &Outline) -> Option<Position> {
         self.nth_child(o, 0)
     }
 
+    /// The last child, if any.
     pub fn last_child(&self, o: &Outline) -> Option<Position> {
         let n = self.num_children(o);
         if n == 0 {
@@ -101,6 +114,7 @@ impl Position {
         }
     }
 
+    /// The parent position. None for a top-level node.
     pub fn parent(&self, o: &Outline) -> Option<Position> {
         let _ = o;
         let (v, child_index) = *self.stack.last()?;
@@ -109,6 +123,7 @@ impl Position {
         Some(Position::new(v, child_index, stack))
     }
 
+    /// The next sibling, if any.
     pub fn next(&self, o: &Outline) -> Option<Position> {
         let parent_v = self.parent_vnode(o);
         let siblings = &o.node(parent_v).children;
@@ -117,6 +132,7 @@ impl Position {
         Some(Position::new(v, n, self.stack.clone()))
     }
 
+    /// The previous sibling, if any.
     pub fn back(&self, o: &Outline) -> Option<Position> {
         if self.child_index == 0 {
             return None;
@@ -127,10 +143,12 @@ impl Position {
         Some(Position::new(v, n, self.stack.clone()))
     }
 
+    /// True if there is a next sibling.
     pub fn has_next(&self, o: &Outline) -> bool {
         self.next(o).is_some()
     }
 
+    /// True if there is a previous sibling.
     pub fn has_back(&self) -> bool {
         self.child_index > 0
     }
@@ -216,11 +234,13 @@ impl Position {
         }
     }
 
+    /// True for the outline's first top-level node, as `p.isRoot`.
     pub fn is_root(&self, o: &Outline) -> bool {
         let _ = o;
         self.stack.is_empty() && self.child_index == 0
     }
 
+    /// True if the vnode has more than one parent link, as `p.isCloned`.
     pub fn is_cloned(&self, o: &Outline) -> bool {
         o.node(self.v).parents.len() > 1
     }
@@ -237,12 +257,14 @@ impl Position {
 
     // --- Generators -------------------------------------------------------
 
+    /// The children, in order.
     pub fn children(&self, o: &Outline) -> Vec<Position> {
         (0..self.num_children(o))
             .map(|n| self.nth_child(o, n).unwrap())
             .collect()
     }
 
+    /// Every child of the parent, this node included, in order.
     pub fn self_and_siblings(&self, o: &Outline) -> Vec<Position> {
         let parent_v = self.parent_vnode(o);
         let n = o.node(parent_v).children.len();
@@ -251,6 +273,7 @@ impl Position {
             .collect()
     }
 
+    /// The siblings after this node, in order.
     pub fn following_siblings(&self, o: &Outline) -> Vec<Position> {
         let mut out = Vec::new();
         let mut p = self.clone();
@@ -261,6 +284,7 @@ impl Position {
         out
     }
 
+    /// This node, then each ancestor up to the top level.
     pub fn self_and_parents(&self, o: &Outline) -> Vec<Position> {
         let mut out = vec![self.clone()];
         let mut p = self.clone();
@@ -271,12 +295,14 @@ impl Position {
         out
     }
 
+    /// Each ancestor, nearest first.
     pub fn parents(&self, o: &Outline) -> Vec<Position> {
         let mut out = self.self_and_parents(o);
         out.remove(0);
         out
     }
 
+    /// This node and its descendants, in outline order.
     pub fn self_and_subtree(&self, o: &Outline) -> Vec<Position> {
         let after = self.node_after_tree(o);
         let mut out = Vec::new();
@@ -291,6 +317,7 @@ impl Position {
         out
     }
 
+    /// The descendants, in outline order.
     pub fn subtree(&self, o: &Outline) -> Vec<Position> {
         let mut out = self.self_and_subtree(o);
         out.remove(0);
@@ -299,58 +326,76 @@ impl Position {
 
     // --- Predicates over the headline ------------------------------------
 
+    /// The file name after any `@<file>` directive, as `p.anyAtFileNodeName`.
     pub fn any_at_file_node_name(&self, o: &Outline) -> String {
         crate::node::any_at_file_node_name(self.h(o))
     }
+    /// True if the headline names any `@<file>` or `@leo` node.
     pub fn is_any_at_file_node(&self, o: &Outline) -> bool {
         crate::node::is_any_at_file_node(self.h(o))
     }
+    /// True for any `@auto` spelling, as `p.isAtAutoNode`.
     pub fn is_at_auto_node(&self, o: &Outline) -> bool {
         !crate::node::at_auto_node_name(self.h(o)).is_empty()
     }
+    /// True for `@clean`, as `p.isAtCleanNode`.
     pub fn is_at_clean_node(&self, o: &Outline) -> bool {
         !crate::node::at_clean_node_name(self.h(o)).is_empty()
     }
+    /// True for `@edit`, as `p.isAtEditNode`.
     pub fn is_at_edit_node(&self, o: &Outline) -> bool {
         !crate::node::at_edit_node_name(self.h(o)).is_empty()
     }
+    /// True for `@file` or `@thin`, as `p.isAtFileNode`.
     pub fn is_at_file_node(&self, o: &Outline) -> bool {
         !crate::node::at_file_node_name(self.h(o)).is_empty()
     }
+    /// True for `@thin` or `@file-thin`, as `p.isAtThinFileNode`.
     pub fn is_at_thin_file_node(&self, o: &Outline) -> bool {
         !crate::node::at_thin_node_name(self.h(o)).is_empty()
     }
+    /// True for `@nosent` or `@file-nosent`, as `p.isAtNoSentFileNode`.
     pub fn is_at_nosent_node(&self, o: &Outline) -> bool {
         !crate::node::at_nosent_node_name(self.h(o)).is_empty()
     }
+    /// True for `@asis` or `@file-asis`, as `p.isAtAsisFileNode`.
     pub fn is_at_asis_node(&self, o: &Outline) -> bool {
         !crate::node::at_asis_node_name(self.h(o)).is_empty()
     }
+    /// True for `@shadow`, as `p.isAtShadowFileNode`.
     pub fn is_at_shadow_file_node(&self, o: &Outline) -> bool {
         !crate::node::at_shadow_node_name(self.h(o)).is_empty()
     }
+    /// True for `@jupytext`, as `p.isAtJupytextNode`.
     pub fn is_at_jupytext_node(&self, o: &Outline) -> bool {
         !crate::node::at_jupytext_node_name(self.h(o)).is_empty()
     }
+    /// True if the headline or a body line starts with `@ignore`.
     pub fn is_at_ignore_node(&self, o: &Outline) -> bool {
         crate::node::is_at_ignore_node(self.h(o), self.b(o))
     }
+    /// True if a body line starts with `@others`.
     pub fn is_at_others_node(&self, o: &Outline) -> bool {
         crate::node::is_special(self.b(o), "@others")
     }
+    /// True if a body line starts with `@all`.
     pub fn is_at_all_node(&self, o: &Outline) -> bool {
         crate::node::is_special(self.b(o), "@all")
     }
+    /// True if the headline matches section name `pattern`, as `p.matchHeadline`.
     pub fn match_headline(&self, o: &Outline, pattern: &str) -> bool {
         crate::node::match_headline(self.h(o), pattern)
     }
 
+    /// True if the node is marked.
     pub fn is_marked(&self, o: &Outline) -> bool {
         o.node(self.v).is_marked()
     }
+    /// True if the node has unsaved changes.
     pub fn is_dirty(&self, o: &Outline) -> bool {
         o.node(self.v).is_dirty()
     }
+    /// True if the node's visited bit is set.
     pub fn is_visited(&self, o: &Outline) -> bool {
         o.node(self.v).is_visited()
     }

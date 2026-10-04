@@ -14,12 +14,12 @@ fn main() {
     let mut doc = leolib::Document::open(&path, true).expect("open failed");
     if let Some(headline) = &edit {
         let target = doc
-            .outline
+            .outline()
             .all_positions()
             .into_iter()
-            .find(|p| p.h(&doc.outline) == headline)
+            .find(|p| p.h(doc.outline()) == headline)
             .unwrap_or_else(|| panic!("no node named {headline:?}"));
-        let body = format!("{}# edited by writecheck\n", target.b(&doc.outline));
+        let body = format!("{}# edited by writecheck\n", target.b(doc.outline()));
         doc.set_body(&target, &body);
     }
     let result = doc.write_external_files(true);

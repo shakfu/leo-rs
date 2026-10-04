@@ -4,17 +4,17 @@ use crate::keys;
 fn app() -> App {
     // a / a1 / a2, b, c
     let mut doc = Document::new_empty("");
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "a");
-    let a1 = doc.outline.insert_as_last_child(&root);
+    let a1 = doc.outline_mut_untracked().insert_as_last_child(&root);
     doc.set_headline(&a1, "a1");
-    let a2 = doc.outline.insert_as_last_child(&a1);
+    let a2 = doc.outline_mut_untracked().insert_as_last_child(&a1);
     doc.set_headline(&a2, "a2");
-    let b = doc.outline.insert_after(&root);
+    let b = doc.outline_mut_untracked().insert_after(&root);
     doc.set_headline(&b, "b");
-    let c = doc.outline.insert_after(&b);
+    let c = doc.outline_mut_untracked().insert_after(&b);
     doc.set_headline(&c, "c");
-    doc.undoer.clear();
+    doc.clear_undo();
     App::new(doc)
 }
 
@@ -250,7 +250,7 @@ fn ctrl_c_keeps_a_headline_edit() {
 #[test]
 fn ctrl_c_quits_at_once_with_nothing_unsaved() {
     let mut app = app();
-    app.doc.outline.changed = false;
+    app.doc.outline_mut_untracked().changed = false;
     press(&mut app, "Ctrl-c");
     assert!(app.quit);
 }
@@ -314,7 +314,7 @@ fn quitting_with_an_unwritten_external_file_asks_first_after_a_save() {
     std::fs::create_dir_all(&dir).unwrap();
     let leo = dir.join("u.leo");
     let mut doc = Document::new_empty(leo.to_str().unwrap());
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "@file u.py");
     doc.set_body(&root, "x = 1\n");
     let mut app = App::new(doc);
@@ -336,7 +336,7 @@ fn quitting_with_an_unwritten_external_file_asks_first_after_a_save() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.message.contains("not written"), "{}", app.message);
     // Once written, nothing is lost.
-    app.write_external();
+    app.write_dirty_at_file_nodes();
     press(&mut app, "q");
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(app.quit, "{}", app.message);
@@ -349,13 +349,13 @@ fn good_and_bad(dir: &std::path::Path) -> App {
     std::fs::create_dir_all(dir).unwrap();
     let leo = dir.join("s.leo");
     let mut doc = Document::new_empty(leo.to_str().unwrap());
-    let bad = doc.outline.root_position().unwrap();
+    let bad = doc.outline().root_position().unwrap();
     doc.set_headline(&bad, "@file bad.py");
     doc.set_body(&bad, "x = 1\n");
-    let child = doc.outline.insert_as_last_child(&bad);
+    let child = doc.outline_mut_untracked().insert_as_last_child(&bad);
     doc.set_headline(&child, "orphan");
     doc.set_body(&child, "y = 2\n");
-    let good = doc.outline.insert_after(&bad);
+    let good = doc.outline_mut_untracked().insert_after(&bad);
     doc.set_headline(&good, "@file good.py");
     doc.set_body(&good, "z = 3\n");
     App::new(doc)
@@ -401,7 +401,8 @@ fn save_writes_the_outline_then_every_dirty_file_it_can() {
 fn a_leo_file_that_fails_to_save_holds_back_every_file() {
     let dir = scratch("leofails");
     let mut app = good_and_bad(&dir);
-    app.doc.outline.file_name = dir.join("missing/s.leo").to_string_lossy().to_string();
+    app.doc.outline_mut_untracked().file_name =
+        dir.join("missing/s.leo").to_string_lossy().to_string();
     app.run_command_line("w");
     let wrote = dir.join("good.py").exists();
     std::fs::remove_dir_all(&dir).unwrap();
@@ -461,7 +462,7 @@ fn declining_to_overwrite_the_leo_file_writes_no_file() {
 #[test]
 fn save_and_quit_stays_when_the_save_fails() {
     let mut doc = Document::new_empty("/nonexistent-leotui-dir/x.leo");
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "changed");
     let mut app = App::new(doc);
     app.run_command_line("wq");
@@ -472,7 +473,7 @@ fn save_and_quit_stays_when_the_save_fails() {
 #[test]
 fn promote_can_be_undone_and_quit_sees_it() {
     let mut app = app();
-    app.doc.outline.changed = false;
+    app.doc.outline_mut_untracked().changed = false;
     press(&mut app, "g<");
     assert_eq!(heads(&app), vec!["a", "a1", "b", "c"]);
     press(&mut app, "q");
@@ -490,7 +491,7 @@ fn on_disk(dir: &std::path::Path) -> (App, std::path::PathBuf) {
     std::fs::create_dir_all(dir).unwrap();
     let leo = dir.join("x.leo");
     let mut doc = Document::new_empty(leo.to_str().unwrap());
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "@file x.py");
     doc.set_body(&root, "x = 1\n");
     doc.write_external_files(false);
@@ -513,7 +514,7 @@ fn writing_over_a_file_changed_on_disk_asks_first() {
     std::fs::write(&py, &theirs).unwrap();
     let root = app.current.clone();
     app.doc.set_body(&root, "x = 2\n");
-    app.write_external();
+    app.write_dirty_at_file_nodes();
     assert_eq!(app.mode, Mode::Confirm);
     assert!(
         app.mini_label().contains("changed on disk"),
@@ -523,7 +524,7 @@ fn writing_over_a_file_changed_on_disk_asks_first() {
     type_text(&mut app, "n");
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(std::fs::read_to_string(&py).unwrap(), theirs);
-    app.write_external();
+    app.write_dirty_at_file_nodes();
     type_text(&mut app, "y");
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let written = std::fs::read_to_string(&py).unwrap();
@@ -633,12 +634,12 @@ fn writing_over_an_unread_file_asks_first() {
     let mine = "print('mine')\n";
     std::fs::write(&file, mine).unwrap();
     let mut doc = Document::new_empty("");
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, &format!("@file {}", file.display()));
     doc.set_body(&root, "print('ours')\n");
     let mut app = App::new(doc);
 
-    app.write_external();
+    app.write_dirty_at_file_nodes();
     assert_eq!(app.mode, Mode::Confirm);
     assert!(
         app.mini_label().contains("plain.py"),
@@ -650,7 +651,7 @@ fn writing_over_an_unread_file_asks_first() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
     assert_eq!(app.message, "not overwritten: 1 file");
 
-    app.write_external();
+    app.write_dirty_at_file_nodes();
     type_text(&mut app, "y");
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let written = std::fs::read_to_string(&file).unwrap();
@@ -1042,7 +1043,7 @@ fn substitute_changes_the_body_as_one_undoable_step() {
     let mut app = app();
     let p = app.current.clone();
     app.doc.set_body(&p, "one fish\ntwo fish\n");
-    app.doc.undoer.clear();
+    app.doc.clear_undo();
     // Typed, as a user would: `%` and `/` must reach the line intact.
     press(&mut app, ":");
     type_text(&mut app, "%s/fish/cat/");
@@ -1065,7 +1066,7 @@ fn bufdo_substitutes_in_every_body_as_one_undo_step() {
     let (a, b) = (rows[0].position.clone(), rows[1].position.clone());
     app.doc.set_body(&a, "old one\n");
     app.doc.set_body(&b, "old two old\n");
-    app.doc.undoer.clear();
+    app.doc.clear_undo();
     app.run_command_line("bufdo %s/old/new/g");
     assert_eq!(a.b(app.outline()), "new one\n");
     assert_eq!(b.b(app.outline()), "new two new\n");
@@ -1217,7 +1218,7 @@ fn body_app(text: &str) -> App {
     let mut app = app();
     let p = app.current.clone();
     app.doc.set_body(&p, text);
-    app.doc.undoer.clear();
+    app.doc.clear_undo();
     press(&mut app, "Tab");
     app
 }
@@ -1467,7 +1468,9 @@ fn gd_selects_the_section_the_line_names() {
     press(&mut app, "Alt-Left");
     assert_eq!(app.current, root);
     assert_eq!(app.focus, Focus::Body);
-    press(&mut app, "2j");
+    // The body cursor is where it was when the node was left.
+    assert_eq!(app.editor.cursor.0, 1);
+    press(&mut app, "j");
     press(&mut app, "gd");
     assert_eq!(app.message, "undefined section: << nowhere >>");
 }
@@ -1537,7 +1540,7 @@ fn the_marked_node_commands_run_from_the_command_line() {
     press(&mut app, "Enter");
     // a and c, and their clones: a clone shares its node's mark.
     assert_eq!(app.message, "deleted 4");
-    assert!(app.outline().position_is_linked(&app.current));
+    assert!(app.outline().position_exists(&app.current));
     assert_eq!(heads(&app), vec!["b", "Clones of marked nodes"]);
 }
 
@@ -1604,4 +1607,188 @@ fn cfa_clones_the_matches_and_cff_reuses_the_pattern() {
     type_text(&mut app, "cff");
     press(&mut app, "Enter");
     assert_eq!(app.message, "found 3 for a");
+}
+
+#[test]
+fn reformat_paragraph_wraps_to_the_page_width_and_moves_on() {
+    let mut app = body_app("@pagewidth 14\none two three\nfour five six seven\n\nnext\n");
+    press(&mut app, "j");
+    press(&mut app, ":");
+    type_text(&mut app, "reformat-paragraph");
+    press(&mut app, "Enter");
+    assert_eq!(
+        body(&app),
+        "@pagewidth 14\none two three\nfour five six\nseven\n\nnext\n"
+    );
+    assert_eq!(app.editor.cursor, (5, 0));
+    press(&mut app, "u");
+    assert_eq!(
+        body(&app),
+        "@pagewidth 14\none two three\nfour five six seven\n\nnext\n"
+    );
+}
+
+#[test]
+fn write_at_file_nodes_writes_a_clean_file_and_w_does_not() {
+    let dir = scratch("write-all");
+    let (mut app, py) = on_disk(&dir);
+    std::fs::write(&py, "x = 1\n").unwrap();
+    // Recording the edit as read keeps the changed-on-disk guard out of it.
+    let path = py.to_string_lossy().to_string();
+    app.doc
+        .outline_mut_untracked()
+        .record_file_stamp(&path, leolib::util::file_stamp(&path));
+    app.write_dirty_at_file_nodes();
+    assert_eq!(std::fs::read_to_string(&py).unwrap(), "x = 1\n");
+    app.write_at_file_nodes();
+    let written = std::fs::read_to_string(&py).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(written.contains("@+leo"), "{written}");
+}
+
+#[test]
+fn each_node_keeps_its_body_cursor() {
+    let mut app = body_app("one\ntwo\nthree\n");
+    press(&mut app, "2j");
+    press(&mut app, "l");
+    press(&mut app, "Tab");
+    press(&mut app, "j");
+    assert_eq!(app.editor.cursor, (0, 0));
+    press(&mut app, "k");
+    assert_eq!(app.editor.cursor, (2, 1));
+}
+
+#[test]
+fn messages_lists_what_the_status_line_showed() {
+    let mut app = app();
+    press(&mut app, "Q");
+    assert_eq!(app.message, "no binding for Q");
+    press(&mut app, "j");
+    assert!(app.message.is_empty());
+    app.run_command_line("messages");
+    assert_eq!(app.mode, Mode::Help);
+    let (_, lines) = app.overlay.clone().unwrap();
+    assert_eq!(lines, vec!["no binding for Q"]);
+    press(&mut app, "q");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.overlay.is_none());
+}
+
+#[test]
+fn a_file_the_importer_normalized_is_reported() {
+    use leolib::external::{FileNote, ReadResult};
+    let note = |h: &str| FileNote {
+        headline: h.to_string(),
+        path: String::new(),
+        message: "the text was reformatted by the importer".to_string(),
+    };
+    let one = ReadResult {
+        warnings: vec![note("@auto a.xml")],
+        ..Default::default()
+    };
+    assert_eq!(
+        read_report_message(&one).as_deref(),
+        Some("@auto a.xml: the text was reformatted by the importer")
+    );
+    let two = ReadResult {
+        warnings: vec![note("@auto a.xml"), note("@auto b.xml")],
+        ..Default::default()
+    };
+    assert!(read_report_message(&two).unwrap().contains(":messages"));
+    assert_eq!(read_report_lines(&two).len(), 2);
+}
+
+#[test]
+fn e_keeps_the_theme_the_register_and_the_last_search() {
+    let dir = scratch("e-keeps");
+    let (mut app, _) = on_disk(&dir);
+    app.depth = crate::theme::Depth::Ansi16;
+    press(&mut app, "/");
+    type_text(&mut app, "x");
+    press(&mut app, "Enter");
+    press(&mut app, "Tab");
+    press(&mut app, "yy");
+    let theme = app.theme.name().to_string();
+    app.run_command_line("e!");
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(app.message.starts_with("opened"), "{}", app.message);
+    assert_eq!(app.theme.name(), theme);
+    assert_eq!(app.depth, crate::theme::Depth::Ansi16);
+    assert_eq!(app.last_search.as_ref().unwrap().pattern, "x");
+    press(&mut app, "Tab");
+    press(&mut app, "p");
+    assert_eq!(body(&app), "x = 1\nx = 1\n");
+}
+
+#[test]
+fn a_search_that_finds_nothing_says_so_on_enter() {
+    let mut app = app();
+    press(&mut app, "/");
+    type_text(&mut app, "zzz");
+    press(&mut app, "Enter");
+    assert_eq!(app.message, "not found: zzz");
+}
+
+#[test]
+fn escape_folds_again_what_the_search_preview_unfolded() {
+    let mut app = app();
+    assert_eq!(heads(&app), vec!["a", "b", "c"]);
+    press(&mut app, "/");
+    type_text(&mut app, "a2");
+    assert_eq!(app.current.h(app.outline()), "a2");
+    assert_eq!(heads(&app).len(), 5);
+    press(&mut app, "Escape");
+    assert_eq!(app.current.h(app.outline()), "a");
+    assert_eq!(heads(&app), vec!["a", "b", "c"]);
+}
+
+#[test]
+fn goto_global_line_and_show_file_line_are_each_others_reverse() {
+    let mut app = app();
+    let root = app.current.clone();
+    app.doc.set_headline(&root, "@clean x.py");
+    app.doc.set_body(&root, "import os\n@others\n");
+    let a1 = root.first_child(app.outline()).unwrap();
+    app.doc.set_body(&a1, "def f():\n    return 1\n");
+    app.run_command_line("goto-global-line 3");
+    assert_eq!(app.message, "goto-global-line found: 3");
+    assert_eq!(app.current, a1);
+    assert_eq!(app.focus, Focus::Body);
+    assert_eq!(app.editor.cursor, (1, 0));
+    app.run_command_line("show-file-line");
+    assert_eq!(app.message, "line 3");
+    app.run_command_line("goto-global-line 99");
+    assert_eq!(app.message, "goto-global-line not found: 99");
+}
+
+#[test]
+fn move_marked_nodes_moves_them_and_undoes() {
+    let mut app = app();
+    press(&mut app, "j");
+    press(&mut app, "m");
+    app.run_command_line("move-marked-nodes");
+    assert_eq!(app.message, "moved 1");
+    assert_eq!(app.current.h(app.outline()), "Moved marked nodes");
+    press(&mut app, "u");
+    assert!(heads(&app).iter().all(|h| !h.contains("Moved")));
+}
+
+#[test]
+fn renaming_a_node_to_at_file_keeps_its_shebang_first() {
+    let mut app = app();
+    let root = app.current.clone();
+    app.doc.set_headline(&root, "@auto x.sh");
+    app.doc.set_body(&root, "#!/bin/sh\necho hi\n");
+    app.doc.clear_undo();
+    press(&mut app, "e");
+    for _ in 0.."@auto x.sh".len() {
+        press(&mut app, "Backspace");
+    }
+    type_text(&mut app, "@file x.sh");
+    press(&mut app, "Enter");
+    assert_eq!(app.message, "added @first to 1 line");
+    assert_eq!(body(&app), "@first #!/bin/sh\necho hi\n");
+    press(&mut app, "u");
+    assert_eq!(app.current.h(app.outline()), "@auto x.sh");
+    assert_eq!(body(&app), "#!/bin/sh\necho hi\n");
 }

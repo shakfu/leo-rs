@@ -693,11 +693,11 @@ mod tests {
         let out = highlight(&src, "c");
         assert_eq!(
             classes(&src[0], &out[0]),
-            vec![("int", Class::Type), ("/* one", Class::Comment)]
+            vec![("int", Class::BuiltinType), ("/* one", Class::Comment)]
         );
         assert_eq!(
             classes(&src[1], &out[1]),
-            vec![("two */", Class::Comment), ("int", Class::Type)]
+            vec![("two */", Class::Comment), ("int", Class::BuiltinType)]
         );
     }
 
@@ -718,7 +718,7 @@ mod tests {
             classes(&src[2], &out[2]),
             vec![("// a c comment", Class::Comment)]
         );
-        assert_eq!(classes(&src[3], &out[3])[0], ("int", Class::Type));
+        assert_eq!(classes(&src[3], &out[3])[0], ("int", Class::BuiltinType));
     }
 
     #[test]
@@ -870,7 +870,10 @@ mod tests {
         let out = highlight(&src, "c");
         assert_eq!(
             classes(&src[0], &out[0]),
-            vec![("/* a /* b */", Class::Comment), ("int", Class::Type)]
+            vec![
+                ("/* a /* b */", Class::Comment),
+                ("int", Class::BuiltinType)
+            ]
         );
     }
 
@@ -881,7 +884,7 @@ mod tests {
         let out = highlight(&src, "c");
         assert_eq!(
             classes(&src[0], &out[0]),
-            vec![("/* a \\*/", Class::Comment), ("int", Class::Type)]
+            vec![("/* a \\*/", Class::Comment), ("int", Class::BuiltinType)]
         );
     }
 
@@ -989,6 +992,34 @@ mod tests {
     }
 
     #[test]
+    fn a_builtin_type_is_told_from_a_declared_one() {
+        let class_of = |src: &str, language: &str, word: &str| {
+            let src = lines(src);
+            let out = highlight(&src, language);
+            classes(&src[0], &out[0])
+                .into_iter()
+                .find(|(w, _)| *w == word)
+                .map(|(_, c)| c)
+        };
+        for language in ["c", "cplusplus"] {
+            let src = "unsigned long n; int x; point_t p;";
+            assert_eq!(class_of(src, language, "int"), Some(Class::BuiltinType));
+            assert_eq!(
+                class_of(src, language, "unsigned long"),
+                Some(Class::BuiltinType)
+            );
+            assert_eq!(class_of(src, language, "point_t"), Some(Class::Type));
+        }
+        let src = "var n int; var p Point";
+        assert_eq!(class_of(src, "go", "int"), Some(Class::BuiltinType));
+        assert_eq!(class_of(src, "go", "Point"), Some(Class::Type));
+        let src = "def f(n: int, p: Point) -> str: pass";
+        assert_eq!(class_of(src, "python", "int"), Some(Class::BuiltinType));
+        assert_eq!(class_of(src, "python", "str"), Some(Class::BuiltinType));
+        assert_eq!(class_of(src, "python", "Point"), Some(Class::Type));
+    }
+
+    #[test]
     fn an_attribute_is_told_from_the_code_it_sits_on() {
         let src = lines("#[derive(Debug)]\nstruct P;");
         let out = highlight(&src, "rust");
@@ -1061,7 +1092,7 @@ mod tests {
         let out = highlight(&src, "python");
         assert!(out[1].is_empty(), "{:?}", out[1]);
         assert!(out[3].is_empty(), "{:?}", out[3]);
-        assert_eq!(classes(&src[5], &out[5])[0], ("int", Class::Type));
+        assert_eq!(classes(&src[5], &out[5])[0], ("int", Class::BuiltinType));
     }
 
     #[test]

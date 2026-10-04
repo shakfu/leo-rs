@@ -42,7 +42,7 @@ impl NodeHistory {
         loop {
             let next = self.pointer.checked_add_signed(step)?;
             let p = self.beads.get(next)?.clone();
-            if outline.position_is_linked(&p) {
+            if outline.position_exists(&p) {
                 self.pointer = next;
                 return Some(p);
             }
@@ -62,10 +62,10 @@ mod tests {
     /// Four sibling nodes a, b, c, d.
     fn outline() -> (Document, Vec<Position>) {
         let mut doc = Document::new_empty("");
-        let mut p = doc.outline.root_position().unwrap();
+        let mut p = doc.outline().root_position().unwrap();
         let mut all = vec![p.clone()];
         for _ in 0..3 {
-            p = doc.outline.insert_after(&p);
+            p = doc.outline_mut_untracked().insert_after(&p);
             all.push(p.clone());
         }
         (doc, all)
@@ -78,12 +78,12 @@ mod tests {
         for p in &n[..3] {
             h.update(p);
         }
-        assert_eq!(h.step(&doc.outline, -1), Some(n[1].clone()));
-        assert_eq!(h.step(&doc.outline, -1), Some(n[0].clone()));
-        assert_eq!(h.step(&doc.outline, -1), None);
-        assert_eq!(h.step(&doc.outline, 1), Some(n[1].clone()));
-        assert_eq!(h.step(&doc.outline, 1), Some(n[2].clone()));
-        assert_eq!(h.step(&doc.outline, 1), None);
+        assert_eq!(h.step(doc.outline(), -1), Some(n[1].clone()));
+        assert_eq!(h.step(doc.outline(), -1), Some(n[0].clone()));
+        assert_eq!(h.step(doc.outline(), -1), None);
+        assert_eq!(h.step(doc.outline(), 1), Some(n[1].clone()));
+        assert_eq!(h.step(doc.outline(), 1), Some(n[2].clone()));
+        assert_eq!(h.step(doc.outline(), 1), None);
     }
 
     #[test]
@@ -94,7 +94,7 @@ mod tests {
         for p in &n[..3] {
             h.update(p);
         }
-        h.step(&doc.outline, -1);
+        h.step(doc.outline(), -1);
         h.update(&n[3]);
         assert_eq!(
             h.beads,
@@ -103,7 +103,7 @@ mod tests {
         // Selecting a again moves it rather than adding a second bead.
         h.update(&n[0]);
         assert_eq!(h.beads.len(), 4);
-        assert_eq!(h.step(&doc.outline, -1), Some(n[3].clone()));
+        assert_eq!(h.step(doc.outline(), -1), Some(n[3].clone()));
     }
 
     #[test]
@@ -114,10 +114,10 @@ mod tests {
         for p in &n[..3] {
             h.update(p);
         }
-        h.step(&doc.outline, -1);
+        h.step(doc.outline(), -1);
         h.update(&n[2]);
         assert_eq!(h.beads, vec![n[0].clone(), n[1].clone(), n[2].clone()]);
-        assert_eq!(h.step(&doc.outline, -1), Some(n[1].clone()));
+        assert_eq!(h.step(doc.outline(), -1), Some(n[1].clone()));
     }
 
     #[test]
@@ -128,7 +128,7 @@ mod tests {
             h.update(p);
         }
         doc.delete_node(&n[1]);
-        assert_eq!(h.step(&doc.outline, -1), Some(n[0].clone()));
+        assert_eq!(h.step(doc.outline(), -1), Some(n[0].clone()));
         // b's bead is dropped. c's is stale too, since c moved up, but
         // nothing has stepped onto it yet.
         assert_eq!(h.beads, vec![n[0].clone(), n[2].clone()]);

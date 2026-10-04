@@ -35,6 +35,11 @@ const KNOWN: &[(&str, &str)] = &[
          (leoAtFile.py:4016), so the section reference it reads back reads \\{ imports \\}; \
          this port keeps the delimiters the file spells",
     ),
+    (
+        "cases/auto_rst/auto_rst.leo",
+        "Leo splits reStructuredText at its headings with leo_rst.py; this port has \
+         no rst importer and reports both files unread",
+    ),
 ];
 
 /// External files this port does not tangle to the bytes on disk, and why.
@@ -282,10 +287,11 @@ fn every_importable_file_survives_an_at_auto_round_trip() {
 fn every_importable_file_survives_an_at_file_import() {
     let mut differ = Vec::new();
     let mut split = 0usize;
+    let scratch = tempfile::tempdir().unwrap();
     for path in sources() {
         let leo = format!("{}/x.leo", leolib::util::os_path_dirname(&path));
         let mut doc = leolib::Document::new_empty(&leo);
-        let root = doc.outline.root_position().unwrap();
+        let root = doc.outline().root_position().unwrap();
         let p = match doc.import_at_file(&root, &path) {
             Err(e) => {
                 differ.push(format!("{path}: refused: {e}"));
@@ -294,15 +300,19 @@ fn every_importable_file_survives_an_at_file_import() {
             Ok((_, false)) => continue, // Read by its sentinels.
             Ok((p, true)) => p,
         };
-        let o = &mut doc.outline;
+        let o = doc.outline_mut_untracked();
         if !p.children(o).is_empty() {
             split += 1;
         }
         let text = external::file_contents(o, &p).map(|(t, _, _)| t);
+        // The written text, read back into a second node as any file is read.
+        let copy = scratch.path().join(leolib::util::os_path_basename(&path));
         let q = o.insert_after(&p);
-        let same = text
-            .is_ok_and(|t| leolib::atfile_read::read_into_root(o, &t, &path, &q).is_ok())
-            && tree(o, &p) == tree(o, &q);
+        o.set_headline(&q, &format!("@file {}", copy.display()));
+        let same = text.is_ok_and(|t| {
+            std::fs::write(&copy, t).unwrap();
+            external::read_files(o, vec![q.clone()]).errors.is_empty()
+        }) && tree(o, &p) == tree(o, &q);
         if !same {
             differ.push(format!("{path}: read back differently"));
         }

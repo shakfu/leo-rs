@@ -174,7 +174,7 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 
 `:extract` moves the VISUAL lines, or the cursor's line, into a new first child, as Leo's `extract`: a `<< section >>` first line names the child and stays behind, a definition line names it, or else the first line does.
 
-`:mark-subheads`, `:mark-node-and-parents`, `:unmark-node-and-parents`, `:clone-marked-nodes`, `:copy-marked-nodes` and `:delete-marked-nodes` are Leo's commands of those names. Each is one undo step.
+`:mark-subheads`, `:mark-node-and-parents`, `:unmark-node-and-parents`, `:clone-marked-nodes`, `:copy-marked-nodes`, `:move-marked-nodes` and `:delete-marked-nodes` are Leo's commands of those names. Each is one undo step; Leo cannot undo `move-marked-nodes`.
 
 **Body: a vim buffer**
 
@@ -193,6 +193,8 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 | `p P` | put the text register after, before |
 | `.` | repeat the last change |
 | `gd` | go to the node defining the `<< section >>` on this line |
+
+`:reformat-paragraph` wraps the paragraph at the cursor to `@pagewidth`, as Leo's command of that name, and moves to the next paragraph.
 
 Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 
@@ -214,6 +216,7 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 | `Ctrl-w <` `Ctrl-w >` | narrow, widen the pane that has focus |
 | `Ctrl-Left` `Ctrl-Right` | give the body, the outline more room |
 | `:set syntax` `:set nosyntax` | colour the body, or leave it plain |
+| `Alt-g` | go to line N of the external file (`:goto-global-line N`) |
 | `F1` | help |
 | `q` | quit |
 
@@ -223,17 +226,23 @@ Every Leo command name, with Tab completion and Up/Down history, plus the vim sp
 
 `Ctrl-s` and `:w` write the `.leo` file, then every dirty external file, as Leo's `save` does. A file that cannot be written, such as one with an orphan node, does not stop the others. It stays dirty, and the next save tries it again. If the `.leo` file is not saved, no external file is written. `:write-outline-only` writes the `.leo` file alone, and `w` the external files alone.
 
+`:write-at-file-nodes` writes every `@<file>` node at or under the selection, dirty or not, as Leo's command of that name; `w` is `:write-dirty-at-file-nodes`.
+
 `:w path` writes a copy and keeps editing this outline. `:saveas path` moves the outline there, which also moves where relative `@file` paths are written. Both refuse an existing file until given `!`.
 
-`q`, `:q` and `:e` ask or refuse while anything is unsaved, including an `@file` tree a save could not write. `:e!` opens the `.leo` file again, discarding every change.
+`q`, `:q` and `:e` ask or refuse while anything is unsaved, including an `@file` tree a save could not write. `:e!` opens the `.leo` file again, discarding every change. A path with no file there, given to `:e` or on the command line, starts a new outline that the first save creates.
 
-`:refresh-from-disk` reads the `@<file>` node at or above the selection from disk again; `:read-at-file-nodes` reads every one at or under it. Both ask before discarding unwritten edits, and both clear the undo history, as in Leo. When the terminal regains focus, the status line names any external file changed on disk, and a write asks before overwriting it.
+`:refresh-from-disk` reads the `@<file>` node at or above the selection from disk again; `:read-at-file-nodes` reads every one at or under it. `:read-at-file-nodes` skips an `@clean` file unchanged since it was last read or written; `:refresh-from-disk` reads it anyway. Both ask before discarding unwritten edits, and both clear the undo history, as in Leo. When the terminal regains focus, the status line names any external file changed on disk, and a write asks before overwriting it.
 
-`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
+`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
 
 `/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
 
 `:import-at-file path` imports a file as an `@file` tree, and asks before writing sentinels into it.
+
+`:goto-global-line N` selects the node that writes line N of the selection's `@file`, `@clean`, `@edit` or `@asis` file, with the cursor on that line. `:show-file-line` is the reverse, for the cursor's line.
+
+`:messages` lists the status messages shown so far, including every external file a read reported.
 
 `:[range]s/pattern/replacement/[flags]` substitutes in the current node's body, as one undo step. The pattern is a Rust `regex`, with smartcase as in `/`; an empty pattern reuses the last search. The replacement takes `&`, `\1`-`\9` and `\r`. Ranges are `%`, `.`, `$`, `N` and `N,M`; flags are `g`, `i`, `I` and `n`. `:bufdo %s/pattern/replacement/[flags]` does the same in every node's body, as one undo step.
 
@@ -260,7 +269,9 @@ Colours come from a Helix theme, read from `~/.config/leotui/themes` or `~/.conf
 
 `:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. Enter saves the choice to `~/.config/leotui/config.toml`, rewriting only its `theme` line, and the next launch starts there. `--theme NAME` picks a theme for one launch without saving it.
 
-Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess.
+Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess. A non-empty `NO_COLOR` turns colour off, as `:set colors=none` does; the selected row and the status line are then shown reversed.
+
+The outline's selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window` scopes, so a light theme draws them for a light background.
 
 Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
@@ -278,11 +289,13 @@ The file is regenerated from the tree alone, so an importer that dropped a line 
 
 Two things an import can change even when it succeeds, both as in Leo: leading tabs become blanks to match `@tabwidth`, and an XML or HTML file gets adjacent tags split onto separate lines. `ReadResult::warnings` names the files it happened to, because the next write changes them on disk.
 
-`@auto-rst` is not ported: its reader and writer are a separate mechanism in Leo, not an importer.
+An extension with no importer is read whole into the node's body, as in Leo. `@auto-rst`, and `@auto` on `.rst`, are not ported: Leo reads them with an importer this port lacks and writes them with a separate mechanism, so they are reported unread.
 
 ## What else is not ported
 
 - **`@shadow`.** Deprecated in Leo.
+
+- **`@jupytext`.** Leo converts the notebook with the jupytext package. Such a node is refused on read and write.
 
 - **Unknown attributes are opaque.** Leo pickles them. They round-trip as the hex strings the file spells, and are written back unchanged.
 

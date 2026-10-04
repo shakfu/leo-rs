@@ -17,24 +17,24 @@ Commands, by area:
 
 | area | Leo commands | same name | equivalent | not implemented |
 |-|-|-|-|-|
-| Outline | 124 | 59 | 3 | 62 |
-| Files | 75 | 8 | 6 | 61 |
+| Outline | 124 | 60 | 3 | 61 |
+| Files | 75 | 11 | 5 | 59 |
 | Find | 44 | 6 | 7 | 31 |
-| Body editing | 200 | 2 | 93 | 105 |
+| Body editing | 200 | 3 | 93 | 104 |
 | Help, keys and settings | 57 | 2 | 4 | 51 |
 | Scripting and external tools | 88 | 0 | 1 | 87 |
 | The application and its GUI | 65 | 3 | 11 | 51 |
-| total | 653 | 80 | 125 | 448 |
+| total | 653 | 85 | 124 | 444 |
 
 Directives and node kinds are not commands, and are counted apart. A body directive is an `@word` line in a body; a node kind is an `@word` headline Leo gives meaning to.
 
 | kind | in Leo | full | partly | recognised only | no behaviour in Leo |
 |-|-|-|-|-|-|
-| body directives (`globalDirectiveList`) | 36 | 20 | 3 | 6 | 7 |
+| body directives (`globalDirectiveList`) | 36 | 21 | 2 | 6 | 7 |
 
 | kind | in Leo | as in Leo | partly | not |
 |-|-|-|-|-|
-| `@<file>` kinds | 19 | 16 | 1 (`@jupytext`) | 2 (`@auto-rst`, `@shadow`) |
+| `@<file>` kinds | 19 | 16 | 0 | 3 (`@auto-rst`, `@jupytext`, `@shadow`) |
 | other headline kinds | 10 | 0 | 0 | 10 |
 
 leolib recognises every body directive Leo does, so a sentinel file writes each as a directive and never as text. "Full" means the directive also has its effect. Scripting, plugins and the settings tree are covered under the last section.
@@ -43,9 +43,9 @@ leolib recognises every body directive Leo does, so a sentinel file writes each 
 
 Tree structure, navigation, folding, marks, clones, and node data.
 
-124 commands, in `commanderOutlineCommands.py`, `editCommands.py`, `leoUndo.py`. 59 by the same name, 3 by an equivalent, 62 not at all.
+124 commands, in `commanderOutlineCommands.py`, `editCommands.py`, `leoUndo.py`. 60 by the same name, 3 by an equivalent, 61 not at all.
 
-Same name: `redo`, `undo`, `copy-node`, `cut-node`, `paste-node`, `contract-all`, `contract-all-other-nodes`, `contract-node`, `contract-or-go-left`, `expand-all`, `expand-to-level-1`, `expand-to-level-2`, `expand-to-level-3`, `expand-to-level-4`, `expand-to-level-5`, `expand-to-level-6`, `expand-to-level-7`, `expand-to-level-8`, `expand-to-level-9`, `expand-next-level`, `expand-node`, `expand-and-go-right`, `expand-prev-level`, `go-forward`, `go-back`, `goto-first-visible-node`, `goto-last-visible-node`, `goto-next-clone`, `goto-next-marked`, `goto-next-sibling`, `goto-parent`, `goto-prev-marked`, `goto-prev-sibling`, `goto-prev-visible`, `goto-next-visible`, `dehoist`, `clear-all-hoists`, `hoist`, `clone-node`, `delete-node`, `insert-child`, `insert-node`, `insert-node-before`, `clone-marked-nodes`, `copy-marked-nodes`, `delete-marked-nodes`, `mark`, `mark-subheads`, `unmark-all`, `demote`, `move-outline-down`, `move-outline-left`, `move-outline-right`, `move-outline-up`, `promote`, `sort-children`, `sort-siblings`, `mark-node-and-parents`, `unmark-node-and-parents`.
+Same name: `redo`, `undo`, `copy-node`, `cut-node`, `paste-node`, `contract-all`, `contract-all-other-nodes`, `contract-node`, `contract-or-go-left`, `expand-all`, `expand-to-level-1`, `expand-to-level-2`, `expand-to-level-3`, `expand-to-level-4`, `expand-to-level-5`, `expand-to-level-6`, `expand-to-level-7`, `expand-to-level-8`, `expand-to-level-9`, `expand-next-level`, `expand-node`, `expand-and-go-right`, `expand-prev-level`, `go-forward`, `go-back`, `goto-first-visible-node`, `goto-last-visible-node`, `goto-next-clone`, `goto-next-marked`, `goto-next-sibling`, `goto-parent`, `goto-prev-marked`, `goto-prev-sibling`, `goto-prev-visible`, `goto-next-visible`, `dehoist`, `clear-all-hoists`, `hoist`, `clone-node`, `delete-node`, `insert-child`, `insert-node`, `insert-node-before`, `clone-marked-nodes`, `copy-marked-nodes`, `delete-marked-nodes`, `mark`, `mark-subheads`, `unmark-all`, `demote`, `move-outline-down`, `move-outline-left`, `move-outline-right`, `move-outline-up`, `promote`, `sort-children`, `sort-siblings`, `mark-node-and-parents`, `unmark-node-and-parents`, `move-marked-nodes`.
 
 | command | Leo's summary | leotui |
 |-|-|-|
@@ -71,7 +71,6 @@ Same name: `redo`, `undo`, `copy-node`, `cut-node`, `paste-node`, `contract-all`
 | `clone-node-to-last-node` | Clone the selected node and move it to the last node. |  |
 | `insert-as-first-child` | Insert a node as the first child of the previous node. |  |
 | `insert-as-last-child` | Insert a node as the last child of the previous node. |  |
-| `move-marked-nodes` | Move all marked nodes as children of a new node. |  |
 | `mark-changed-items` / `mark-changed-nodes` | Mark all nodes that have been changed. |  |
 | `move-outline-to-first-child` | Move the selected node so that it is the first child of its parent. |  |
 | `move-outline-to-last-child` | Move the selected node so that it is the last child of its parent. |  |
@@ -119,9 +118,9 @@ Same name: `redo`, `undo`, `copy-node`, `cut-node`, `paste-node`, `contract-all`
 
 Reading and writing `.leo` and external files, imports, exports, and the file-line mapping.
 
-75 commands, in `commanderFileCommands.py`, `editCommands.py`, `editFileCommands.py`, `gotoCommands.py`, `leoAtFile.py`, `leoFileCommands.py`, `leoImport.py`. 8 by the same name, 6 by an equivalent, 61 not at all.
+75 commands, in `commanderFileCommands.py`, `editCommands.py`, `editFileCommands.py`, `gotoCommands.py`, `leoAtFile.py`, `leoFileCommands.py`, `leoImport.py`. 11 by the same name, 5 by an equivalent, 59 not at all.
 
-Same name: `write-at-file-nodes`, `write-outline-only`, `refresh-from-disk`, `save`, `save-as`, `save-to`, `revert`, `read-at-file-nodes`.
+Same name: `write-at-file-nodes`, `write-dirty-at-file-nodes`, `write-outline-only`, `refresh-from-disk`, `save`, `save-as`, `save-to`, `revert`, `read-at-file-nodes`, `goto-global-line`, `show-file-line`.
 
 | command | Leo's summary | leotui |
 |-|-|-|
@@ -133,7 +132,6 @@ Same name: `write-at-file-nodes`, `write-outline-only`, `refresh-from-disk`, `sa
 | `write-dirty-at-shadow-nodes` | Write all dirty @shadow nodes in the selected outline. |  |
 | `dump-clone-parents` | Print the parent vnodes of all cloned vnodes. |  |
 | `dump-gnx-dict` | Dump c.fileCommands.gnxDict. |  |
-| `write-dirty-at-file-nodes` | Write all changed @file Nodes. | `w`, under the name `write-at-file-nodes` (`TODO.md`) |
 | `write-missing-at-file-nodes` | Write all @file nodes for which the corresponding external file does not exist. |  |
 | `write-zip-archive` | Write a .zip file containing this .leo file and all external files. |  |
 | `import-free-mind-files` | Prompt for free-mind files and import them. |  |
@@ -176,7 +174,6 @@ Same name: `write-at-file-nodes`, `write-outline-only`, `refresh-from-disk`, `sa
 | `sort-recent-files` | Sort the recent files list. |  |
 | `write-edited-recent-files` | Write the edited recent-files node back as the recent-files list. |  |
 | `open-theme-file` | Open a theme file in a new session and apply the theme. |  |
-| `goto-global-line` | Select the node and body line that an external file's line came from. |  |
 | `convert-at-root` | Convert @root to @clean throughout the outline. |  |
 | `clean-at-clean-files` | Adjust whitespace in all @clean files. |  |
 | `clean-at-clean-tree` | Clean whitespace in the nearest @clean tree. |  |
@@ -191,7 +188,6 @@ Same name: `write-at-file-nodes`, `write-outline-only`, `refresh-from-disk`, `sa
 | `directory-remove` | Prompt for the name of a directory and delete it. |  |
 | `file-save-by-name` / `save-file-by-name` | Prompt for the name of a file and put the body text of the selected node into it. |  |
 | `toggle-at-auto-at-edit` | Toggle between @auto and @edit, preserving insert point, etc. |  |
-| `show-file-line` | Show the external file line of the body line at the cursor. |  |
 
 ## Find
 
@@ -246,9 +242,9 @@ Same name: `find-next`, `find-prev`, `clone-find-all`, `clone-find-all-flattened
 
 Text editing in the body. Leo's are Emacs-style commands; leotui's body is a vim grammar, so a command is covered by keys rather than by a name. The table gives those keys; the commands after it have no leotui equivalent.
 
-200 commands, in `abbrevCommands.py`, `commanderEditCommands.py`, `editCommands.py`, `killBufferCommands.py`, `rectangleCommands.py`, `spellCommands.py`. 2 by the same name, 93 by an equivalent, 105 not at all.
+200 commands, in `abbrevCommands.py`, `commanderEditCommands.py`, `editCommands.py`, `killBufferCommands.py`, `rectangleCommands.py`, `spellCommands.py`. 3 by the same name, 93 by an equivalent, 104 not at all.
 
-Same name: `edit-headline`, `extract`.
+Same name: `edit-headline`, `extract`, `reformat-paragraph`.
 
 | command | Leo's summary | leotui |
 |-|-|-|
@@ -346,7 +342,7 @@ Same name: `edit-headline`, `extract`.
 | `yank` | Insert the next entry of the kill ring. | `p` |
 | `zap-to-character` | Kill characters from the insertion point to a given character. | `dt`, `df` |
 
-Not implemented: `dabbrev-completion`, `dabbrev-expands`, `abbrev-kill-all`, `abbrev-list`, `toggle-abbrev-mode`, `add-comments`, `convert-all-blanks`, `convert-all-tabs`, `convert-blanks`, `convert-tabs`, `delete-comments`, `extract-names`, `insert-body-time`, `justify-toggle-auto`, `line-to-headline`, `settings`, `reformat-body`, `reformat-paragraph`, `reformat-selection`, `hide-invisibles`, `show-invisibles`, `toggle-invisibles`, `toggle-angle-brackets`, `unformat-paragraph`, `insert-jupyter-toc`, `insert-markdown-toc`, `delete-trace-statements`, `next-or-end-of-line`, `next-or-end-of-line-extend-selection`, `previous-or-beginning-of-line`, `previous-or-beginning-of-line-extend-selection`, `select-next-trace-statement`, `insert-file-name`, `tabify`, `untabify`, `capitalize-word`, `capitalize-words-or-selection`, `set-comment-column`, `indent-to-comment-column`, `center-line`, `set-fill-column`, `center-region`, `set-fill-prefix`, `find-word`, `find-word-in-line`, `goto-char`, `delete-indentation`, `indent-relative`, `line-number`, `view-lossage`, `view-recent-commands`, `what-line`, `add-space-to-lines`, `remove-space-from-lines`, `clean-all-lines`, `clean-lines`, `delete-spaces`, `insert-hard-tab`, `newline-and-indent`, `insert-parentheses`, `insert-soft-tab`, `remove-blank-lines`, `split-line`, `extend-to-sentence`, `pop-cursor`, `push-cursor`, `back-sentence`, `back-sentence-extend-selection`, `forward-sentence`, `forward-sentence-extend-selection`, `fill-region`, `fill-region-as-paragraph`, `fill-paragraph`, `count-region`, `move-lines-down`, `move-lines-up`, `reverse-region`, `scroll-down-line`, `scroll-up-line`, `sort-columns`, `reverse-sort-lines-ignoring-case`, `reverse-sort-lines`, `sort-lines-ignoring-case`, `sort-lines`, `transpose-words`, `backward-kill-sentence`, `clear-kill-ring`, `kill-sentence`, `kill-ws`, `yank-pop`, `rectangle-clear`, `rectangle-close`, `rectangle-delete`, `rectangle-kill`, `rectangle-open`, `rectangle-string`, `rectangle-yank`, `show-spell-info`, `clean-main-spell-dict`, `clean-user-spell-dict`, `spell-tab-open`, `spell-as-you-type-toggle`, `spell-as-you-type-wrap`, `spell-as-you-type-next`, `spell-as-you-type-undo`.
+Not implemented: `dabbrev-completion`, `dabbrev-expands`, `abbrev-kill-all`, `abbrev-list`, `toggle-abbrev-mode`, `add-comments`, `convert-all-blanks`, `convert-all-tabs`, `convert-blanks`, `convert-tabs`, `delete-comments`, `extract-names`, `insert-body-time`, `justify-toggle-auto`, `line-to-headline`, `settings`, `reformat-body`, `reformat-selection`, `hide-invisibles`, `show-invisibles`, `toggle-invisibles`, `toggle-angle-brackets`, `unformat-paragraph`, `insert-jupyter-toc`, `insert-markdown-toc`, `delete-trace-statements`, `next-or-end-of-line`, `next-or-end-of-line-extend-selection`, `previous-or-beginning-of-line`, `previous-or-beginning-of-line-extend-selection`, `select-next-trace-statement`, `insert-file-name`, `tabify`, `untabify`, `capitalize-word`, `capitalize-words-or-selection`, `set-comment-column`, `indent-to-comment-column`, `center-line`, `set-fill-column`, `center-region`, `set-fill-prefix`, `find-word`, `find-word-in-line`, `goto-char`, `delete-indentation`, `indent-relative`, `line-number`, `view-lossage`, `view-recent-commands`, `what-line`, `add-space-to-lines`, `remove-space-from-lines`, `clean-all-lines`, `clean-lines`, `delete-spaces`, `insert-hard-tab`, `newline-and-indent`, `insert-parentheses`, `insert-soft-tab`, `remove-blank-lines`, `split-line`, `extend-to-sentence`, `pop-cursor`, `push-cursor`, `back-sentence`, `back-sentence-extend-selection`, `forward-sentence`, `forward-sentence-extend-selection`, `fill-region`, `fill-region-as-paragraph`, `fill-paragraph`, `count-region`, `move-lines-down`, `move-lines-up`, `reverse-region`, `scroll-down-line`, `scroll-up-line`, `sort-columns`, `reverse-sort-lines-ignoring-case`, `reverse-sort-lines`, `sort-lines-ignoring-case`, `sort-lines`, `transpose-words`, `backward-kill-sentence`, `clear-kill-ring`, `kill-sentence`, `kill-ws`, `yank-pop`, `rectangle-clear`, `rectangle-close`, `rectangle-delete`, `rectangle-kill`, `rectangle-open`, `rectangle-string`, `rectangle-yank`, `show-spell-info`, `clean-main-spell-dict`, `clean-user-spell-dict`, `spell-tab-open`, `spell-as-you-type-toggle`, `spell-as-you-type-wrap`, `spell-as-you-type-next`, `spell-as-you-type-undo`.
 
 ## Help, keys and settings
 
@@ -428,9 +424,9 @@ The 36 names in Leo's `globalDirectiveList`, set against `GLOBAL_DIRECTIVES` in 
 | `@killcolor` | Do not colour this node at all. | Full, by the highlighter. |
 | `@noheader` | A markdown node written with no heading line. | Full, by the `@auto-md` importer and writer. |
 | `@encoding` | The external file's encoding. | Partly. utf-8 and ascii only; another is refused (`porting-notes.md`). |
-| `@pagewidth` | Width to reflow a doc part to. | Partly. Scanned, never used (`TODO.md`). |
+| `@pagewidth` | Width `reformat-paragraph` and the fill commands wrap to. | Full. `reformat-paragraph` reads it. |
 | `@nosearch` | Leave the tree out of find commands. | Partly. `clone-find-all` skips it; `/` does not. |
-| `@wrap` | Wrap long body lines. | Recognised only. No effect. `:set wrap` does not wrap either (`TODO.md`). |
+| `@wrap` | Wrap long body lines. | Recognised only. No effect; `:set wrap` wraps. |
 | `@nowrap` | Do not wrap long body lines. | Recognised only. No effect. |
 | `@beautify` | Allow the beautify commands on the tree. | Recognised only. No beautify command. |
 | `@nobeautify` | Keep the beautify commands off the tree. | Recognised only. No beautify command. |
@@ -454,13 +450,13 @@ Leo's `atFileNames` and `atAutoNames`, and the `@auto-<name>` spellings its impo
 |-|-|-|
 | `@file`, `@thin`, `@file-thin` | Sentinel file; the file holds the tree. | Read and written. |
 | `@clean` | No sentinels; the tree is merged back on read. | Read and written. |
-| `@auto` | Imported on read, written without sentinels. | Read and written where an importer exists; other extensions are unread (`TODO.md`). |
-| `@auto-md`, `@auto-markdown`, `@auto-org`, `@auto-org-mode`, `@auto-otl`, `@auto-vim-outline` | `@auto` with a named importer. | Read and written. No corpus case for `@auto-otl` or `@auto-vim-outline` (`TODO.md`). |
+| `@auto` | Imported on read, written without sentinels. | Read and written where an importer exists; another extension is read whole into the body, as in Leo. |
+| `@auto-md`, `@auto-markdown`, `@auto-org`, `@auto-org-mode`, `@auto-otl`, `@auto-vim-outline` | `@auto` with a named importer. | Read and written. |
 | `@auto-rst` | `@auto` with the reStructuredText importer. | Recognised; no importer, so unread. |
 | `@edit` | The whole file in one body. | Read and written. |
 | `@asis`, `@file-asis` | Written verbatim; never read. | Written. |
 | `@nosent`, `@file-nosent` | Written without sentinels; never read. | Written. |
-| `@jupytext` | A notebook, through jupytext. | Read and written as a sentinel `@file` (`TODO.md`). |
+| `@jupytext` | A notebook, through jupytext. | Refused on read and write. |
 | `@shadow` | Deprecated. | Not ported (`porting-notes.md`). |
 
 ### Other headline kinds
@@ -482,7 +478,6 @@ Headlines Leo acts on that name no file. None is ported; each depends on a featu
 
 ## Same name, different behaviour
 
-- `write-at-file-nodes` (`w`) writes only dirty files. Leo's writes every `@<file>` node under the selection; dirty-only is `write-dirty-at-file-nodes`. In `TODO.md`.
 - `search-forward` and `search-backward` open `/` and `?`, which take a regex. Leo's search plain text, with the Find tab's options.
 - `find-next` and `find-prev` repeat the last `/` or `?`. Leo's use the Find tab's pattern and options.
 - `help` opens the key bindings. Leo's opens a help text.

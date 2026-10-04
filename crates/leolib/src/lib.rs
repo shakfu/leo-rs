@@ -11,13 +11,19 @@
 //! }
 //! ```
 
+#![warn(missing_docs)]
+
 pub(crate) mod atclean;
-pub mod atfile_read;
+pub(crate) mod atfile_read;
 pub(crate) mod atfile_write;
 pub mod document;
 pub mod error;
 pub mod external;
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzz;
 pub mod gnx;
+pub mod goto;
 pub mod importers;
 pub mod langdata;
 pub mod leofile;
@@ -25,6 +31,7 @@ pub mod node;
 pub mod outline;
 pub(crate) mod pickle;
 pub mod position;
+pub mod reformat;
 pub(crate) mod seqmatch;
 pub mod state;
 pub mod undo;
@@ -94,6 +101,7 @@ pub fn save(o: &mut Outline, path: &str) -> Result<String> {
 /// What [`save_all`] did: the `.leo` file, then each changed external file.
 #[derive(Debug)]
 pub struct SaveResult {
+    /// The `.leo` path written, or why the write failed.
     pub leo: Result<String>,
     /// Empty when the `.leo` write failed, as no file was attempted.
     pub files: external::WriteResult,

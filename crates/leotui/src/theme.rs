@@ -26,6 +26,7 @@ pub enum Colour {
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct Face {
     pub fg: Option<Colour>,
+    pub bg: Option<Colour>,
     pub bold: bool,
     pub italic: bool,
 }
@@ -33,6 +34,8 @@ pub struct Face {
 /// How many colours the terminal can show.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Depth {
+    /// No colour at all, as `NO_COLOR` asks: <https://no-color.org>.
+    None,
     Ansi16,
     Indexed,
     True,
@@ -44,6 +47,9 @@ impl Depth {
     /// There is no query for this: `COLORTERM` is the convention truecolor
     /// terminals set, and `TERM` carries the rest.
     pub fn detect() -> Depth {
+        if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+            return Depth::None;
+        }
         let colorterm = std::env::var("COLORTERM").unwrap_or_default();
         if colorterm.contains("truecolor") || colorterm.contains("24bit") {
             return Depth::True;
@@ -64,6 +70,7 @@ impl Depth {
             "true" | "truecolor" | "24bit" => Some(Depth::True),
             "256" | "indexed" => Some(Depth::Indexed),
             "16" | "ansi" => Some(Depth::Ansi16),
+            "none" | "0" => Some(Depth::None),
             _ => None,
         }
     }
@@ -79,7 +86,7 @@ impl Colour {
             return self;
         };
         match depth {
-            Depth::True => self,
+            Depth::True | Depth::None => self,
             Depth::Indexed => Colour::Ansi(nearest(r, g, b, &LAB_INDEXED, 16)),
             Depth::Ansi16 => Colour::Ansi(nearest(r, g, b, &LAB_16, 0)),
         }
@@ -217,7 +224,7 @@ impl Theme {
             fg: Some(Colour::Ansi(n)),
             ..Face::default()
         };
-        let scopes = [
+        let scopes = ui_scopes().into_iter().chain([
             ("keyword", fg(3)),
             ("string", fg(2)),
             ("comment", fg(8)),
@@ -233,16 +240,13 @@ impl Theme {
                 Face {
                     fg: Some(Colour::Ansi(5)),
                     bold: true,
-                    italic: false,
+                    ..Face::default()
                 },
             ),
-        ];
+        ]);
         Theme {
             name: "builtin".to_string(),
-            scopes: scopes
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
+            scopes: scopes.map(|(k, v)| (k.to_string(), v)).collect(),
         }
     }
 
@@ -252,7 +256,12 @@ impl Theme {
     /// understands loads as an empty theme rather than failing: a theme is
     /// decoration, and refusing to start over one helps nobody.
     pub fn load(name: &str) -> Option<Theme> {
-        let mut scopes = HashMap::new();
+        // The panes' own scopes start as the builtin's, so a theme that
+        // leaves one out still marks the selected row.
+        let mut scopes: HashMap<String, Face> = ui_scopes()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
         let mut seen: Vec<String> = Vec::new();
         let mut next = Some(name.to_string());
         // Parents first, so a child's entries overlay them. Depth is capped
@@ -276,6 +285,26 @@ impl Theme {
             scopes,
         })
     }
+}
+
+/// The Helix scopes the panes are drawn with, in the terminal's own colours.
+fn ui_scopes() -> Vec<(&'static str, Face)> {
+    let face = |fg: u8, bg: Option<u8>, bold: bool| Face {
+        fg: Some(Colour::Ansi(fg)),
+        bg: bg.map(Colour::Ansi),
+        bold,
+        italic: false,
+    };
+    vec![
+        // The selected row of the focused outline, and of the other.
+        ("ui.menu.selected", face(15, Some(4), true)),
+        ("ui.selection", face(15, Some(8), true)),
+        ("warning", face(3, None, false)),
+        ("ui.text.directory", face(2, None, false)),
+        ("ui.text.focus", face(6, None, false)),
+        ("ui.window", face(8, None, false)),
+        ("ui.linenr", face(8, None, false)),
+    ]
 }
 
 /// Every theme name the directories hold, sorted, without duplicates.
@@ -424,11 +453,11 @@ fn face(value: &str, palette: &HashMap<String, Colour>) -> Option<Face> {
         };
         match unquote(key.trim()) {
             "fg" => out.fg = colour(unquote(val.trim()), palette),
+            "bg" => out.bg = colour(unquote(val.trim()), palette),
             "modifiers" => {
                 out.bold = val.contains("bold");
                 out.italic = val.contains("italic");
             }
-            // `bg` and `underline` are the pane's business, not a run of text's.
             _ => {}
         }
     }
@@ -542,6 +571,20 @@ grey0 = "#7f8490"   # a trailing comment
     }
 
     #[test]
+    fn a_background_is_read() {
+        let t = theme(SAMPLE);
+        assert_eq!(t.face("ui.background").bg, Some(Colour::Ansi(0)));
+        assert_eq!(t.face("ui.background").fg, None);
+    }
+
+    #[test]
+    fn the_builtin_marks_the_selected_row_with_a_background() {
+        let t = Theme::builtin();
+        assert!(t.face("ui.menu.selected").bg.is_some());
+        assert!(t.face("ui.selection").bg.is_some());
+    }
+
+    #[test]
     fn a_hash_opens_a_colour_as_often_as_a_comment() {
         // `#00ff00` must survive, and the comment after a palette entry must not.
         let t = theme(SAMPLE);
@@ -619,6 +662,7 @@ grey0 = "#7f8490"   # a trailing comment
         assert_eq!(Depth::parse("true"), Some(Depth::True));
         assert_eq!(Depth::parse("256"), Some(Depth::Indexed));
         assert_eq!(Depth::parse("16"), Some(Depth::Ansi16));
+        assert_eq!(Depth::parse("none"), Some(Depth::None));
         assert_eq!(Depth::parse("lots"), None);
     }
 

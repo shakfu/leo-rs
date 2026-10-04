@@ -3,7 +3,9 @@ name = "leolib"
 description = "Leo's outline model and external-file machinery. No view, ever."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# Lower than leotui's, so a tool built on the library alone is not held to the
+# TUI's dependencies. 1.89 is the oldest toolchain it was checked with.
+rust-version = "1.89"
 license.workspace = true
 repository.workspace = true
 readme.workspace = true
@@ -13,6 +15,15 @@ regex = "1"
 quick-xml = "0.42"
 once_cell = "1"
 
+[features]
+# Exposes `leolib::fuzz`, the entry points the targets in `fuzz/` call.
+fuzzing = []
+
 [dev-dependencies]
 serde_json = "1"
 tempfile = "3"
+criterion = { version = "0.8", default-features = false }
+
+[[bench]]
+name = "load"
+harness = false

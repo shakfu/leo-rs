@@ -1,0 +1,42 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto-rst a.txt",
+   "b": "@language rest\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "Title",
+   "b": "\nText.\n\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "Section",
+   "b": "\nMore.\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@auto b.rst",
+   "b": "@language rest\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "Title",
+   "b": "\nText.\n\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "Section",
+   "b": "\nMore.\n"
+  }
+ ]
+}

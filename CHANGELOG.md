@@ -4,6 +4,67 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## Unreleased
 
+## [0.6.0]
+
+### Added
+
+- **`goto-global-line` on `Alt-g`, and `show-file-line`.** `:goto-global-line N` selects the node that writes line N of the selection's `@file`, `@clean`, `@edit` or single `@asis` file, with the cursor on that line; `show-file-line` gives the line for the cursor. Both read one map in `leolib::goto`. Leo's `show-file-line` adds the row to the node's first line, which is wrong after an `@others` or a section reference; the map is not. Leo also counts an `@verbatim` sentinel as a body row, which puts later rows of that node off by one; here it counts as none.
+
+- **`move-marked-nodes`, from `:`.** As Leo's, but one undo step; Leo's cannot be undone. `leolib::Document::move_marked`.
+
+- **`reformat-paragraph`, from `:`.** Leo's command: the paragraph at the cursor is wrapped to `@pagewidth`, with hanging indents for list items, and the cursor moves to the next paragraph. `@pagewidth` had no reader before. `leolib::reformat` ports it with `util.wrap_lines`, and its tests are Leo's output on the same input.
+
+- **`write-at-file-nodes` writes every `@<file>` node at or under the selection, dirty or not**, as Leo's does. `w` keeps writing the dirty files, under Leo's name for that, `write-dirty-at-file-nodes`.
+
+- **`:messages`** lists every status message shown, up to 200. A read's warnings, such as an `@auto` file the importer reformatted, reach the status line and the log; they were never shown.
+
+- **`leotui new.leo` starts an outline that the first save creates**, as vim does, where it failed with "not found". `:e` does the same.
+
+- **A body cursor per node.** Leaving a node and coming back puts the cursor and scroll where they were, as Leo's `v.insertSpot`; they returned to the top.
+
+- **`NO_COLOR` and theme colours for the outline.** The selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window`, so a light theme suits a light background. A theme without them keeps the old colours. A non-empty `NO_COLOR`, or `:set colors=none`, draws no colour, and shows the selected row and status line reversed.
+
+- **`@type.builtin` for C, C++, Go and Python.** `int` and `unsigned long` in C, Go's 22 predeclared types, and builtin types in a Python annotation now draw as builtins, as Rust's `u8` did. JavaScript has no type syntax to mark.
+
+- **A rename to `@file` adds `@first` to a leading `#!` or coding line**, in the same undo step, as `:import-at-file` does. The sentinel header pushed them to line 3.
+
+- **`make bench`**: criterion times for opening and saving `LeoPyRef.leo`, and with `LEO_EDITOR` set, for leo-editor's outline with its external files. **`fuzz/`**: `cargo-fuzz` targets for the sentinel reader and the pickle reader. **`SECURITY.md`** and **`CONTRIBUTING.md`**.
+
+### Changed
+
+- **An `@auto` file with no importer is read whole into the body**, as Leo's `scanUnknownFileType`: after `@language` for a known extension, `@nocolor` for `.txt`, nothing otherwise. It was reported unread. A file whose whole body would not write back unchanged, one holding an `@others` line say, is still reported and left unread. `.rst` stays unread, since Leo splits it with an importer this port lacks.
+
+- **`@auto-md`, `@auto-markdown`, `@auto-org`, `@auto-org-mode`, `@auto-otl` and `@auto-vim-outline` are `@auto` nodes.** `AT_AUTO_NAMES` held only `@auto` and `@auto-rst`, so these headlines were plain nodes: never read, never written. Leo adds each importer's names when it loads the importer. `.rmd` now goes to the Markdown importer, as in Leo.
+
+- **`@jupytext` is refused on read and write**, as `@shadow` is, until it is ported (`TODO.md`). It was read and written as a sentinel `@file`, which would put sentinel text into a notebook's JSON. Leo converts through the jupytext package.
+
+- **`read-at-file-nodes` skips an `@clean` file unchanged since its last read or write**, as Leo's does (#4385). Only `refresh-from-disk` drops the cached mod time first (#4875); `external::refresh_files` and `Document::refresh_files` are that path.
+
+- **`leolib::Document`'s `outline` and `undoer` are private.** An edit through the public `outline` field skipped the undo history; the `g<` bug was one. `outline()` reads; `outline_mut_untracked()` is the named way round, for folds and approvals. `begin_group`, `end_group` and `clear_undo` replace the undoer's own.
+
+- **`Outline`'s interdependent fields are crate-private**: `gnx_dict`, `expanded`, `mod_time_cache`, `read_paths`, `import_warnings`, `file_stamps`, `dropped_descendent_uas`. Editing `read_paths` could defeat the overwrite guard. `expanded()`, `set_expanded()` and `changed_files()` cover what leotui used. `atfile_read` is crate-private too.
+
+- **`Outline::position_exists` checks every step of the position**, as Leo's `c.positionExists`. It checked only the last, so a position under a deleted node passed. `position_is_linked`, which did the full check, is gone.
+
+- **The undo stack keeps 1000 steps**, as vim's `undolevels`, and the vnodes only dropped steps named are freed and their slots reused. A long session on a large outline grew without bound. `Document::set_undo_limit` changes the cap.
+
+- **Every public leolib item has a doc comment**, and `#![warn(missing_docs)]` keeps it so.
+
+- **leolib's `rust-version` is 1.89, leotui's 1.90.** leotui's floor is `tree-sitter-language`'s; the library is not held to it.
+
+### Fixed
+
+- **A crafted unknown attribute could abort the reader.** A pickle `LONG_BINPUT` names a memo slot up to 2^32, and the memo was a vector resized to it: six bytes in a `.leo` file asked for 64 GB. The memo is a map now, as Python's dict is, and a blob may build at most 4096 values, counting each memo copy, since Python shares what this copies. The largest blob in a leo-editor checkout builds under 100. A random-mutation run found the bug.
+
+- **`:set wrap` wraps.** Each line was cut to the pane before ratatui could wrap it.
+
+- **The body cursor counts screen columns.** It was placed by character index, so it drifted after a tab or a wide character. Tabs expand to `@tabwidth` stops rather than four blanks, and without `wrap` the view scrolls sideways to keep the cursor on screen.
+
+- **A `/` search that finds nothing says so on Enter.** Escape from a search folds again what its preview unfolded.
+
+- **`:e` keeps the theme, colour depth, text register, last search and message log.** It rebuilt the app and kept only options and histories.
+
+
 ## [0.5.0]
 
 ### Added

@@ -13,33 +13,72 @@
 pub enum Error {
     /// The OS refused the file.
     Io {
+        /// The file the OS refused.
         path: String,
+        /// The OS's error.
         source: std::io::Error,
     },
     /// A file the outline names is not on disk.
-    NotFound { path: String },
+    NotFound {
+        /// The missing file.
+        path: String,
+    },
     /// The bytes are not UTF-8. See [`crate::external::read_file_to_string`].
-    NotUtf8 { path: String, byte: usize },
+    NotUtf8 {
+        /// The file read.
+        path: String,
+        /// 0-based offset of the first byte that is not valid UTF-8.
+        byte: usize,
+    },
     /// An `@encoding`, an `@+leo` header field, or a `leo_file_encoding`,
     /// naming an encoding this port cannot write.
-    UnsupportedEncoding { encoding: String },
+    UnsupportedEncoding {
+        /// The encoding name as the file gives it.
+        encoding: String,
+    },
     /// The file has no `@+leo` sentinel, so there is no tree in it to read.
-    NotAnExternalFile { path: String },
+    NotAnExternalFile {
+        /// The file read.
+        path: String,
+    },
     /// The file is not XML, or is XML that is not an outline.
-    NotALeoFile { detail: String },
+    NotALeoFile {
+        /// Why the file is not a readable outline.
+        detail: String,
+    },
     /// The `.leo` file's XML is malformed.
-    BadXml { detail: String },
+    BadXml {
+        /// The XML parser's message.
+        detail: String,
+    },
     /// No `@auto` importer, or one whose tree would not write the file back.
-    Import { path: String, detail: String },
+    Import {
+        /// The `@auto` file.
+        path: String,
+        /// Why the import failed.
+        detail: String,
+    },
     /// The writer could not produce the file: an undefined section
     /// reference, or several `@section-delims`.
-    Write { detail: String },
+    Write {
+        /// Why the write failed.
+        detail: String,
+    },
     /// Writing would discard a file this outline never read.
-    RefusedOverwrite { path: String },
+    RefusedOverwrite {
+        /// The file left unwritten.
+        path: String,
+    },
     /// Writing would discard changes made to the file since it was read.
-    ChangedOnDisk { path: String },
+    ChangedOnDisk {
+        /// The file left unwritten.
+        path: String,
+    },
     /// Something this port does not do, such as `@shadow`.
-    Unsupported { detail: String },
+    Unsupported {
+        /// The message to show, naming the unsupported feature.
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for Error {

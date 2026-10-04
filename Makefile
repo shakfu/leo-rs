@@ -6,7 +6,7 @@
 #
 #     make corpus LEO_EDITOR=~/projects/leo-editor
 
-.PHONY: test corpus build release fmt lint audit check run dump clean
+.PHONY: test corpus bench build release fmt lint audit check run dump clean
 
 test:
 	cargo test --workspace
@@ -14,6 +14,10 @@ test:
 corpus:
 	@test -n "$(LEO_EDITOR)" || { echo "set LEO_EDITOR to a leo-editor checkout"; exit 1; }
 	python3 scripts/make_corpus.py --leo-editor $(LEO_EDITOR) --check
+
+# With LEO_EDITOR set, also times leo-editor's own outline and its files.
+bench:
+	LEO_EDITOR=$(LEO_EDITOR) cargo bench -p leolib
 
 build:
 	cargo build --workspace

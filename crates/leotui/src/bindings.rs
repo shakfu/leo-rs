@@ -174,6 +174,7 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BOTH, "Ctrl-w <", "shrink-pane"),
     b(Mode::Normal, BOTH, "Ctrl-w >", "grow-pane"),
     b(Mode::Normal, BOTH, "F1", "help"),
+    b(Mode::Normal, BOTH, "Alt-g", "goto-global-line"),
     b(Mode::Normal, BOTH, ":", "full-command"),
     b(Mode::Normal, BOTH, "/", "search-forward"),
     b(Mode::Normal, BOTH, "?", "search-backward"),
@@ -181,7 +182,7 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BOTH, "N", "find-prev"),
     // Tree only: `w` and `q` are a vim motion and the macro key, which the
     // body will want in stage 3. Escape reaches the tree from the body.
-    b(Mode::Normal, TREE, "w", "write-at-file-nodes"),
+    b(Mode::Normal, TREE, "w", "write-dirty-at-file-nodes"),
     b(Mode::Normal, TREE, "q", "quit"),
     // --- The help overlay -------------------------------------------------
     b(Mode::Help, BOTH, "Escape", "close-help"),
@@ -269,6 +270,7 @@ mod tests {
         "bufdo",
         "refresh-from-disk",
         "read-at-file-nodes",
+        "write-at-file-nodes",
         "save-as",
         "save-to",
         "write-outline-only",
@@ -280,8 +282,12 @@ mod tests {
         "clone-marked-nodes",
         "copy-marked-nodes",
         "delete-marked-nodes",
+        "move-marked-nodes",
+        "show-file-line",
         "sort-children",
         "extract",
+        "reformat-paragraph",
+        "messages",
         "clone-find-all",
         "clone-find-all-flattened",
     ];

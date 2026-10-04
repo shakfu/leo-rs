@@ -1,0 +1,36 @@
+# cargo-fuzz targets for the parsers that read untrusted files.
+#
+#     cargo +nightly fuzz run read_into_root
+#     cargo +nightly fuzz run pickle
+#
+# Outside the workspace, as cargo-fuzz expects: it needs nightly, and the
+# workspace builds on stable.
+[package]
+name = "leolib-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+leolib = { path = "../crates/leolib", features = ["fuzzing"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "read_into_root"
+path = "fuzz_targets/read_into_root.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pickle"
+path = "fuzz_targets/pickle.rs"
+test = false
+doc = false
+bench = false

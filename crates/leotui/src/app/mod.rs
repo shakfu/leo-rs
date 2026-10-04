@@ -107,6 +107,8 @@ struct SearchOrigin {
     scroll: usize,
     hlsearch: Option<regex::Regex>,
     last_hit: Option<search::Hit>,
+    /// The unfolded nodes, since landing on a match unfolds its ancestors.
+    expanded: std::collections::HashSet<String>,
 }
 
 pub struct App {
@@ -140,6 +142,10 @@ pub struct App {
     /// First visible row of the outline pane.
     pub top: usize,
     pub body_scroll: usize,
+    /// First screen column the body shows, when lines are not wrapped.
+    pub body_hscroll: usize,
+    /// The body cursor and scroll of each node visited, as Leo's `insertSpot`.
+    body_spots: std::collections::HashMap<leolib::VnodeId, ((usize, usize), usize)>,
     pub help_scroll: usize,
     /// Width of the outline pane, as a percentage.
     pub tree_percent: u16,
@@ -147,6 +153,10 @@ pub struct App {
     pub expansion_level: usize,
     expansion_node: Option<Position>,
     pub message: String,
+    /// Every message shown, oldest first, for `:messages`.
+    pub messages: Vec<String>,
+    /// Lines the help overlay shows in place of the bindings, and its title.
+    pub overlay: Option<(String, Vec<String>)>,
     pub quit: bool,
     /// Rows and columns of the outline pane, for paging. Set while drawing.
     pub tree_height: usize,
@@ -170,8 +180,9 @@ pub struct App {
     position_count: (u64, usize),
     /// Files `w` refused to overwrite, waiting on the y/n prompt.
     pending_overwrite: Vec<Position>,
-    /// Files to read over unwritten edits, waiting on the y/n prompt.
-    pending_read: Vec<Position>,
+    /// Files to read over unwritten edits, waiting on the y/n prompt, and
+    /// whether the read is a `refresh-from-disk`.
+    pending_read: (Vec<Position>, bool),
     /// Whether the save waiting on the y/n prompt also writes external files.
     /// False only for `write-outline-only`.
     save_files: bool,
@@ -182,12 +193,43 @@ pub struct App {
 /// A failed read leaves an `@file` node empty. Saying nothing would present
 /// that empty node as the file's contents.
 pub fn read_report_message(report: &leolib::external::ReadResult) -> Option<String> {
-    let first = report.errors.first()?;
-    Some(match report.errors.len() {
-        1 => format!("external file not read: {}", first.error),
-        n => format!("{n} external files not read; first: {}", first.error),
+    if let Some(first) = report.errors.first() {
+        return Some(match report.errors.len() {
+            1 => format!("external file not read: {}", first.error),
+            n => format!("{n} external files not read; first: {}", first.error),
+        });
+    }
+    let first = report.warnings.first()?;
+    Some(match report.warnings.len() {
+        1 => format!("{}: {}", first.headline, first.message),
+        n => format!("{n} external files will change on the next write; :messages lists them"),
     })
 }
+
+/// Open the outline at `path`, or start a new one there if no file exists,
+/// as vim does. The flag says which.
+pub fn open_or_new(path: &str, read_external: bool) -> leolib::Result<(Document, bool)> {
+    match Document::open(path, read_external) {
+        Err(leolib::Error::NotFound { path }) => Ok((Document::new_empty(&path), true)),
+        other => other.map(|doc| (doc, false)),
+    }
+}
+
+/// One line per file a read reported, for the message log.
+pub fn read_report_lines(report: &leolib::external::ReadResult) -> Vec<String> {
+    let errors = report
+        .errors
+        .iter()
+        .map(|e| format!("not read: {}: {}", e.headline, e.error));
+    let warnings = report
+        .warnings
+        .iter()
+        .map(|w| format!("{}: {}", w.headline, w.message));
+    errors.chain(warnings).collect()
+}
+
+/// How many messages `:messages` keeps, as vim's default.
+const MESSAGE_LOG: usize = 200;
 
 /// The theme a `:theme NAME` line names, if it names one.
 fn theme_argument(line: &str) -> Option<String> {
@@ -213,7 +255,7 @@ pub struct Row {
 impl App {
     pub fn new(doc: Document) -> Self {
         let current = doc
-            .outline
+            .outline()
             .root_position()
             .expect("an outline always has a root");
         let mut app = Self {
@@ -237,11 +279,15 @@ impl App {
             hoists: Vec::new(),
             top: 0,
             body_scroll: 0,
+            body_hscroll: 0,
+            body_spots: Default::default(),
             help_scroll: 0,
             tree_percent: 35,
             expansion_level: 1,
             expansion_node: None,
             message: String::new(),
+            messages: Vec::new(),
+            overlay: None,
             quit: false,
             tree_height: 20,
             body_height: 20,
@@ -255,7 +301,7 @@ impl App {
             config_path: None,
             position_count: (u64::MAX, 0),
             pending_overwrite: Vec::new(),
-            pending_read: Vec::new(),
+            pending_read: (Vec::new(), false),
             save_files: true,
         };
         app.expand_ancestors();
@@ -264,7 +310,7 @@ impl App {
     }
 
     pub fn outline(&self) -> &Outline {
-        &self.doc.outline
+        self.doc.outline()
     }
 
     // --- Dispatch --------------------------------------------------------
@@ -273,15 +319,44 @@ impl App {
     pub fn handle_key(&mut self, event: KeyEvent) {
         self.message.clear();
         if event.code == KeyCode::Char('c') && event.modifiers.contains(KeyModifiers::CONTROL) {
-            return self.interrupt();
+            self.interrupt();
+        } else {
+            match self.mode {
+                Mode::Headline | Mode::Confirm | Mode::Command | Mode::Search => {
+                    self.mini_key(event)
+                }
+                Mode::Insert => self.insert_key(event),
+                Mode::Visual => self.body_key(event),
+                Mode::Normal if self.focus == Focus::Body => self.body_key(event),
+                Mode::Normal | Mode::Help => self.command_key(event),
+            }
         }
-        match self.mode {
-            Mode::Headline | Mode::Confirm | Mode::Command | Mode::Search => self.mini_key(event),
-            Mode::Insert => self.insert_key(event),
-            Mode::Visual => self.body_key(event),
-            Mode::Normal if self.focus == Focus::Body => self.body_key(event),
-            Mode::Normal | Mode::Help => self.command_key(event),
+        self.log_message();
+    }
+
+    /// Keep the status line's message for `:messages`, since the next key
+    /// clears it. Run once per event.
+    pub fn log_message(&mut self) {
+        if !self.message.is_empty() {
+            self.log(self.message.clone());
         }
+    }
+
+    pub fn log(&mut self, line: String) {
+        self.messages.push(line);
+        let over = self.messages.len().saturating_sub(MESSAGE_LOG);
+        self.messages.drain(..over);
+    }
+
+    /// vim's `:messages`: the message log, in the help overlay.
+    pub fn show_messages(&mut self) {
+        let lines = match self.messages.is_empty() {
+            true => vec!["no messages".to_string()],
+            false => self.messages.clone(),
+        };
+        self.overlay = Some(("messages".to_string(), lines));
+        self.help_scroll = self.messages.len().saturating_sub(1);
+        self.mode = Mode::Help;
     }
 
     /// NORMAL and HELP: accumulate a count and keys, then run a binding.
@@ -424,20 +499,27 @@ impl App {
     pub fn select(&mut self, p: Position) {
         self.dehoist_to_show(&p);
         self.history.update(&p);
+        // Each node keeps its cursor and scroll, as Leo's `v.insertSpot`.
+        let here = (self.editor.cursor, self.body_scroll);
+        self.body_spots.insert(self.current.v, here);
+        let (cursor, scroll) = self.body_spots.get(&p.v).copied().unwrap_or_default();
         self.current = p;
-        self.body_scroll = 0;
         // The body is a different buffer now.
         self.buffer = None;
-        self.editor.cursor = (0, 0);
-        self.editor.desired_col = 0;
+        self.editor.cursor = cursor;
         self.editor.visual = None;
+        let lines = self.body_buffer();
+        self.editor.clamp(&lines);
+        self.editor.desired_col = self.editor.cursor.1;
+        self.body_scroll = scroll.min(lines.len().saturating_sub(1));
+        self.body_hscroll = 0;
         self.expand_ancestors();
     }
 
     /// Leo's `go-back` (`step` -1) and `go-forward` (+1), `count` times.
     pub fn go_history(&mut self, step: isize, count: usize) {
         for _ in 0..count {
-            let Some(p) = self.history.step(&self.doc.outline, step) else {
+            let Some(p) = self.history.step(self.doc.outline(), step) else {
                 self.message = "no more history".to_string();
                 return;
             };
@@ -448,7 +530,7 @@ impl App {
     /// Unfold everything above the current node, so it can be seen.
     pub fn expand_ancestors(&mut self) {
         let p = self.current.clone();
-        self.doc.outline.expand_all_ancestors(&p);
+        self.doc.outline_mut_untracked().expand_all_ancestors(&p);
     }
 
     /// After an undo the current position may no longer exist.
@@ -516,7 +598,7 @@ impl App {
     pub fn contract_or_go_left(&mut self) {
         let p = self.current.clone();
         if p.has_children(self.outline()) && self.outline().is_expanded(&p) {
-            self.doc.outline.contract(&p);
+            self.doc.outline_mut_untracked().contract(&p);
         } else if let Some(parent) = p.parent(self.outline()).filter(|q| self.in_view(q)) {
             self.select(parent);
         }
@@ -529,7 +611,7 @@ impl App {
             return;
         }
         if !self.outline().is_expanded(&p) {
-            self.doc.outline.expand(&p);
+            self.doc.outline_mut_untracked().expand(&p);
         } else if let Some(child) = p.first_child(self.outline()) {
             self.select(child);
         }
@@ -544,7 +626,10 @@ impl App {
         if self.expansion_node.as_ref() != Some(&p) {
             self.expansion_node = Some(p.clone());
         }
-        let max = self.doc.outline.expand_to_level(&p, level.max(1));
+        let max = self
+            .doc
+            .outline_mut_untracked()
+            .expand_to_level(&p, level.max(1));
         self.expansion_level = max + 1;
         self.message = format!("level: {}", max + 1);
     }

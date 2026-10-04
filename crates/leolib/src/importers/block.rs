@@ -20,15 +20,21 @@ use crate::util;
 /// One imported block, and the node it becomes.
 #[derive(Debug, Clone)]
 pub struct Block {
+    /// The pattern's kind, such as `class` or `func`. `outer` for the root block.
     pub kind: String,
+    /// The name the pattern captured. May be empty.
     pub name: String,
     /// First line of the block, including any lines since the previous block.
     pub start: usize,
     /// First line of the block's body: the line after its defining line.
     pub start_body: usize,
+    /// One past the block's last line.
     pub end: usize,
+    /// The block's node, once created.
     pub v: Option<VnodeId>,
+    /// The parent block's node.
     pub parent_v: Option<VnodeId>,
+    /// Indices into [`Importer::blocks`] of the blocks nested in this one.
     pub children: Vec<usize>,
 }
 
@@ -49,12 +55,19 @@ impl Block {
 
 /// The state of one import.
 pub struct Importer<'a> {
+    /// The outline being imported into.
     pub o: &'a mut Outline,
+    /// The language's importer configuration.
     pub spec: &'a LanguageSpec,
+    /// The file's lines, with newlines. Edited in place into bodies.
     pub lines: Vec<String>,
+    /// `lines` with comments and strings blanked out. Same length.
     pub guide_lines: Vec<String>,
+    /// The `@tabwidth` in effect at the `@auto` node.
     pub tab_width: i32,
+    /// The `@auto` node.
     pub root: Position,
+    /// Every block found, by index.
     pub blocks: Vec<Block>,
     at_others: HashSet<VnodeId>,
 }
@@ -426,6 +439,8 @@ impl Importer<'_> {
         results
     }
 
+    /// Add a block and return its index in `blocks`.
+    /// Line numbers are 0-based into `lines`; `end` is exclusive.
     pub fn push_block(
         &mut self,
         kind: &str,
@@ -585,6 +600,7 @@ impl Importer<'_> {
         None
     }
 
+    /// Headline for block `bi`, per `spec.headline`. Leo's `compute_headline`.
     pub fn compute_headline(&self, bi: usize) -> String {
         let block = &self.blocks[bi];
         match self.spec.headline {
@@ -779,6 +795,7 @@ impl Importer<'_> {
         self.o.node_mut(v).b.push_str(&text);
     }
 
+    /// Count of leading whitespace characters in `s`. Leo's `lws_n`.
     pub fn lws_n(&self, s: &str) -> usize {
         s.chars().count() - s.trim_start().chars().count()
     }

@@ -99,12 +99,25 @@ impl App {
         };
     }
 
-    /// Write the outline's external files. Only dirty trees, as Leo does.
+    /// Leo's `write-dirty-at-file-nodes`: write the outline's dirty external
+    /// files.
     ///
     /// A file that exists but was never read is refused, then offered on a
     /// y/n prompt, as Leo asks before overwriting it (issue #50).
-    pub fn write_external(&mut self) {
+    pub fn write_dirty_at_file_nodes(&mut self) {
         let result = self.doc.write_external_files(true);
+        self.report_write(result);
+    }
+
+    /// Leo's `write-at-file-nodes`: write every `@<file>` node at or under the
+    /// selection, dirty or not.
+    pub fn write_at_file_nodes(&mut self) {
+        let (files, _) = leolib::external::find_files_to_write_under(self.outline(), &self.current);
+        if files.is_empty() {
+            self.message = "write-at-file-nodes: no external files here".to_string();
+            return;
+        }
+        let result = self.doc.write_files(files);
         self.report_write(result);
     }
 
@@ -135,11 +148,10 @@ impl App {
     /// Run when the terminal regains focus: the likeliest moment another
     /// program has written them.
     pub fn check_disk(&mut self) {
-        let o = self.outline();
-        let mut changed: Vec<String> = o
-            .file_stamps
-            .keys()
-            .filter(|path| o.changed_on_disk(path))
+        let mut changed: Vec<String> = self
+            .outline()
+            .changed_files()
+            .iter()
             .map(|path| leolib::util::short_file_name(path))
             .collect();
         if changed.is_empty() {
@@ -170,7 +182,7 @@ impl App {
             self.message = format!("refresh-from-disk: {} is never read", root.h(o));
             return;
         }
-        self.read_or_ask(files);
+        self.read_or_ask(files, true);
     }
 
     /// Leo's `read-at-file-nodes`: read every `@<file>` node at or under the
@@ -181,20 +193,21 @@ impl App {
             self.message = "read-at-file-nodes: no external files to read here".to_string();
             return;
         }
-        self.read_or_ask(files);
+        self.read_or_ask(files, false);
     }
 
     /// Read `files`, asking first if that would discard edits not yet written.
-    fn read_or_ask(&mut self, files: Vec<Position>) {
+    /// `refresh` reads an `@clean` file whose mtime says it is unchanged.
+    fn read_or_ask(&mut self, files: Vec<Position>, refresh: bool) {
         if files.iter().any(|p| p.is_dirty(self.outline())) {
-            self.pending_read = files;
+            self.pending_read = (files, refresh);
             self.open_mini(MiniKind::ConfirmRead, String::new());
             return;
         }
-        self.read_files(files);
+        self.read_files(files, refresh);
     }
 
-    pub(super) fn read_files(&mut self, files: Vec<Position>) {
+    pub(super) fn read_files(&mut self, files: Vec<Position>, refresh: bool) {
         // A selection inside a tree being rebuilt names nodes about to go, so
         // it moves to that tree's root, which the read keeps.
         let o = self.outline();
@@ -203,12 +216,19 @@ impl App {
             .self_and_parents(o)
             .into_iter()
             .find(|p| files.iter().any(|f| f.v == p.v));
-        let result = self.doc.read_files(files);
+        let result = if refresh {
+            self.doc.refresh_files(files)
+        } else {
+            self.doc.read_files(files)
+        };
         match inside {
             Some(root) => self.select(root),
             None => self.clamp_current(),
         }
         self.buffer = None;
+        for line in read_report_lines(&result) {
+            self.log(line);
+        }
         self.message = read_report_message(&result).unwrap_or_else(|| {
             format!("read {}; undo history cleared", plural(result.read, "file"))
         });

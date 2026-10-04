@@ -33,3 +33,23 @@ fn help_goes_to_stdout_and_a_bad_argument_exits_2() {
         assert_eq!(run(bad).status.code(), Some(2), "{bad:?}");
     }
 }
+
+#[test]
+fn a_path_with_no_file_starts_a_new_outline_there() {
+    let dir = std::env::temp_dir().join(format!("leotui-new-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let leo = dir.join("new.leo");
+    let out = Command::new(env!("CARGO_BIN_EXE_leotui"))
+        .arg(&leo)
+        .args(["--dump", "--press", "Ctrl-s"])
+        .output()
+        .expect("could not run leotui");
+    let saved = leo.exists();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(saved, "{}", String::from_utf8_lossy(&out.stdout));
+}

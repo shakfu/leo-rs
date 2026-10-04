@@ -249,6 +249,25 @@ pub static COMMANDS: &[Command] = &[
         },
     ),
     c(
+        "move-marked-nodes",
+        "move the marked nodes under a new node",
+        |app, _| {
+            let p = app.current.clone();
+            match app.doc.move_marked(&p) {
+                Some((new, n)) => {
+                    app.select(new);
+                    app.message = format!("moved {n}");
+                }
+                None => app.message = "no marked nodes".to_string(),
+            }
+        },
+    ),
+    c(
+        "show-file-line",
+        "say which line of the external file the cursor's line is",
+        |app, _| app.show_file_line(),
+    ),
+    c(
         "delete-marked-nodes",
         "delete every marked node",
         |app, _| {
@@ -258,7 +277,7 @@ pub static COMMANDS: &[Command] = &[
                 n => format!("deleted {n}"),
             };
             // The selection may have gone with a marked ancestor.
-            if !app.outline().position_is_linked(&app.current) {
+            if !app.outline().position_exists(&app.current) {
                 if let Some(root) = app.outline().root_position() {
                     app.select(root);
                 }
@@ -342,6 +361,11 @@ pub static COMMANDS: &[Command] = &[
         |app, _| app.extract(),
     ),
     c(
+        "reformat-paragraph",
+        "wrap the cursor's paragraph to @pagewidth",
+        |app, _| app.reformat_paragraph(),
+    ),
+    c(
         "sort-siblings",
         "sort this node and its siblings",
         |app, _| {
@@ -392,26 +416,26 @@ pub static COMMANDS: &[Command] = &[
         let p = app.current.clone();
         if p.has_children(app.outline()) {
             if app.outline().is_expanded(&p) {
-                app.doc.outline.contract(&p);
+                app.doc.outline_mut_untracked().contract(&p);
             } else {
-                app.doc.outline.expand(&p);
+                app.doc.outline_mut_untracked().expand(&p);
             }
         }
     }),
     c("expand-node", "unfold this node", |app, _| {
         let p = app.current.clone();
-        app.doc.outline.expand(&p);
+        app.doc.outline_mut_untracked().expand(&p);
     }),
     c("contract-node", "fold this node", |app, _| {
         let p = app.current.clone();
-        app.doc.outline.contract(&p);
+        app.doc.outline_mut_untracked().contract(&p);
     }),
     c("expand-all", "unfold every node", |app, _| {
-        app.doc.outline.expand_all();
+        app.doc.outline_mut_untracked().expand_all();
         app.expansion_level = 0;
     }),
     c("contract-all", "fold every node", |app, _| {
-        app.doc.outline.contract_all();
+        app.doc.outline_mut_untracked().contract_all();
         app.expansion_level = 1;
         if let Some(root) = app.outline().root_position() {
             app.current = root;
@@ -428,7 +452,7 @@ pub static COMMANDS: &[Command] = &[
         "fold everything except the path to this node",
         |app, _| {
             let p = app.current.clone();
-            app.doc.outline.contract_all_other_nodes(&p);
+            app.doc.outline_mut_untracked().contract_all_other_nodes(&p);
         },
     ),
     c("expand-to-level-1", "unfold to level 1", |app, _| {
@@ -539,7 +563,12 @@ pub static COMMANDS: &[Command] = &[
     }),
     c("undo", "undo the last change", |app, n| {
         repeat(app, n, |app| {
-            let name = app.doc.undoer.undo_name().unwrap_or("nothing").to_string();
+            let name = app
+                .doc
+                .undoer()
+                .undo_name()
+                .unwrap_or("nothing")
+                .to_string();
             match app.doc.undo() {
                 Some(p) => {
                     app.select(p);
@@ -552,7 +581,12 @@ pub static COMMANDS: &[Command] = &[
     }),
     c("redo", "redo the last undone change", |app, n| {
         repeat(app, n, |app| {
-            let name = app.doc.undoer.redo_name().unwrap_or("nothing").to_string();
+            let name = app
+                .doc
+                .undoer()
+                .redo_name()
+                .unwrap_or("nothing")
+                .to_string();
             match app.doc.redo() {
                 Some(p) => {
                     app.select(p);
@@ -574,9 +608,14 @@ pub static COMMANDS: &[Command] = &[
         |app, _| app.write_outline_only(),
     ),
     c(
-        "write-at-file-nodes",
+        "write-dirty-at-file-nodes",
         "write the changed external files",
-        |app, _| app.write_external(),
+        |app, _| app.write_dirty_at_file_nodes(),
+    ),
+    c(
+        "write-at-file-nodes",
+        "write every external file at or under the selection",
+        |app, _| app.write_at_file_nodes(),
     ),
     // The command line runs these: they take a path.
     c(
@@ -610,6 +649,11 @@ pub static COMMANDS: &[Command] = &[
     // The command line runs these too: they take arguments.
     c("import-at-file", "import a file as an @file tree", noop),
     c(
+        "goto-global-line",
+        "go to line N of this node's external file (:goto-global-line N)",
+        |app, _| app.open_mini(MiniKind::Command, "goto-global-line ".to_string()),
+    ),
+    c(
         "substitute",
         "vim's :[range]s/pattern/replacement/[flags] on the body",
         noop,
@@ -622,10 +666,15 @@ pub static COMMANDS: &[Command] = &[
     ),
     c("help", "show the key bindings", |app, _| {
         app.mode = Mode::Help;
+        app.overlay = None;
         app.help_scroll = 0;
     }),
     c("close-help", "close the help screen", |app, _| {
-        app.mode = Mode::Normal
+        app.mode = Mode::Normal;
+        app.overlay = None;
+    }),
+    c("messages", "list the messages shown so far", |app, _| {
+        app.show_messages()
     }),
     c("scroll-help-down", "scroll the help down", |app, n| {
         app.help_scroll += n

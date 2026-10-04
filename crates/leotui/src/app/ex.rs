@@ -79,6 +79,10 @@ impl App {
             "open" if parsed.force => self.open_file_now(&parsed.arg),
             "open" => self.open_file(&parsed.arg),
             "import-at-file" => self.import_at_file(&parsed.arg),
+            "goto-global-line" => match parsed.arg.trim().parse::<usize>() {
+                Ok(n) => self.goto_global_line(n),
+                Err(_) => self.message = "usage: :goto-global-line N".to_string(),
+            },
             "set" => self.set_options(&parsed.arg),
             "nohlsearch" | "noh" => self.hlsearch = None,
             "clone-find-all" => self.clone_find_all(&parsed.arg, false),
@@ -188,15 +192,32 @@ impl App {
 
     /// Open `path` in place of this outline, whatever is unsaved.
     pub(super) fn open_file_now(&mut self, path: &str) {
-        match Document::open(path, true) {
-            Ok(doc) => {
+        match open_or_new(path, true) {
+            Ok((doc, new)) => {
+                // What belongs to the session, not to the outline, stays.
                 let keep = std::mem::replace(self, App::new(doc));
                 self.options = keep.options;
                 self.command_history = keep.command_history;
                 self.search_history = keep.search_history;
+                self.last_search = keep.last_search;
+                self.hlsearch = keep.hlsearch;
                 self.tree_percent = keep.tree_percent;
-                self.message = read_report_message(&self.doc.read_report)
-                    .unwrap_or_else(|| format!("opened: {path}"));
+                self.theme = keep.theme;
+                self.depth = keep.depth;
+                self.theme_names = keep.theme_names;
+                self.config_path = keep.config_path;
+                self.messages = keep.messages;
+                self.editor.register = keep.editor.register;
+                self.editor.last_change = keep.editor.last_change;
+                self.editor.last_find = keep.editor.last_find;
+                for line in read_report_lines(&self.doc.read_report) {
+                    self.log(line);
+                }
+                self.message = match new {
+                    true => format!("new outline: {}", self.outline().file_name),
+                    false => read_report_message(&self.doc.read_report)
+                        .unwrap_or_else(|| format!("opened: {path}")),
+                };
             }
             Err(e) => self.message = format!("open failed: {e}"),
         }
@@ -262,6 +283,7 @@ impl App {
                 crate::theme::Depth::True => "colors=true".to_string(),
                 crate::theme::Depth::Indexed => "colors=256".to_string(),
                 crate::theme::Depth::Ansi16 => "colors=16".to_string(),
+                crate::theme::Depth::None => "colors=none".to_string(),
             },
             _ => return None,
         })
@@ -380,7 +402,7 @@ impl App {
         };
         let mut seen = std::collections::HashSet::new();
         let (mut count, mut lines_changed, mut nodes) = (0, 0, 0);
-        self.doc.undoer.begin_group("substitute");
+        self.doc.begin_group("substitute");
         for p in self.outline().all_positions() {
             if !seen.insert(p.v) || !re.is_match(p.b(self.outline())) {
                 continue;
@@ -397,7 +419,7 @@ impl App {
                 self.doc.set_body(&p, &editor::join(&lines));
             }
         }
-        self.doc.undoer.end_group();
+        self.doc.end_group();
         if count == 0 {
             self.message = format!("pattern not found: {}", re.as_str());
             return;

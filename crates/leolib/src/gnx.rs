@@ -68,12 +68,16 @@ fn default_user_id() -> String {
 /// Allocates gnxs. [`new_gnx`] holds the one every outline uses.
 #[derive(Debug, Clone)]
 pub struct NodeIndices {
+    /// The id each gnx starts with.
     pub user_id: String,
+    /// The `n` of the last gnx minted in `time_string`'s second.
     pub last_index: u64,
+    /// Timestamp of the last gnx minted, as `%Y%m%d%H%M%S`.
     pub time_string: String,
 }
 
 impl NodeIndices {
+    /// An allocator for `user_id`, with the clock read now.
     pub fn new(user_id: &str) -> Self {
         Self {
             user_id: user_id.to_string(),
@@ -94,6 +98,7 @@ impl NodeIndices {
         t
     }
 
+    /// Mint the next gnx. Leo's `NodeIndices.computeNewIndex`.
     pub fn new_gnx(&mut self) -> String {
         let t = self.update();
         format!("{}.{}.{}", self.user_id, t, self.last_index)

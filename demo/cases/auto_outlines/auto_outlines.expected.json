@@ -1,0 +1,78 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto-otl a.txt",
+   "b": "@language otl\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "top",
+   "b": "body of top\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "child",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": ": body of child",
+   "b": ""
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@auto-vim-outline b.txt",
+   "b": "@language otl\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "top",
+   "b": "body of top\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "child",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": ": body of child",
+   "b": ""
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.3",
+   "h": "@auto c.otl",
+   "b": "@language otl\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "top",
+   "b": "body of top\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "child",
+   "b": ""
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": ": body of child",
+   "b": ""
+  }
+ ]
+}

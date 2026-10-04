@@ -273,6 +273,41 @@ def build_empty_auto(o, add, case):
     return {'empty.py': '', 'one.py': 'x = 1\n'}
 
 
+def build_at_verbatim(o, add, case):
+    """One line that looks like a sentinel, which the writer guards with @verbatim."""
+    add('@file verbatim.py', 'x = 1\n#@+node:not-a-node\ny = 2\n')
+    return {}
+
+
+def build_auto_outlines(o, add, case):
+    """The vim-outliner format, named by @auto-otl, @auto-vim-outline and .otl."""
+    text = 'top\n: body of top\n\tchild\n\t: body of child\n'
+    add('@auto-otl a.txt', '')
+    add('@auto-vim-outline b.txt', '')
+    add('@auto c.otl', '')
+    return {'a.txt': text, 'b.txt': text, 'c.otl': text}
+
+
+def build_auto_rst(o, add, case):
+    """reStructuredText, named by @auto-rst and by extension.
+
+    Leo splits it at its headings; this port has no rst importer and reports
+    both unread.
+    """
+    text = 'Title\n=====\n\nText.\n\nSection\n-------\n\nMore.\n'
+    add('@auto-rst a.txt', '')
+    add('@auto b.rst', '')
+    return {'a.txt': text, 'b.rst': text}
+
+
+def build_auto_unknown(o, add, case):
+    """@auto on extensions with no importer: the whole file in the body."""
+    add('@auto a.txt', '')
+    add('@auto b.json', '')
+    add('@auto c.unknown', '')
+    return {'a.txt': 'Plain text.\n', 'b.json': '{"a": 1}\n', 'c.unknown': 'x\n'}
+
+
 def build_unreadable(o, add, case):
     """An @file whose file has no sentinels, which both report unread, and one that reads."""
     add('@file plain.py', '@others\n')
@@ -312,6 +347,10 @@ BUILDERS = {
     'auto_languages': build_auto_languages,
     'unreadable': build_unreadable,
     'empty_auto': build_empty_auto,
+    'at_verbatim': build_at_verbatim,
+    'auto_outlines': build_auto_outlines,
+    'auto_rst': build_auto_rst,
+    'auto_unknown': build_auto_unknown,
 }
 
 

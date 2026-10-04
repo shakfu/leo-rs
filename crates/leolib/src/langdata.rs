@@ -204,6 +204,7 @@ static EXTENSION_DICT_DATA: &[(&str, &str)] = &[
     ("zpt", "zpt"),
 ];
 
+/// File extension (no period) -> language name. Leo's `g.app.extension_dict`.
 pub fn extension_dict() -> &'static HashMap<&'static str, &'static str> {
     static M: Lazy<HashMap<&'static str, &'static str>> =
         Lazy::new(|| EXTENSION_DICT_DATA.iter().copied().collect());
@@ -393,6 +394,7 @@ static LANGUAGE_DELIMS_DICT_DATA: &[(&str, &str)] = &[
     ("zpt", "<!-- -->"),
 ];
 
+/// Language name -> space-separated comment delimiters. Leo's `g.app.language_delims_dict`.
 pub fn language_delims_dict() -> &'static HashMap<&'static str, &'static str> {
     static M: Lazy<HashMap<&'static str, &'static str>> =
         Lazy::new(|| LANGUAGE_DELIMS_DICT_DATA.iter().copied().collect());
@@ -551,6 +553,7 @@ static LANGUAGE_EXTENSION_DICT_DATA: &[(&str, &str)] = &[
     ("zpt", "zpt"),
 ];
 
+/// Language name -> canonical extension. Leo's `g.app.language_extension_dict`.
 pub fn language_extension_dict() -> &'static HashMap<&'static str, &'static str> {
     static M: Lazy<HashMap<&'static str, &'static str>> =
         Lazy::new(|| LANGUAGE_EXTENSION_DICT_DATA.iter().copied().collect());
@@ -561,6 +564,7 @@ pub fn language_extension_dict() -> &'static HashMap<&'static str, &'static str>
 static EXTRA_EXTENSION_DICT_DATA: &[(&str, &str)] =
     &[("pod", "perl"), ("unknown_language", "none"), ("w", "c")];
 
+/// Extension -> language, for extensions Leo does not colour. Leo's `g.app.extra_extension_dict`.
 pub fn extra_extension_dict() -> &'static HashMap<&'static str, &'static str> {
     static M: Lazy<HashMap<&'static str, &'static str>> =
         Lazy::new(|| EXTRA_EXTENSION_DICT_DATA.iter().copied().collect());
@@ -580,6 +584,7 @@ static DELEGATE_LANGUAGE_DICT_DATA: &[(&str, &str)] = &[
     ("toml", "ini"),
 ];
 
+/// Language -> the language whose rules colour it. Leo's `g.app.delegate_language_dict`.
 pub fn delegate_language_dict() -> &'static HashMap<&'static str, &'static str> {
     static M: Lazy<HashMap<&'static str, &'static str>> =
         Lazy::new(|| DELEGATE_LANGUAGE_DICT_DATA.iter().copied().collect());

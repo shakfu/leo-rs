@@ -99,15 +99,15 @@ fn main() {
         }
         std::process::exit(0);
     }
-    let doc = match &args.path {
-        Some(path) => match Document::open(path, !args.no_external) {
-            Ok(doc) => doc,
+    let (doc, new) = match &args.path {
+        Some(path) => match app::open_or_new(path, !args.no_external) {
+            Ok(opened) => opened,
             Err(e) => {
                 eprintln!("leotui: {e}");
                 std::process::exit(1);
             }
         },
-        None => Document::new_empty(""),
+        None => (Document::new_empty(""), false),
     };
     let mut app = App::new(doc);
     app.config_path = config::path();
@@ -127,16 +127,23 @@ fn main() {
             app.message = warning.clone();
         }
     }
+    if new {
+        app.message = format!("new outline: {}", app.outline().file_name);
+    }
     // A file that could not be read outranks a theme or a settings message:
     // its node is empty, and would otherwise pass for the file's contents.
     if let Some(report) = app::read_report_message(&app.doc.read_report) {
         app.message = report;
     }
+    for line in app::read_report_lines(&app.doc.read_report) {
+        app.log(line);
+    }
+    app.log_message();
 
     // Unfold the top level, so an outline opens showing something.
     if let Some(root) = app.outline().root_position() {
         for p in root.self_and_siblings(app.outline()) {
-            app.doc.outline.expand(&p);
+            app.doc.outline_mut_untracked().expand(&p);
         }
     }
 
@@ -287,8 +294,14 @@ fn event_loop(app: &mut App) -> io::Result<()> {
         // would run every command twice.
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
-            Event::Paste(text) => app.handle_paste(&text),
-            Event::FocusGained => app.check_disk(),
+            Event::Paste(text) => {
+                app.handle_paste(&text);
+                app.log_message();
+            }
+            Event::FocusGained => {
+                app.check_disk();
+                app.log_message();
+            }
             _ => {}
         }
     }
@@ -571,7 +584,7 @@ mod tests {
     #[test]
     fn search_matches_are_highlighted_in_both_panes() {
         let mut doc = Document::new_empty("");
-        let root = doc.outline.root_position().unwrap();
+        let root = doc.outline().root_position().unwrap();
         doc.set_headline(&root, "find the needle");
         doc.set_body(&root, "a needle here\n");
         let mut app = App::new(doc);
@@ -729,5 +742,75 @@ mod tests {
         let mut app = App::new(Document::new(o));
         let lines = render(&mut app, 40, 6);
         assert!(lines.iter().all(|l| l.chars().count() <= 40));
+    }
+
+    /// An app over one node whose body is `text`.
+    fn body_of(text: &str) -> App {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "root");
+        o.set_body(&root, text);
+        App::new(Document::new(o))
+    }
+
+    #[test]
+    fn set_wrap_folds_a_long_line_onto_the_next_rows() {
+        let body = format!("{}END\n", "a".repeat(60));
+        let mut app = body_of(&body);
+        assert!(!render(&mut app, 40, 8).join("\n").contains("END"));
+        app.options.wrap = true;
+        let text = render(&mut app, 40, 8).join("\n");
+        assert!(text.contains("END"), "{text}");
+    }
+
+    #[test]
+    fn the_body_slides_sideways_to_keep_the_cursor_on_screen() {
+        let body = format!("{}END\n", "a".repeat(60));
+        let mut app = body_of(&body);
+        press(&mut app, &["Tab", "$"]);
+        let text = render(&mut app, 40, 8).join("\n");
+        assert!(text.contains("END"), "{text}");
+    }
+
+    /// The terminal cursor's column after pressing `keys` in the body.
+    fn cursor_x(body: &str, keys: &[&str]) -> u16 {
+        let mut app = body_of(body);
+        press(&mut app, &["Tab"]);
+        press(&mut app, keys);
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        terminal.get_cursor_position().unwrap().x
+    }
+
+    #[test]
+    fn the_body_cursor_counts_screen_columns() {
+        // A tab runs to the next stop of @tabwidth; a CJK character is two wide.
+        let start = cursor_x("\tx\n", &[]);
+        assert_eq!(cursor_x("\tx\n", &["l"]) - start, 4);
+        assert_eq!(cursor_x("ab\tx\n", &["l", "l", "l"]) - start, 4);
+        assert_eq!(cursor_x("\u{4e2d}x\n", &["l"]) - start, 2);
+    }
+
+    #[test]
+    fn no_color_draws_no_colour_and_reverses_the_selected_row() {
+        let mut app = body_of("text\n");
+        app.depth = theme::Depth::None;
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer
+            .content
+            .iter()
+            .all(|c| c.fg == Color::Reset && c.bg == Color::Reset));
+        let reversed = |y: u16| {
+            (0..40).any(|x| {
+                buffer[(x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::REVERSED)
+            })
+        };
+        // The selected row and the status line.
+        assert!(reversed(2) && reversed(5));
+        assert!(!reversed(3));
     }
 }

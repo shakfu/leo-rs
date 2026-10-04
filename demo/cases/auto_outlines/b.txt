@@ -1,0 +1,4 @@
+top
+: body of top
+	child
+	: body of child

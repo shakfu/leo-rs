@@ -42,6 +42,10 @@ A rejected external file is reported in `ReadResult::errors` and never recorded 
 
 **`extract` reads no `@data extract-patterns` node.** Leo tries those patterns before its built-in ones. leolib reads no settings nodes, so only the built-in patterns apply.
 
+**`goto-global-line` gives an `@verbatim` sentinel no body row.** Leo's `scan_sentinel_lines` counts it as one, so every later row of that node lands one line low. `show-file-line` uses the same map in reverse, where Leo adds the row to the line of the node's first row and is wrong after any `@others` or section reference.
+
+**`move-marked-nodes` is one undo step.** Leo's cannot be undone and asks first.
+
 **`clone-find-all-flattened` says so in its found node.** Leo's `_cf_helper` passes `flattened=False` to `_cfa_create_nodes` whatever the command, so the body never reads `flattened`.
 
 ## The `@auto` importers
@@ -96,4 +100,4 @@ Scanning uses byte offsets into `&str` throughout. Every index comes from search
 
 ## Config
 
-There is no settings file. `outline::Config` spells out the values Leo uses when no `myLeoSettings.leo` overrides them. Most are code defaults. `force_newlines_in_at_nosent_bodies` is `leoSettings.leo`'s `True`, where Python leolib, with no settings, has none: an `@nosent` or `@clean` body without a final newline gains one here. `page_width` is Leo's code default of 132, while `leoSettings.leo` ships 80; no writer reads it, in either implementation. Check any setting that can reach a file before adding to that surface.
+There is no settings file. `outline::Config` spells out the values Leo uses when no `myLeoSettings.leo` overrides them. Most are code defaults. `force_newlines_in_at_nosent_bodies` is `leoSettings.leo`'s `True`, where Python leolib, with no settings, has none: an `@nosent` or `@clean` body without a final newline gains one here. `page_width` is Leo's code default of 132, while `leoSettings.leo` ships 80; only `reformat-paragraph` reads it, in either implementation. Check any setting that can reach a file before adding to that surface.

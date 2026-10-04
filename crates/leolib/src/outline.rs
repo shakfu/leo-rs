@@ -19,13 +19,21 @@ use crate::util;
 /// after the settings they stand for so a caller can override one.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Encoding of an external file with no `@encoding`. Leo's `default_derived_file_encoding`.
     pub default_derived_file_encoding: String,
+    /// Line ending name for written files: `nl`, `lf`, `cr`, `crlf` or `platform`.
     pub output_newline: String,
+    /// Line width in characters where no `@pagewidth` applies.
     pub page_width: i32,
+    /// Tab width where no `@tabwidth` applies. Negative means indent with blanks.
     pub tab_width: i32,
+    /// Language where no `@language` or file extension applies.
     pub target_language: String,
+    /// Create a missing directory before writing an external file into it.
     pub create_nonexistent_directories: bool,
+    /// End every non-empty body with a newline in files without sentinels.
     pub force_newlines_in_at_nosent_bodies: bool,
+    /// Leo's `body-pane-wraps`: wrap body text by default. Nothing in this crate reads it.
     pub body_pane_wraps: bool,
     /// The .leo file's own encoding. Leo spells it lowercase; the XML prolog copies it.
     pub leo_file_encoding: String,
@@ -54,43 +62,58 @@ impl Default for Config {
 /// The window geometry a .leo file records. Data, not something applied here.
 #[derive(Debug, Clone, Default)]
 pub struct WindowGeometry {
+    /// Window width in pixels.
     pub width: i32,
+    /// Window height in pixels.
     pub height: i32,
+    /// Window left edge in pixels.
     pub left: i32,
+    /// Window top edge in pixels.
     pub top: i32,
+    /// Body-to-outline pane ratio. Leo's `body_outline_ratio`.
     pub r1: f64,
+    /// Body-to-secondary pane ratio. Leo's `body_secondary_ratio`.
     pub r2: f64,
 }
 
 #[derive(Debug)]
+/// One open Leo document: its vnodes, file name and settings.
 pub struct Outline {
     nodes: Vec<Vnode>,
+    /// The invisible vnode whose children are the top-level nodes.
     pub hidden_root: VnodeId,
-    pub gnx_dict: HashMap<String, VnodeId>,
+    pub(crate) gnx_dict: HashMap<String, VnodeId>,
+    /// Path of the `.leo` file. Empty for an outline never saved.
     pub file_name: String,
+    /// True if the outline has unsaved changes. Leo's `c.changed`.
     pub changed: bool,
+    /// The settings the model consults.
     pub config: Config,
     /// Bumped on every structural change, so a view can tell whether to redraw.
     pub generation: u64,
     /// Which nodes are unfolded, by gnx. Per document here; Leo keeps a copy per view.
-    pub expanded: HashSet<String>,
+    pub(crate) expanded: HashSet<String>,
+    /// The window geometry the `.leo` file records.
     pub window_geometry: WindowGeometry,
     /// Last-seen mtime per @clean node, so an unchanged file is not re-read.
-    pub mod_time_cache: HashMap<String, std::time::SystemTime>,
+    pub(crate) mod_time_cache: HashMap<String, std::time::SystemTime>,
     /// `(gnx, path, headline)` for every external file this outline has read
     /// or written. See [`Outline::may_overwrite`].
-    pub read_paths: HashSet<(String, String, String)>,
+    pub(crate) read_paths: HashSet<(String, String, String)>,
     /// Per-gnx note from the last `@auto` import that normalized its file.
-    pub import_warnings: HashMap<String, String>,
+    pub(crate) import_warnings: HashMap<String, String>,
     /// Size and mtime of each file as last read or written, by path. See
     /// [`Outline::changed_on_disk`].
-    pub file_stamps: HashMap<String, util::FileStamp>,
+    pub(crate) file_stamps: HashMap<String, util::FileStamp>,
     /// Headlines of the nodes whose descendent-uA blob a structural change
     /// dropped. Reported and cleared by [`crate::save_all`]; see
     /// [`Outline::invalidate_descendent_uas`].
-    pub dropped_descendent_uas: Vec<String>,
+    pub(crate) dropped_descendent_uas: Vec<String>,
+    /// Arena slots freed by [`Outline::free_unreachable`], for reuse.
+    free: Vec<VnodeId>,
 }
 
+/// The gnx of [`Outline::hidden_root`].
 pub const HIDDEN_ROOT_GNX: &str = "hidden-root-vnode-gnx";
 
 impl Outline {
@@ -111,6 +134,7 @@ impl Outline {
             dropped_descendent_uas: Vec::new(),
             read_paths: HashSet::new(),
             import_warnings: HashMap::new(),
+            free: Vec::new(),
         };
         let hidden = o.new_vnode(Some(HIDDEN_ROOT_GNX));
         o.node_mut(hidden).h = "<hidden root vnode>".to_string();
@@ -129,18 +153,22 @@ impl Outline {
 
     // --- The arena --------------------------------------------------------
 
+    /// The vnode `v`. Panics if `v` is outside the arena.
     pub fn node(&self, v: VnodeId) -> &Vnode {
         &self.nodes[v.0 as usize]
     }
 
+    /// The vnode `v`, mutably. Panics if `v` is outside the arena.
     pub fn node_mut(&mut self, v: VnodeId) -> &mut Vnode {
         &mut self.nodes[v.0 as usize]
     }
 
+    /// The gnx of vnode `v`.
     pub fn gnx(&self, v: VnodeId) -> &str {
         &self.node(v).gnx
     }
 
+    /// Arena slots, freed ones included. Not the number of nodes in the tree.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
@@ -160,18 +188,61 @@ impl Outline {
                 }
             },
         };
-        let id = VnodeId(self.nodes.len() as u32);
-        self.nodes.push(Vnode::new(gnx.clone()));
+        let id = match self.free.pop() {
+            Some(id) => {
+                self.nodes[id.0 as usize] = Vnode::new(gnx.clone());
+                id
+            }
+            None => {
+                self.nodes.push(Vnode::new(gnx.clone()));
+                VnodeId(self.nodes.len() as u32 - 1)
+            }
+        };
         self.gnx_dict.insert(gnx, id);
         id
     }
 
+    /// Free every vnode that neither the tree nor `keep`, nor their trees,
+    /// reach. Returns how many were freed; their slots are reused.
+    ///
+    /// Only a caller that knows every other holder of a `VnodeId` may call
+    /// this: `Document`, which holds the undo history and the clipboard.
+    pub(crate) fn free_unreachable(&mut self, keep: &[VnodeId]) -> usize {
+        let mut reached = vec![false; self.nodes.len()];
+        for v in &self.free {
+            reached[v.0 as usize] = true;
+        }
+        let mut stack: Vec<VnodeId> = keep.to_vec();
+        stack.push(self.hidden_root);
+        while let Some(v) = stack.pop() {
+            if !std::mem::replace(&mut reached[v.0 as usize], true) {
+                stack.extend(&self.nodes[v.0 as usize].children);
+            }
+        }
+        let mut n = 0;
+        for (i, _) in reached.iter().enumerate().filter(|(_, r)| !**r) {
+            let v = VnodeId(i as u32);
+            let gnx = std::mem::take(&mut self.nodes[i]).gnx;
+            if self.gnx_dict.get(&gnx) == Some(&v) {
+                self.gnx_dict.remove(&gnx);
+            }
+            self.expanded.remove(&gnx);
+            self.mod_time_cache.remove(&gnx);
+            self.import_warnings.remove(&gnx);
+            self.free.push(v);
+            n += 1;
+        }
+        n
+    }
+
+    /// The vnode with `gnx`, if the outline holds one.
     pub fn find_gnx(&self, gnx: &str) -> Option<VnodeId> {
         self.gnx_dict.get(gnx).copied()
     }
 
     // --- Positions --------------------------------------------------------
 
+    /// The first top-level node. None for an outline with no nodes.
     pub fn root_position(&self) -> Option<Position> {
         let first = *self.node(self.hidden_root).children.first()?;
         Some(Position::new(first, 0, Vec::new()))
@@ -204,16 +275,19 @@ impl Outline {
         out
     }
 
+    /// Each distinct vnode in the tree, in outline order.
     pub fn all_unique_nodes(&self) -> Vec<VnodeId> {
         self.all_unique_positions().iter().map(|p| p.v).collect()
     }
 
+    /// Clear [`node::status::VISITED`] on every vnode.
     pub fn clear_all_visited(&mut self) {
         for v in self.nodes.iter_mut() {
             v.clear_bit(node::status::VISITED);
         }
     }
 
+    /// The `.leo` file's base name.
     pub fn short_file_name(&self) -> String {
         util::short_file_name(&self.file_name)
     }
@@ -338,6 +412,7 @@ impl Outline {
         v
     }
 
+    /// Insert a new empty node as `parent`'s child at 0-based index `n`.
     pub fn insert_as_nth_child(&mut self, parent: &Position, n: usize) -> Position {
         let v = self.new_vnode(None);
         self.link_child(parent.v, n, v);
@@ -346,15 +421,18 @@ impl Outline {
         Position::new(v, n, stack)
     }
 
+    /// Insert a new empty node as `parent`'s first child.
     pub fn insert_as_first_child(&mut self, parent: &Position) -> Position {
         self.insert_as_nth_child(parent, 0)
     }
 
+    /// Insert a new empty node as `parent`'s last child.
     pub fn insert_as_last_child(&mut self, parent: &Position) -> Position {
         let n = parent.num_children(self);
         self.insert_as_nth_child(parent, n)
     }
 
+    /// Insert a new empty node as p's next sibling.
     pub fn insert_after(&mut self, p: &Position) -> Position {
         let v = self.new_vnode(None);
         let parent_v = p.parent_vnode(self);
@@ -363,6 +441,7 @@ impl Outline {
         Position::new(v, n, p.stack.clone())
     }
 
+    /// Insert a new empty node as p's previous sibling.
     pub fn insert_before(&mut self, p: &Position) -> Position {
         if let Some(back) = p.back(self) {
             return self.insert_after(&back);
@@ -412,6 +491,7 @@ impl Outline {
         Position::new(p.v, n, a.stack.clone())
     }
 
+    /// Move p to be the first top-level node. Returns p's new position.
     pub fn move_to_root(&mut self, p: &Position) -> Position {
         let parent_v = p.parent_vnode(self);
         self.cut_link(parent_v, p.child_index, p.v);
@@ -445,23 +525,14 @@ impl Outline {
         self.generation += 1;
     }
 
-    /// True if p still names a real place in the outline.
-    pub fn position_exists(&self, p: &Position) -> bool {
-        let parent_v = p.parent_vnode(self);
-        self.node(parent_v).children.get(p.child_index) == Some(&p.v)
-    }
-
-    /// True if every step of p's ancestor chain links, not just the last one.
+    /// True if p still names a real place in the outline: every step of its
+    /// stack links, as Leo's `c.positionExists` checks.
     ///
-    /// [`position_exists`](Self::position_exists) checks where p sits under
-    /// its own parent. A walk of the outline reaches p only if the whole
-    /// stack above it is real too.
-    pub fn position_is_linked(&self, p: &Position) -> bool {
-        if !self.position_exists(p) {
-            return false;
-        }
+    /// A position under a node since moved or deleted keeps a link to its
+    /// own parent, so checking the last step alone answers true for it.
+    pub fn position_exists(&self, p: &Position) -> bool {
         let mut parent = self.hidden_root;
-        for (v, index) in &p.stack {
+        for (v, index) in p.stack.iter().chain(std::iter::once(&(p.v, p.child_index))) {
             if self.node(parent).children.get(*index) != Some(v) {
                 return false;
             }
@@ -541,6 +612,7 @@ impl Outline {
 
     // --- Content ----------------------------------------------------------
 
+    /// Set p's headline, removing newlines. Not undoable; see [`crate::Document::set_headline`].
     pub fn set_headline(&mut self, p: &Position, s: &str) {
         let s = s.replace('\n', "");
         self.node_mut(p.v).h = s;
@@ -550,6 +622,7 @@ impl Outline {
         self.generation += 1;
     }
 
+    /// Set p's body. Not undoable; see [`crate::Document::set_body`].
     pub fn set_body(&mut self, p: &Position, s: &str) {
         self.node_mut(p.v).b = s.to_string();
         self.forget_mod_time(p.v);
@@ -602,6 +675,7 @@ impl Outline {
         self.mod_time_cache.remove(&gnx);
     }
 
+    /// Mark or unmark p. Not undoable; see [`crate::Document::toggle_marked`].
     pub fn toggle_marked(&mut self, p: &Position) {
         let marked = self.node(p.v).is_marked();
         if marked {
@@ -612,7 +686,7 @@ impl Outline {
         self.changed = true;
     }
 
-    /// Mark p and every ancestor @<file> node dirty, following clone links.
+    /// Mark p and every ancestor `@<file>` node dirty, following clone links.
     pub fn set_dirty(&mut self, p: &Position) {
         self.set_dirty_vnode(p.v);
     }
@@ -642,6 +716,7 @@ impl Outline {
         out
     }
 
+    /// Clear the dirty bit on p and its descendants.
     pub fn clear_dirty_in_tree(&mut self, p: &Position) {
         for p2 in p.self_and_subtree(self) {
             self.node_mut(p2.v).clear_bit(node::status::DIRTY);
@@ -709,15 +784,40 @@ impl Outline {
 
     // --- Folds ------------------------------------------------------------
 
+    /// The gnxs of the unfolded nodes.
+    pub fn expanded(&self) -> &HashSet<String> {
+        &self.expanded
+    }
+
+    /// Unfold exactly the nodes `expanded` names, as a view restoring its folds.
+    pub fn set_expanded(&mut self, expanded: HashSet<String>) {
+        self.expanded = expanded;
+    }
+
+    /// Every file this outline read or wrote that has changed on disk since.
+    pub fn changed_files(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .file_stamps
+            .keys()
+            .filter(|path| self.changed_on_disk(path))
+            .cloned()
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// True if p is unfolded. Folds are per vnode, so clones share them.
     pub fn is_expanded(&self, p: &Position) -> bool {
         self.expanded.contains(self.gnx(p.v))
     }
 
+    /// Unfold p.
     pub fn expand(&mut self, p: &Position) {
         let gnx = self.gnx(p.v).to_string();
         self.expanded.insert(gnx);
     }
 
+    /// Fold p.
     pub fn contract(&mut self, p: &Position) {
         let gnx = self.gnx(p.v).to_string();
         self.expanded.remove(&gnx);
@@ -737,12 +837,14 @@ impl Outline {
         self.expanded.clear();
     }
 
+    /// Unfold p and all its descendants.
     pub fn expand_subtree(&mut self, p: &Position) {
         for p2 in p.self_and_subtree(self) {
             self.expand(&p2);
         }
     }
 
+    /// Fold p's descendants. p itself keeps its fold state.
     pub fn contract_subtree(&mut self, p: &Position) {
         for p2 in p.subtree(self) {
             self.contract(&p2);
@@ -857,7 +959,7 @@ impl Outline {
     ) -> Option<Position> {
         // A position whose ancestors no longer link is not on the walk, and
         // looking for it would not terminate.
-        if !self.position_is_linked(p) {
+        if !self.position_exists(p) {
             return None;
         }
         let mut cur = p.clone();
@@ -969,6 +1071,7 @@ impl Outline {
         None
     }
 
+    /// The `@encoding` in effect at p, else the configured default. Leo's `getEncoding`.
     pub fn get_encoding(&self, p: &Position) -> String {
         self.scan_directive(p, "@encoding", |s| {
             is_valid_encoding(s).then(|| s.to_string())
@@ -976,6 +1079,7 @@ impl Outline {
         .unwrap_or_else(|| self.config.default_derived_file_encoding.clone())
     }
 
+    /// The newline that `@lineending` sets at p, or "" if none does. Leo's `getLineEnding`.
     pub fn get_line_ending(&self, p: &Position) -> String {
         self.scan_directive(p, "@lineending", |s| {
             ["cr", "crlf", "lf", "nl", "platform"]
@@ -985,11 +1089,14 @@ impl Outline {
         .unwrap_or_default()
     }
 
+    /// The `@pagewidth` in effect at p, else the configured default. Leo's `getPageWidth`.
     pub fn get_page_width(&self, p: &Position) -> i32 {
         self.scan_directive(p, "@pagewidth", |s| s.parse::<i32>().ok())
             .unwrap_or(self.config.page_width)
     }
 
+    /// The `@tabwidth` in effect at p, else the configured default. Leo's `getTabWidth`.
+    /// Negative means indent with blanks.
     pub fn get_tab_width(&self, p: &Position) -> i32 {
         self.scan_directive(p, "@tabwidth", |s| s.parse::<i32>().ok())
             .unwrap_or(self.config.tab_width)
@@ -1145,6 +1252,7 @@ fn adjust_before_unlink(o: &Outline, p: &Position, p2: &Position) -> Position {
     p
 }
 
+/// True if `language` has comment delimiters or a delegate. Leo's `isValidLanguage`.
 pub fn is_valid_language(language: &str) -> bool {
     !language.is_empty()
         && (langdata::language_delims_dict().contains_key(language)
@@ -1167,6 +1275,8 @@ pub fn is_valid_encoding(encoding: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// `language`'s comment delimiters: (single, block-start, block-end).
+/// All empty for an unknown language. Leo's `set_delims_from_language`.
 pub fn set_delims_from_language(language: &str) -> (String, String, String) {
     match langdata::language_delims_dict().get(language) {
         Some(val) => {
@@ -1419,7 +1529,7 @@ mod tests {
         o.node_mut(all[4].v).set_bit(node::status::MARKED);
         let stale = all[1].clone();
         o.delete_position(&all[1]);
-        assert!(!o.position_is_linked(&stale));
+        assert!(!o.position_exists(&stale));
         assert!(o.next_marked(&stale).is_none());
         assert!(o.prev_marked(&stale).is_none());
     }

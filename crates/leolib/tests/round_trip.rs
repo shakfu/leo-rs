@@ -88,14 +88,39 @@ fn editing_an_external_file_updates_only_the_node_it_belongs_to() {
     // Edit the file behind the outline's back, as an editor would.
     fs::write(&file, "a = 1\na2 = 1\nb = 2\n").unwrap();
     // The mod-time cache is what stops a re-read; the file is genuinely newer.
-    o.mod_time_cache.clear();
-    let result = external::read_external_files(&mut o);
+    let root = o.root_position().unwrap();
+    let result = external::refresh_files(&mut o, vec![root]);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
 
     let root = o.root_position().unwrap();
     let kids = root.children(&o);
     assert_eq!(kids[0].b(&o), "a = 1\na2 = 1\n");
     assert_eq!(kids[1].b(&o), "b = 2\n");
+}
+
+#[test]
+fn only_a_refresh_reads_an_at_clean_file_unchanged_since_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@clean sample.py");
+    o.set_body(&root, "a = 1\n");
+    external::write_external_files(&mut o, false);
+
+    // An edit within the mtime's resolution leaves the mtime as written.
+    let path = dir.path().join("sample.py");
+    let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+    fs::write(&path, "a = 2\n").unwrap();
+    let file = fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(mtime).unwrap();
+
+    let result = external::read_files(&mut o, vec![root.clone()]);
+    assert_eq!(result.read, 0, "{:?}", result.errors);
+    assert_eq!(root.b(&o), "a = 1\n");
+    let result = external::refresh_files(&mut o, vec![root.clone()]);
+    assert_eq!(result.read, 1, "{:?}", result.errors);
+    assert_eq!(root.b(&o), "a = 2\n");
 }
 
 #[test]
@@ -121,10 +146,10 @@ fn writing_an_unchanged_outline_touches_nothing() {
 #[test]
 fn an_edit_and_its_undo_leave_the_outline_as_it_was() {
     let mut d = Document::new_empty("");
-    let root = d.outline.root_position().unwrap();
+    let root = d.outline_mut_untracked().root_position().unwrap();
     d.set_headline(&root, "root");
-    d.undoer.clear();
-    let before = digest(&d.outline);
+    d.clear_undo();
+    let before = digest(d.outline());
 
     let child = d.insert_node(&root);
     d.set_headline(&child, "child");
@@ -132,10 +157,10 @@ fn an_edit_and_its_undo_leave_the_outline_as_it_was() {
     d.move_right(&child);
     d.toggle_marked(&child);
 
-    while d.undoer.can_undo() {
+    while d.undoer().can_undo() {
         d.undo();
     }
-    assert_eq!(digest(&d.outline), before);
+    assert_eq!(digest(d.outline()), before);
 }
 
 #[test]
@@ -340,25 +365,25 @@ fn import_at_file_splits_a_plain_file_and_keeps_its_shebang_first() {
         "#!/usr/bin/env python3\nimport os\n\ndef f():\n    return 1\n\ndef g():\n    return 2\n";
     fs::write(&path, text).unwrap();
     let mut doc = outline_in(dir.path());
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
 
     let (p, needs_write) = doc.import_at_file(&root, &path).unwrap();
     assert!(needs_write);
-    assert_eq!(p.h(&doc.outline), "@file x.py");
+    assert_eq!(p.h(doc.outline()), "@file x.py");
     assert!(
-        p.b(&doc.outline)
+        p.b(doc.outline())
             .starts_with("@first #!/usr/bin/env python3\n"),
         "{}",
-        p.b(&doc.outline)
+        p.b(doc.outline())
     );
-    assert_eq!(p.children(&doc.outline).len(), 2);
+    assert_eq!(p.children(doc.outline()).len(), 2);
 
     // The sentinels wait for the caller's approval.
     let result = doc.write_external_files(true);
     assert_eq!(result.refused, vec![p.clone()]);
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
 
-    doc.outline.remember_read_path(&p, &path);
+    doc.outline_mut_untracked().remember_read_path(&p, &path);
     assert_eq!(doc.write_files(vec![p.clone()]).written, vec![path.clone()]);
     let written = fs::read_to_string(&path).unwrap();
     assert!(
@@ -367,9 +392,9 @@ fn import_at_file_splits_a_plain_file_and_keeps_its_shebang_first() {
     );
 
     // Reading the written file gives back the imported tree.
-    let before = bodies(&doc.outline, &p);
-    external::read_file_at_position(&mut doc.outline, &p).unwrap();
-    assert_eq!(bodies(&doc.outline, &p), before);
+    let before = bodies(doc.outline(), &p);
+    external::read_file_at_position(doc.outline_mut_untracked(), &p).unwrap();
+    assert_eq!(bodies(doc.outline(), &p), before);
 }
 
 #[test]
@@ -377,21 +402,23 @@ fn import_at_file_reads_a_file_that_has_sentinels() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("y.py").to_string_lossy().to_string();
     let mut src = outline_in(dir.path());
-    let root = src.outline.root_position().unwrap();
-    src.outline.set_headline(&root, "@file y.py");
-    src.outline.set_body(&root, "@others\n");
-    let child = src.outline.insert_as_last_child(&root);
-    src.outline.set_headline(&child, "f");
-    src.outline.set_body(&child, "def f():\n    return 1\n");
+    let root = src.outline_mut_untracked().root_position().unwrap();
+    src.outline_mut_untracked()
+        .set_headline(&root, "@file y.py");
+    src.outline_mut_untracked().set_body(&root, "@others\n");
+    let child = src.outline_mut_untracked().insert_as_last_child(&root);
+    src.outline_mut_untracked().set_headline(&child, "f");
+    src.outline_mut_untracked()
+        .set_body(&child, "def f():\n    return 1\n");
     assert_eq!(src.write_external_files(false).written, vec![path.clone()]);
 
     let mut doc = outline_in(dir.path());
-    let at = doc.outline.root_position().unwrap();
+    let at = doc.outline().root_position().unwrap();
     let (p, needs_write) = doc.import_at_file(&at, &path).unwrap();
     assert!(!needs_write);
-    let kids = p.children(&doc.outline);
+    let kids = p.children(doc.outline());
     assert_eq!(kids.len(), 1);
-    assert_eq!(kids[0].h(&doc.outline), "f");
+    assert_eq!(kids[0].h(doc.outline()), "f");
 }
 
 #[test]
@@ -406,10 +433,10 @@ fn import_at_file_keeps_a_file_whole_when_its_tree_would_not_write_it_back() {
         let path = dir.path().join(name).to_string_lossy().to_string();
         fs::write(&path, text).unwrap();
         let mut doc = outline_in(dir.path());
-        let root = doc.outline.root_position().unwrap();
+        let root = doc.outline().root_position().unwrap();
         let (p, _) = doc.import_at_file(&root, &path).unwrap();
-        assert_eq!(p.b(&doc.outline), text, "{name}");
-        assert!(p.children(&doc.outline).is_empty(), "{name}");
+        assert_eq!(p.b(doc.outline()), text, "{name}");
+        assert!(p.children(doc.outline()).is_empty(), "{name}");
     }
 }
 
@@ -420,9 +447,9 @@ fn import_at_file_ends_the_body_with_the_newline_the_write_adds() {
     let path = dir.path().join("n.zzz").to_string_lossy().to_string();
     fs::write(&path, "no final newline").unwrap();
     let mut doc = outline_in(dir.path());
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     let (p, _) = doc.import_at_file(&root, &path).unwrap();
-    assert_eq!(p.b(&doc.outline), "no final newline\n");
+    assert_eq!(p.b(doc.outline()), "no final newline\n");
 }
 
 #[test]
@@ -433,14 +460,14 @@ fn import_at_file_refusals_leave_no_trace_and_an_import_undoes() {
     let plain = dir.path().join("p.py").to_string_lossy().to_string();
     fs::write(&plain, "x = 1\n").unwrap();
     let mut doc = outline_in(dir.path());
-    let root = doc.outline.root_position().unwrap();
-    let count = doc.outline.all_positions().len();
+    let root = doc.outline().root_position().unwrap();
+    let count = doc.outline().all_positions().len();
 
     let err = doc.import_at_file(&root, &binary).unwrap_err();
     assert!(matches!(err, Error::NotUtf8 { .. }), "{err}");
-    assert_eq!(doc.outline.all_positions().len(), count);
-    assert!(!doc.outline.changed);
-    assert!(!doc.undoer.can_undo());
+    assert_eq!(doc.outline().all_positions().len(), count);
+    assert!(!doc.outline().changed);
+    assert!(!doc.undoer().can_undo());
 
     let (p, _) = doc.import_at_file(&root, &plain).unwrap();
     let err = doc.import_at_file(&root, &plain).unwrap_err();
@@ -448,18 +475,41 @@ fn import_at_file_refusals_leave_no_trace_and_an_import_undoes() {
     assert!(err.to_string().contains("already in the outline"), "{err}");
 
     // Importing from inside an @file tree puts the new node beside it.
-    let child = doc.outline.insert_as_last_child(&p);
+    let child = doc.outline_mut_untracked().insert_as_last_child(&p);
     let other = dir.path().join("q.py").to_string_lossy().to_string();
     fs::write(&other, "y = 2\n").unwrap();
     let (q, _) = doc.import_at_file(&child, &other).unwrap();
-    assert_eq!(q.parent(&doc.outline), p.parent(&doc.outline));
+    assert_eq!(q.parent(doc.outline()), p.parent(doc.outline()));
 
     doc.undo();
-    assert!(!doc.outline.position_exists(&q));
+    assert!(!doc.outline().position_exists(&q));
 }
 
 #[test]
-fn an_auto_file_with_no_importer_is_reported_and_never_overwritten() {
+fn an_auto_file_with_no_importer_is_read_whole_into_its_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let mine = "[a]\nx = 1\n";
+    let leo_path = outline_over_existing_file(dir.path(), "@auto a.toml", "a.toml", mine);
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let root = o.root_position().unwrap();
+    assert_eq!(root.b(&o), format!("@language toml\n{mine}"));
+    assert!(!root.has_children(&o));
+
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.unchanged, 1, "{:?}", result.errors);
+    o.set_body(&root, "@language toml\nedited\n");
+    o.set_dirty(&root);
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+    let text = fs::read_to_string(dir.path().join("a.toml")).unwrap();
+    assert_eq!(text, "edited\n");
+}
+
+#[test]
+fn an_auto_rst_file_is_reported_and_never_overwritten() {
+    // Leo splits it with an importer this port lacks, so it is not read whole.
     let dir = tempfile::tempdir().unwrap();
     let mine = "Title\n=====\n";
     let leo_path = outline_over_existing_file(dir.path(), "@auto notes.rst", "notes.rst", mine);
@@ -481,6 +531,53 @@ fn an_auto_file_with_no_importer_is_reported_and_never_overwritten() {
     assert!(result.written.is_empty(), "{:?}", result.written);
     assert_eq!(
         fs::read_to_string(dir.path().join("notes.rst")).unwrap(),
+        mine
+    );
+}
+
+#[test]
+fn an_at_jupytext_notebook_is_neither_read_nor_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let mine = "{\"cells\": []}\n";
+    let leo_path = outline_over_existing_file(dir.path(), "@jupytext nb.ipynb", "nb.ipynb", mine);
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(
+        matches!(report.errors[..], [ref e] if matches!(e.error, Error::Unsupported { .. })),
+        "{:?}",
+        report.errors
+    );
+    let root = o.root_position().unwrap();
+    o.set_body(&root, "x = 1\n");
+    o.set_dirty(&root);
+    // Approval does not help: the kind itself is refused.
+    o.remember_read_path(&root, &dir.path().join("nb.ipynb").to_string_lossy());
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("nb.ipynb")).unwrap(),
+        mine
+    );
+}
+
+#[test]
+fn an_auto_file_with_no_importer_that_would_not_write_back_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let mine = "a\n@others\n";
+    let leo_path = outline_over_existing_file(dir.path(), "@auto notes.txt", "notes.txt", mine);
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(
+        matches!(report.errors[..], [ref e] if matches!(e.error, Error::Import { .. })),
+        "{:?}",
+        report.errors
+    );
+    let root = o.root_position().unwrap();
+    assert_eq!(root.b(&o), mine);
+    o.set_dirty(&root);
+    external::write_external_files(&mut o, false);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
         mine
     );
 }
@@ -609,9 +706,9 @@ fn a_file_changed_on_disk_since_the_read_is_not_overwritten() {
         .unwrap()
         .replace("x = 1", "x = 1  # theirs");
     fs::write(&py, &theirs).unwrap();
-    assert!(doc.outline.changed_on_disk(&py));
+    assert!(doc.outline().changed_on_disk(&py));
 
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_body(&root, "x = 2\n");
     let result = doc.write_external_files(true);
     assert!(result.written.is_empty());
@@ -623,7 +720,7 @@ fn a_file_changed_on_disk_since_the_read_is_not_overwritten() {
     assert_eq!(fs::read_to_string(&py).unwrap(), theirs);
 
     // Recording what is on disk now is the approval.
-    doc.outline
+    doc.outline_mut_untracked()
         .record_file_stamp(&py, leolib::util::file_stamp(&py));
     let result = doc.write_external_files(true);
     assert_eq!(result.written.len(), 1, "{:?}", result.errors);
@@ -636,26 +733,26 @@ fn read_files_takes_in_a_file_changed_on_disk() {
     let (mut doc, py) = written_at_file(dir.path());
     let theirs = fs::read_to_string(&py).unwrap().replace("x = 1", "x = 3");
     fs::write(&py, theirs).unwrap();
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     let result = doc.read_files(vec![root.clone()]);
     assert_eq!(result.read, 1, "{:?}", result.errors);
-    assert_eq!(root.b(&doc.outline), "x = 3\n");
-    assert!(!doc.outline.changed_on_disk(&py));
-    assert!(!doc.undoer.can_undo());
+    assert_eq!(root.b(doc.outline()), "x = 3\n");
+    assert!(!doc.outline().changed_on_disk(&py));
+    assert!(!doc.undoer().can_undo());
 }
 
 #[test]
 fn save_to_writes_a_copy_and_keeps_the_outline_where_it_was() {
     let dir = tempfile::tempdir().unwrap();
     let (mut doc, _) = written_at_file(dir.path());
-    let name = doc.outline.file_name.clone();
-    let root = doc.outline.root_position().unwrap();
+    let name = doc.outline().file_name.clone();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "@file x.py");
-    doc.outline.changed = true;
+    doc.outline_mut_untracked().changed = true;
     let copy = dir.path().join("copy.leo").to_string_lossy().to_string();
     doc.save_to(&copy).unwrap();
-    assert_eq!(doc.outline.file_name, name);
-    assert!(doc.outline.changed);
+    assert_eq!(doc.outline().file_name, name);
+    assert!(doc.outline().changed);
     assert!(leolib::open_outline(&copy, false).is_ok());
 }
 
@@ -663,12 +760,12 @@ fn save_to_writes_a_copy_and_keeps_the_outline_where_it_was() {
 fn a_leo_file_changed_on_disk_is_noticed() {
     let dir = tempfile::tempdir().unwrap();
     let (doc, _) = written_at_file(dir.path());
-    let leo = doc.outline.file_name.clone();
-    assert!(!doc.outline.changed_on_disk(&leo));
+    let leo = doc.outline().file_name.clone();
+    assert!(!doc.outline().changed_on_disk(&leo));
     let mut text = fs::read_to_string(&leo).unwrap();
     text.push('\n');
     fs::write(&leo, text).unwrap();
-    assert!(doc.outline.changed_on_disk(&leo));
+    assert!(doc.outline().changed_on_disk(&leo));
 }
 
 #[test]
@@ -697,7 +794,7 @@ fn a_symlinked_file_is_written_through_the_link() {
     let target = dir.path().join("target.py");
     fs::rename(&py, &target).unwrap();
     std::os::unix::fs::symlink(&target, &py).unwrap();
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_body(&root, "x = 2\n");
     let result = doc.write_external_files(true);
     assert_eq!(result.written.len(), 1, "{:?}", result.errors);
@@ -713,7 +810,7 @@ fn a_read_only_file_is_not_overwritten() {
     let (mut doc, py) = written_at_file(dir.path());
     let before = fs::read_to_string(&py).unwrap();
     fs::set_permissions(&py, fs::Permissions::from_mode(0o444)).unwrap();
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_body(&root, "x = 2\n");
     let result = doc.write_external_files(true);
     assert!(result.written.is_empty());
@@ -1045,7 +1142,7 @@ fn a_save_names_the_tree_whose_descendent_uas_it_dropped() {
     .unwrap();
 
     let mut doc = Document::open(&leo.to_string_lossy(), true).unwrap();
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     let kept = doc.save_all("");
     assert!(kept.leo.is_ok(), "{:?}", kept.leo);
     assert_eq!(kept.dropped_descendent_uas, Vec::<String>::new());
@@ -1053,7 +1150,7 @@ fn a_save_names_the_tree_whose_descendent_uas_it_dropped() {
         .unwrap()
         .contains("descendentVnodeUnknownAttributes="));
 
-    let child = root.children(&doc.outline)[0].clone();
+    let child = root.children(doc.outline())[0].clone();
     doc.insert_node_before(&child);
     let dropped = doc.save_all("");
     assert!(dropped.leo.is_ok(), "{:?}", dropped.leo);
@@ -1105,13 +1202,17 @@ fn a_restructured_at_auto_tree_keeps_its_descendants_unknown_attributes() {
     let leo = outline_with_imported_uas(dir.path(), BLOB);
 
     let mut doc = Document::open(&leo, true).unwrap();
-    let root = doc.outline.root_position().unwrap();
-    let kids = root.children(&doc.outline);
+    let root = doc.outline().root_position().unwrap();
+    let kids = root.children(doc.outline());
     assert_eq!(kids.len(), 2, "{:?}", kids.len());
     // The read gave the uAs to the nodes the importer built.
-    assert!(doc.outline.node(kids[0].v).uas.contains_key("__bookmarks"));
+    assert!(doc
+        .outline()
+        .node(kids[0].v)
+        .uas
+        .contains_key("__bookmarks"));
     assert_eq!(
-        doc.outline.node(kids[1].v).uas["str_note"].as_file_text(),
+        doc.outline().node(kids[1].v).uas["str_note"].as_file_text(),
         "keep me"
     );
 
@@ -1124,13 +1225,21 @@ fn a_restructured_at_auto_tree_keeps_its_descendants_unknown_attributes() {
     assert_eq!(result.dropped_descendent_uas, Vec::<String>::new());
 
     let doc = Document::open(&leo, true).unwrap();
-    let kids = doc.outline.root_position().unwrap().children(&doc.outline);
-    assert_eq!(kids[0].h(&doc.outline), "function: g");
+    let kids = doc
+        .outline()
+        .root_position()
+        .unwrap()
+        .children(doc.outline());
+    assert_eq!(kids[0].h(doc.outline()), "function: g");
     assert_eq!(
-        doc.outline.node(kids[0].v).uas["str_note"].as_file_text(),
+        doc.outline().node(kids[0].v).uas["str_note"].as_file_text(),
         "keep me"
     );
-    assert!(doc.outline.node(kids[1].v).uas.contains_key("__bookmarks"));
+    assert!(doc
+        .outline()
+        .node(kids[1].v)
+        .uas
+        .contains_key("__bookmarks"));
 }
 
 #[test]
@@ -1144,7 +1253,11 @@ fn a_blob_this_port_cannot_read_is_still_written_back_unchanged() {
     assert!(doc.save_all("").leo.is_ok());
     assert!(fs::read_to_string(&leo).unwrap().contains("\"80049501\""));
 
-    let kids = doc.outline.root_position().unwrap().children(&doc.outline);
+    let kids = doc
+        .outline()
+        .root_position()
+        .unwrap()
+        .children(doc.outline());
     doc.move_up(&kids[1]);
     let result = doc.save_all("");
     assert_eq!(result.dropped_descendent_uas, vec!["@auto x.py"]);
@@ -1161,7 +1274,7 @@ fn a_move_inside_an_at_file_tree_reaches_the_file() {
     let leo = dir.path().join("test.leo").to_string_lossy().to_string();
 
     let mut doc = leolib::Document::new_empty(&leo);
-    let root = doc.outline.root_position().unwrap();
+    let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "@file sample.py");
     doc.set_body(&root, "@others\n");
     for (headline, body) in [("f", "def f():\n    pass\n"), ("g", "def g():\n    pass\n")] {
@@ -1171,20 +1284,27 @@ fn a_move_inside_an_at_file_tree_reaches_the_file() {
     }
     assert_eq!(doc.save_all("").files.written.len(), 1);
 
-    let kids = doc.outline.root_position().unwrap().children(&doc.outline);
-    let before: Vec<String> = kids.iter().map(|p| p.h(&doc.outline).to_string()).collect();
+    let kids = doc
+        .outline()
+        .root_position()
+        .unwrap()
+        .children(doc.outline());
+    let before: Vec<String> = kids
+        .iter()
+        .map(|p| p.h(doc.outline()).to_string())
+        .collect();
     doc.move_up(&kids[1]);
     let result = doc.save_all("");
     assert_eq!(result.files.written.len(), 1, "{:?}", result.files.errors);
 
     let doc = Document::open(&leo, true).unwrap();
     let heads: Vec<String> = doc
-        .outline
+        .outline()
         .root_position()
         .unwrap()
-        .children(&doc.outline)
+        .children(doc.outline())
         .iter()
-        .map(|p| p.h(&doc.outline).to_string())
+        .map(|p| p.h(doc.outline()).to_string())
         .collect();
     assert_eq!(heads, vec![before[1].clone(), before[0].clone()]);
 }

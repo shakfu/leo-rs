@@ -23,23 +23,33 @@ use crate::util;
 /// at all for an encoding this port cannot write -- has to tell them apart.
 #[derive(Debug)]
 pub struct FileReport {
+    /// The `@<file>` node's headline.
     pub headline: String,
+    /// The file's full path.
     pub path: String,
+    /// Why the read or write failed.
     pub error: Error,
 }
 
 /// Something a front end should say about a file that read successfully.
 #[derive(Debug, Clone)]
 pub struct FileNote {
+    /// The `@<file>` node's headline.
     pub headline: String,
+    /// The file's full path.
     pub path: String,
+    /// What the reader changed.
     pub message: String,
 }
 
 #[derive(Debug, Default)]
+/// What a read of external files did.
 pub struct ReadResult {
+    /// Files read. An `@clean` file skipped as unchanged is not counted.
     pub read: usize,
+    /// Files that failed to read. Their trees are left as they were.
     pub errors: Vec<FileReport>,
+    /// Headlines of `@<file>` nodes skipped by `@ignore`.
     pub ignored: Vec<String>,
     /// Files the reader normalized. Writing the node back changes the file on
     /// disk even if nobody edits it, so a front end should say so.
@@ -47,10 +57,15 @@ pub struct ReadResult {
 }
 
 #[derive(Debug, Default)]
+/// What a write of external files did.
 pub struct WriteResult {
+    /// Full paths of the files written.
     pub written: Vec<String>,
+    /// Files left untouched because their contents already matched.
     pub unchanged: usize,
+    /// Files that were not written, and why.
     pub errors: Vec<FileReport>,
+    /// Headlines of `@<file>` nodes skipped by `@ignore`.
     pub ignored: Vec<String>,
     /// Nodes refused by [`Outline::may_overwrite`], also listed in `errors`.
     pub refused: Vec<Position>,
@@ -127,16 +142,12 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
 
 /// Read the given `@<file>` nodes from disk, replacing what their trees hold.
 ///
-/// Leo's `refresh-from-disk` for one node, and `read-at-file-nodes` for those
-/// [`find_files_to_read`] lists under a node. An `@clean` file is read even if
-/// its mtime says it is unchanged, as Leo's #4875 clears the cache first.
+/// Leo's `read-at-file-nodes` for those [`find_files_to_read`] lists under a
+/// node. An `@clean` file unchanged since its last read or write is skipped
+/// (#4385); [`refresh_files`] reads it anyway.
 pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
     let mut result = ReadResult::default();
     for p in files {
-        if p.is_at_clean_node(o) {
-            let gnx = p.gnx(o).to_string();
-            o.mod_time_cache.remove(&gnx);
-        }
         match read_file_at_position(o, &p) {
             Ok(true) => {
                 // The tree now matches the file; an `@clean` merge set bits.
@@ -160,6 +171,16 @@ pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
         }
     }
     result
+}
+
+/// Leo's `refresh-from-disk`: [`read_files`], first forgetting each `@clean`
+/// file's cached mod time, as Leo's #4875 does.
+pub fn refresh_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
+    for p in &files {
+        let gnx = p.gnx(o).to_string();
+        o.mod_time_cache.remove(&gnx);
+    }
+    read_files(o, files)
 }
 
 /// Read the `@<file>` node at p, dispatching on its kind.
@@ -188,15 +209,28 @@ fn read_file_by_kind(o: &mut Outline, p: &Position) -> Result<bool> {
     if p.is_at_edit_node(o) {
         return read_one_at_edit_node(o, p);
     }
-    if p.is_at_file_node(o) || p.is_at_thin_file_node(o) || p.is_at_jupytext_node(o) {
+    if p.is_at_file_node(o) || p.is_at_thin_file_node(o) {
         return read_at_file_node(o, p);
     }
-    if p.is_at_shadow_file_node(o) {
-        return Err(Error::Unsupported {
-            detail: "@shadow is deprecated and not supported".to_string(),
-        });
-    }
-    Ok(false)
+    unsupported_kind(o, p).map_or(Ok(false), Err)
+}
+
+/// The error for an `@<file>` kind this port neither reads nor writes.
+///
+/// Leo converts an `@jupytext` notebook to and from Python text with the
+/// jupytext package, which has no Rust counterpart. Read as an `@file`, the
+/// notebook's JSON would be overwritten with sentinel text.
+fn unsupported_kind(o: &Outline, p: &Position) -> Option<Error> {
+    let detail = if p.is_at_shadow_file_node(o) {
+        "@shadow is deprecated and not supported"
+    } else if p.is_at_jupytext_node(o) {
+        "@jupytext is not supported: it needs the jupytext package"
+    } else {
+        return None;
+    };
+    Some(Error::Unsupported {
+        detail: detail.to_string(),
+    })
 }
 
 fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool> {
@@ -218,6 +252,10 @@ fn read_at_file_node(o: &mut Outline, p: &Position) -> Result<bool> {
 fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
     let contents = read_file_to_string(&path)?;
+    let h = p.h(o);
+    if crate::importers::spec_for(h, &path).is_none() && !crate::importers::is_unported(h, &path) {
+        return read_unknown_file_type(o, p, &path, contents);
+    }
     let report = crate::importers::import_string(o, p, &contents, &path)?;
     // An importer may normalize what it read. Say so: the file changes on the
     // next write even if nobody edits the outline.
@@ -259,6 +297,48 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool> {
     Ok(true)
 }
 
+/// Read an `@auto` file no importer splits: the whole file in p's body, after
+/// a directive naming its language, as Leo's `ic.scanUnknownFileType`.
+fn read_unknown_file_type(
+    o: &mut Outline,
+    p: &Position,
+    path: &str,
+    contents: String,
+) -> Result<bool> {
+    let contents = contents.replace('\r', "");
+    let (_, ext) = util::os_path_splitext(path);
+    let head = match ext.to_lowercase().as_str() {
+        ".html" | ".htm" => "@language html\n".to_string(),
+        ".txt" | ".text" => "@nocolor\n".to_string(),
+        ext => match language_for_extension(ext) {
+            language if language.is_empty() => String::new(),
+            language => format!("@language {language}\n"),
+        },
+    };
+    o.detach_subtree(p.v);
+    o.node_mut(p.v).b = format!("{head}{contents}");
+    // A line such as `@others` in the file would not survive the write.
+    let written = crate::importers::write_string(o, p, path);
+    // The writer ends the file with a newline, as it does after an importer.
+    if !written
+        .as_ref()
+        .is_ok_and(|text| *text == contents || *text == format!("{contents}\n"))
+    {
+        o.node_mut(p.v).b = contents;
+        let detail = written.map_or_else(|e| e.to_string(), |_| "text differs".to_string());
+        return Err(Error::Import {
+            path: util::short_file_name(path),
+            detail: format!(
+                "the file would not be written back unchanged: {detail}. \
+                 The whole file is in the node's body."
+            ),
+        });
+    }
+    o.remember_read_path(p, path);
+    o.clear_dirty_in_tree(p);
+    Ok(true)
+}
+
 /// Read an `@edit` file: one node, no structure, prefixed by a language directive.
 fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool> {
     let path = o.full_path(p);
@@ -281,7 +361,7 @@ fn read_one_at_edit_node(o: &mut Outline, p: &Position) -> Result<bool> {
         ".txt" | ".text" => "@nocolor\n".to_string(),
         _ => {
             let language = language_for_extension(&ext);
-            if language != "unknown_language" {
+            if !language.is_empty() && language != "unknown_language" {
                 format!("@language {language}\n")
             } else {
                 "@nocolor\n".to_string()
@@ -336,13 +416,8 @@ pub fn import_at_file(o: &mut Outline, p: &Position) -> Result<bool> {
 ///
 /// False if p's body does not start with them, as `@first` then cannot work.
 fn mark_first_lines(o: &mut Outline, p: &Position, text: &str) -> bool {
-    static CODING: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"^[ \t\f]*#.*?coding[:=]").unwrap());
     let lines = util::split_lines(text);
-    let mut n = usize::from(lines.first().is_some_and(|l| l.starts_with("#!")));
-    if lines.get(n).is_some_and(|l| CODING.is_match(l)) {
-        n += 1;
-    }
+    let n = first_lines(&lines);
     let body = o.node(p.v).b.clone();
     let Some(rest) = body.strip_prefix(lines[..n].concat().as_str()) else {
         return false;
@@ -350,6 +425,15 @@ fn mark_first_lines(o: &mut Outline, p: &Position, text: &str) -> bool {
     let marked: String = lines[..n].iter().map(|l| format!("@first {l}")).collect();
     o.node_mut(p.v).b = format!("{marked}{rest}");
     true
+}
+
+/// How many of `lines` must stay first in the file: a `#!` line, then a
+/// PEP 263 coding line.
+pub fn first_lines(lines: &[String]) -> usize {
+    static CODING: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"^[ \t\f]*#.*?coding[:=]").unwrap());
+    let n = usize::from(lines.first().is_some_and(|l| l.starts_with("#!")));
+    n + usize::from(lines.get(n).is_some_and(|l| CODING.is_match(l)))
 }
 
 /// True if p's tree, written without sentinels, is `text`.
@@ -371,8 +455,9 @@ pub fn language_for_extension(ext: &str) -> String {
         _ => langdata::extension_dict().get(ext).copied(),
     };
     match language {
-        Some(l) if l != "none" && l != "None" && !l.is_empty() => l.to_string(),
-        _ => "unknown_language".to_string(),
+        Some("none" | "None") => "unknown_language".to_string(),
+        // Leo answers "" for an extension it has never heard of.
+        language => language.unwrap_or_default().to_string(),
     }
 }
 
@@ -414,11 +499,29 @@ pub fn encoding_is_supported(encoding: &str) -> bool {
 
 /// The `@<file>` nodes to write. With `dirty_only`, only those needing it.
 pub fn find_files_to_write(o: &Outline, dirty_only: bool) -> (Vec<Position>, Vec<String>) {
+    let (mut files, ignored) = files_to_write(o, o.root_position(), None);
+    if dirty_only {
+        files.retain(|p| p.is_dirty(o));
+    }
+    (files, ignored)
+}
+
+/// The `@<file>` nodes at or under `root`, dirty or not: Leo's
+/// `findFilesToWrite` for `write-at-file-nodes`.
+pub fn find_files_to_write_under(o: &Outline, root: &Position) -> (Vec<Position>, Vec<String>) {
+    files_to_write(o, Some(root.clone()), root.node_after_tree(o))
+}
+
+fn files_to_write(
+    o: &Outline,
+    start: Option<Position>,
+    after: Option<Position>,
+) -> (Vec<Position>, Vec<String>) {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut files = Vec::new();
     let mut ignored = Vec::new();
-    let mut p = o.root_position();
-    while let Some(cur) = p {
+    let mut p = start;
+    while let Some(cur) = p.filter(|cur| Some(cur) != after.as_ref()) {
         if !crate::node::find_at_file_name(cur.h(o), &["@leo"]).is_empty() {
             p = cur.node_after_tree(o);
         } else if cur.is_at_ignore_node(o) && !cur.is_at_asis_node(o) {
@@ -437,9 +540,6 @@ pub fn find_files_to_write(o: &Outline, dirty_only: bool) -> (Vec<Position>, Vec
         } else {
             p = cur.thread_next(o);
         }
-    }
-    if dirty_only {
-        files.retain(|p| p.is_dirty(o));
     }
     (files, ignored)
 }
@@ -570,10 +670,8 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
 /// directives removed, `@asis` is the tree's text verbatim, and only the rest
 /// go through the sentinel writer.
 pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, String)> {
-    if p.is_at_shadow_file_node(o) {
-        return Err(Error::Unsupported {
-            detail: "@shadow is deprecated and not supported".to_string(),
-        });
+    if let Some(error) = unsupported_kind(o, p) {
+        return Err(error);
     }
     let at = atfile_write::AtWrite::new(o, p);
     let newline = at.output_newline.clone();

@@ -5,8 +5,10 @@
 //! the other. Beads record the inverse of an operation rather than a snapshot
 //! of the tree, so the cost of an edit does not grow with the outline.
 //!
-//! Deleting a node never frees its vnode, which is what makes undoing a
-//! delete a matter of relinking rather than rebuilding.
+//! Deleting a node keeps its vnode while a bead names it, which is what makes
+//! undoing a delete a matter of relinking rather than rebuilding. The stack
+//! holds [`DEFAULT_LIMIT`] beads; once older ones drop off, the vnodes only
+//! they named are freed (`Document`).
 
 use crate::node::{status, VnodeId};
 use crate::outline::Outline;
@@ -16,79 +18,178 @@ use crate::position::Position;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Bead {
+    /// A body was set.
     Body {
+        /// The node edited.
         v: VnodeId,
+        /// The body before the edit.
         old: String,
+        /// The body after the edit.
         new: String,
     },
+    /// A headline was set.
     Headline {
+        /// The node edited.
         v: VnodeId,
+        /// The headline before the edit.
         old: String,
+        /// The headline after the edit.
         new: String,
     },
     /// A node was linked in. Undo cuts the link.
     Insert {
+        /// The node `v` was linked under.
         parent: VnodeId,
+        /// `v`'s child index in `parent`.
         index: usize,
+        /// The node inserted.
         v: VnodeId,
     },
     /// A node was unlinked. Undo puts it back where it was.
     Delete {
+        /// The node `v` was unlinked from.
         parent: VnodeId,
+        /// `v`'s child index in `parent` before the delete.
         index: usize,
+        /// The node deleted.
         v: VnodeId,
     },
+    /// A node was moved to another parent or child index.
     Move {
+        /// The node moved.
         v: VnodeId,
+        /// Parent and child index before the move.
         from: (VnodeId, usize),
+        /// Parent and child index after the move.
         to: (VnodeId, usize),
     },
+    /// A node was marked or unmarked.
     Mark {
+        /// The node toggled.
         v: VnodeId,
+        /// The mark before the edit.
         was_marked: bool,
     },
     /// A parent's children were put in another order.
     Sort {
+        /// The node whose children were sorted.
         parent: VnodeId,
+        /// The children before the sort.
         old: Vec<VnodeId>,
+        /// The children after the sort.
         new: Vec<VnodeId>,
     },
     /// Several edits that undo as one, such as a paste or a demote.
     Group {
+        /// The group's operation name.
         name: String,
+        /// The edits, in the order made.
         beads: Vec<Bead>,
     },
 }
 
+/// How many beads the stack keeps, as vim's default `undolevels`.
+pub const DEFAULT_LIMIT: usize = 1000;
+
 /// The undo stack, with the name of each operation for a menu or status line.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Undoer {
     beads: Vec<(String, Bead)>,
     /// How many beads have been applied. Redo replays from here.
     index: usize,
     /// Beads being collected into one group, innermost last.
     open_groups: Vec<(String, Vec<Bead>)>,
+    /// The most beads kept; the oldest go first.
+    limit: usize,
+    /// Beads dropped since the vnodes they named were last freed.
+    dropped: usize,
+}
+
+impl Default for Undoer {
+    fn default() -> Self {
+        Self {
+            beads: Vec::new(),
+            index: 0,
+            open_groups: Vec::new(),
+            limit: DEFAULT_LIMIT,
+            dropped: 0,
+        }
+    }
 }
 
 impl Undoer {
+    /// An empty history keeping [`DEFAULT_LIMIT`] beads.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Keep at most `limit` beads, at least one.
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit.max(1);
+        self.trim();
+    }
+
+    /// Drop the oldest beads beyond the limit.
+    fn trim(&mut self) {
+        let over = self.beads.len().saturating_sub(self.limit);
+        self.beads.drain(..over);
+        self.index = self.index.saturating_sub(over);
+        self.dropped += over;
+    }
+
+    /// How many beads have dropped off since `take_dropped` last ran.
+    pub(crate) fn dropped(&self) -> usize {
+        self.dropped
+    }
+
+    pub(crate) fn take_dropped(&mut self) -> usize {
+        std::mem::take(&mut self.dropped)
+    }
+
+    /// Every vnode a bead still names, to keep when freeing the rest.
+    pub(crate) fn referenced(&self) -> Vec<VnodeId> {
+        fn walk(bead: &Bead, out: &mut Vec<VnodeId>) {
+            match bead {
+                Bead::Body { v, .. } | Bead::Headline { v, .. } | Bead::Mark { v, .. } => {
+                    out.push(*v)
+                }
+                Bead::Insert { parent, v, .. } | Bead::Delete { parent, v, .. } => {
+                    out.extend([*parent, *v])
+                }
+                Bead::Move { v, from, to } => out.extend([*v, from.0, to.0]),
+                Bead::Sort { parent, old, new } => {
+                    out.push(*parent);
+                    out.extend(old.iter().chain(new));
+                }
+                Bead::Group { beads, .. } => beads.iter().for_each(|b| walk(b, out)),
+            }
+        }
+        let mut out = Vec::new();
+        let open = self.open_groups.iter().flat_map(|(_, beads)| beads);
+        for bead in self.beads.iter().map(|(_, b)| b).chain(open) {
+            walk(bead, &mut out);
+        }
+        out
+    }
+
+    /// True if there is an operation to undo.
     pub fn can_undo(&self) -> bool {
         self.index > 0
     }
 
+    /// True if there is an undone operation to redo.
     pub fn can_redo(&self) -> bool {
         self.index < self.beads.len()
     }
 
+    /// Name of the operation [`Undoer::undo`] would reverse.
     pub fn undo_name(&self) -> Option<&str> {
         self.beads
             .get(self.index.checked_sub(1)?)
             .map(|b| b.0.as_str())
     }
 
+    /// Name of the operation [`Undoer::redo`] would replay.
     pub fn redo_name(&self) -> Option<&str> {
         self.beads.get(self.index).map(|b| b.0.as_str())
     }
@@ -118,9 +219,12 @@ impl Undoer {
         self.beads.truncate(self.index);
         self.beads.push((name.to_string(), bead));
         self.index = self.beads.len();
+        self.trim();
     }
 
+    /// Drop every bead and any open group.
     pub fn clear(&mut self) {
+        self.dropped += self.beads.len();
         self.beads.clear();
         self.index = 0;
         self.open_groups.clear();

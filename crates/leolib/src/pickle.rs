@@ -100,17 +100,23 @@ pub fn unhexlify_loads(hex: &str) -> Result<Value> {
 pub fn loads(bytes: &[u8]) -> Result<Value> {
     let mut stack: Vec<Value> = Vec::new();
     let mut marks: Vec<usize> = Vec::new();
-    let mut memo: Vec<Value> = Vec::new();
-    let mut i = 0usize;
-    let put = |memo: &mut Vec<Value>, n: usize, v: Value| {
-        if memo.len() <= n {
-            memo.resize(n + 1, Value::None);
+    // A map, as Python's: the index is the blob's to choose, up to 2^32.
+    let mut memo: std::collections::HashMap<usize, Value> = Default::default();
+    // Values built, each memo copy counted whole. Python shares a memo entry
+    // where this copies it, so nested GETs could double the size per level.
+    let mut built = 0usize;
+    let mut count = |n: usize| {
+        built += n;
+        match built > MAX_VALUES {
+            true => Err(oops(format!("more than {MAX_VALUES} values"))),
+            false => Ok(()),
         }
-        memo[n] = v;
     };
+    let mut i = 0usize;
     while i < bytes.len() {
         let op = bytes[i];
         i += 1;
+        count(1)?;
         match op {
             b'.' => {
                 // STOP. Trailing bytes are not this module's business.
@@ -183,7 +189,8 @@ pub fn loads(bytes: &[u8]) -> Result<Value> {
                     _ => u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize,
                 };
                 let top = stack.last().ok_or_else(|| oops("PUT on an empty stack"))?;
-                put(&mut memo, n, top.clone());
+                count(size(top))?;
+                memo.insert(n, top.clone());
             }
             b'h' | b'j' => {
                 let width = if op == b'h' { 1 } else { 4 };
@@ -192,8 +199,9 @@ pub fn loads(bytes: &[u8]) -> Result<Value> {
                     1 => raw[0] as usize,
                     _ => u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize,
                 };
-                let v = memo.get(n).cloned().ok_or_else(|| oops("GET past memo"))?;
-                stack.push(v);
+                let v = memo.get(&n).ok_or_else(|| oops("GET past memo"))?;
+                count(size(v))?;
+                stack.push(v.clone());
             }
             b's' => {
                 let value = stack.pop().ok_or_else(|| oops("SETITEM without value"))?;
@@ -229,6 +237,26 @@ pub fn loads(bytes: &[u8]) -> Result<Value> {
         }
     }
     Err(oops("no STOP opcode"))
+}
+
+/// The most values one blob may build. The largest blob in a leo-editor
+/// checkout builds under 100. The cap also bounds how deep a value nests, so
+/// dropping one cannot overflow the stack.
+const MAX_VALUES: usize = 4096;
+
+/// How many values `v` holds, itself included.
+fn size(v: &Value) -> usize {
+    let mut n = 0;
+    let mut todo = vec![v];
+    while let Some(v) = todo.pop() {
+        n += 1;
+        match v {
+            Value::List(items) => todo.extend(items),
+            Value::Dict(items) => todo.extend(items.iter().flat_map(|(k, v)| [k, v])),
+            _ => {}
+        }
+    }
+    n
 }
 
 fn take<'a>(bytes: &'a [u8], i: &mut usize, n: usize) -> Result<&'a [u8]> {
@@ -400,6 +428,19 @@ fn save_memo(out: &mut Vec<u8>, memo: &mut usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_hostile_blob_is_refused_not_allocated() {
+        // LONG_BINPUT at index 2^32 - 1 once resized the memo to that length.
+        assert!(loads(b"]r\xff\xff\xff\xff.").is_ok());
+        // Each level GETs the last one twice: 2^40 values, if copied.
+        let mut blob = b"]q\x00".to_vec();
+        for n in 0..40u8 {
+            blob.extend([b']', b'h', n, b'a', b'h', n, b'a', b'q', n + 1]);
+        }
+        blob.push(b'.');
+        assert!(loads(&blob).is_err());
+    }
+
     use super::*;
 
     /// Blobs taken from a leo-editor checkout, with what Python unpickles

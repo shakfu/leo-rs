@@ -40,29 +40,58 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_help(f, app, area);
     }
     draw_menu(f, app, area);
+    if app.depth == Depth::None {
+        strip_colour(f.buffer_mut());
+    }
+}
+
+/// Take every colour out of a finished frame, as `NO_COLOR` asks. A cell
+/// that had a background, such as the selected row, is shown reversed.
+fn strip_colour(buffer: &mut ratatui::buffer::Buffer) {
+    for cell in buffer.content.iter_mut() {
+        if cell.bg != Color::Reset {
+            cell.modifier.insert(Modifier::REVERSED);
+        }
+        cell.fg = Color::Reset;
+        cell.bg = Color::Reset;
+    }
+}
+
+/// The style the theme gives one of the panes' scopes.
+fn ui_style(app: &App, scope: &str) -> Style {
+    let face = app.theme.face(scope);
+    let mut style = Style::default();
+    if let Some(colour) = face.fg {
+        style = style.fg(terminal_colour(colour.reduce(app.depth)));
+    }
+    if let Some(colour) = face.bg {
+        style = style.bg(terminal_colour(colour.reduce(app.depth)));
+    }
+    if face.bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if face.italic {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    style
 }
 
 /// The path to the current node, so a deep node says where it is.
 fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
     let text = truncate(&format!(" {}", app.breadcrumb()), area.width as usize);
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            text,
-            Style::default().fg(Color::Cyan),
-        ))),
-        area,
-    );
+    let style = ui_style(app, "ui.text.focus");
+    f.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
 /// The border of the focused pane is thick; the other is plain.
-fn pane_block(title: String, focused: bool) -> Block<'static> {
+fn pane_block(app: &App, title: String, focused: bool) -> Block<'static> {
     let block = Block::default().borders(Borders::ALL).title(title);
     if focused {
         block
             .border_type(BorderType::Thick)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(ui_style(app, "ui.text.focus"))
     } else {
-        block.border_style(Style::default().fg(Color::DarkGray))
+        block.border_style(ui_style(app, "ui.window"))
     }
 }
 
@@ -100,20 +129,14 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
         let indent = "  ".repeat(row.depth);
         let prefix = format!("{flags}{indent}{marker}");
         let text = truncate(&format!("{prefix}{}", row.headline), width);
-        let style = if i == current {
-            let bg = if focused {
-                Color::Blue
-            } else {
-                Color::DarkGray
-            };
-            Style::default()
-                .bg(bg)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+        let style = if i == current && focused {
+            ui_style(app, "ui.menu.selected")
+        } else if i == current {
+            ui_style(app, "ui.selection")
         } else if row.marked {
-            Style::default().fg(Color::Yellow)
+            ui_style(app, "warning")
         } else if row.is_file {
-            Style::default().fg(Color::Green)
+            ui_style(app, "ui.text.directory")
         } else {
             Style::default()
         };
@@ -140,7 +163,7 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
 
     let title = format!(" outline {}/{} ", current + 1, rows.len());
     f.render_widget(
-        Paragraph::new(lines).block(pane_block(title, focused)),
+        Paragraph::new(lines).block(pane_block(app, title, focused)),
         area,
     );
 }
@@ -155,28 +178,60 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     let inner_width = area.width.saturating_sub(2) as usize;
     app.body_height = inner_height.max(1);
 
-    // Scroll to the cursor while editing, and by hand otherwise.
-    let max_top = lines.len().saturating_sub(1);
-    let top = match cursor {
-        Some((row, _)) if inner_height > 0 => {
-            if row < app.body_scroll {
-                row
-            } else if row >= app.body_scroll + inner_height {
-                row + 1 - inner_height
-            } else {
-                app.body_scroll
-            }
-        }
-        _ => app.body_scroll.min(max_top),
-    };
-    app.body_scroll = top;
-
     let number_width = if app.options.number {
         format!("{} ", lines.len()).len()
     } else {
         0
     };
-    let text_width = inner_width.saturating_sub(number_width);
+    let text_width = inner_width.saturating_sub(number_width).max(1);
+    let tab = tab_stop(app);
+    let wrap = app.options.wrap;
+    // Screen rows each line takes: one, or as many as wrapping needs.
+    let rows_of = |i: usize| -> usize {
+        if !wrap {
+            return 1;
+        }
+        let line = lines.get(i).map_or("", |l| l.as_str());
+        let mut width = display_col(line, line.chars().count(), tab);
+        if let Some((_, col)) = cursor.filter(|c| c.0 == i) {
+            width = width.max(display_col(line, col, tab) + 1);
+        }
+        width.div_ceil(text_width).max(1)
+    };
+    // The cursor's column on screen, and the row of its line it falls in.
+    let cursor_col = cursor.map(|(row, col)| {
+        let line = lines.get(row).map_or("", |l| l.as_str());
+        display_col(line, col, tab)
+    });
+
+    // Scroll to the cursor while editing, and by hand otherwise.
+    let max_top = lines.len().saturating_sub(1);
+    let mut top = match cursor {
+        Some((row, _)) if row < app.body_scroll => row,
+        Some(_) => app.body_scroll,
+        None => app.body_scroll.min(max_top),
+    };
+    if let (Some((row, _)), Some(col)) = (cursor, cursor_col) {
+        let below = |top: usize| {
+            (top..row).map(rows_of).sum::<usize>() + if wrap { col / text_width } else { 0 }
+        };
+        while top < row && below(top) >= inner_height {
+            top += 1;
+        }
+    }
+    app.body_scroll = top;
+    // Without wrapping, the view slides sideways to keep the cursor on it.
+    if wrap || cursor.is_none() {
+        app.body_hscroll = 0;
+    } else if let Some(col) = cursor_col {
+        if col < app.body_hscroll {
+            app.body_hscroll = col;
+        } else if col >= app.body_hscroll + text_width {
+            app.body_hscroll = col + 1 - text_width;
+        }
+    }
+    let hscroll = app.body_hscroll;
+
     // The language comes from the model, and the body may change it partway
     // through: see `highlight`. A node nothing declares a language for is left
     // plain rather than coloured as whatever the outline's default is.
@@ -190,57 +245,62 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let palette = palette(&app.theme, app.depth);
     let hlsearch = app.hlsearch.clone();
-    let shown: Vec<Line> = lines
-        .iter()
-        .enumerate()
-        .skip(top)
-        .take(inner_height)
-        .map(|(i, l)| {
-            // A selected line is shown reversed. The exact columns matter less
-            // than seeing what an operator would take.
-            let selected = matches!(selection, Some((a, b, _)) if i >= a.0 && i <= b.0);
-            let mut cells: Vec<Span> = Vec::new();
+    let selected_style = ui_style(app, "ui.selection");
+    let linenr = ui_style(app, "ui.linenr");
+    let mut shown: Vec<Line> = Vec::new();
+    let mut last = top;
+    for (i, l) in lines.iter().enumerate().skip(top) {
+        if shown.len() >= inner_height {
+            break;
+        }
+        last = i;
+        // A selected line is shown reversed. The exact columns matter less
+        // than seeing what an operator would take.
+        let selected = matches!(selection, Some((a, b, _)) if i >= a.0 && i <= b.0);
+        let base = if selected {
+            selected_style
+        } else {
+            Style::default()
+        };
+        let matches = hlsearch
+            .as_ref()
+            .map_or_else(Vec::new, |re| crate::search::ranges(re, l));
+        // The runs are consecutive slices of the line; `offset` is where
+        // each starts, so a match can be cut out of whichever it crosses.
+        let mut pieces: Vec<(&str, Style)> = Vec::new();
+        let mut offset = 0;
+        for (text, class) in split_line(l, spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])) {
+            let local: Vec<std::ops::Range<usize>> = matches
+                .iter()
+                .map(|r| r.start.saturating_sub(offset)..r.end.saturating_sub(offset))
+                .collect();
+            offset += text.len();
+            for (piece, hit) in cut(text, &local) {
+                let style = style_for(class, base, &palette);
+                let style = if hit {
+                    style.patch(match_style())
+                } else {
+                    style
+                };
+                pieces.push((piece, style));
+            }
+        }
+        let cells = expand(&pieces, tab);
+        let (from, count) = if wrap { (0, rows_of(i)) } else { (hscroll, 1) };
+        for k in 0..count.min(inner_height - shown.len()) {
+            let mut row: Vec<Span> = Vec::new();
             if number_width > 0 {
-                cells.push(Span::styled(
-                    format!("{:>w$} ", i + 1, w = number_width.saturating_sub(1)),
-                    Style::default().fg(Color::DarkGray),
-                ));
+                let number = match k {
+                    0 => format!("{:>w$} ", i + 1, w = number_width.saturating_sub(1)),
+                    _ => " ".repeat(number_width),
+                };
+                row.push(Span::styled(number, linenr));
             }
-            let base = if selected {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
-            } else {
-                Style::default()
-            };
-            let matches = hlsearch
-                .as_ref()
-                .map_or_else(Vec::new, |re| crate::search::ranges(re, l));
-            // The runs are consecutive slices of the line; `offset` is where
-            // each starts, so a match can be cut out of whichever it crosses.
-            let mut offset = 0;
-            for (text, class) in split_line(l, spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])) {
-                let local: Vec<std::ops::Range<usize>> = matches
-                    .iter()
-                    .map(|r| r.start.saturating_sub(offset)..r.end.saturating_sub(offset))
-                    .collect();
-                offset += text.len();
-                for (piece, hit) in cut(text, &local) {
-                    let piece = truncate(&piece.replace('\t', "    "), text_width);
-                    if piece.is_empty() {
-                        continue;
-                    }
-                    let style = style_for(class, base, &palette);
-                    let style = if hit {
-                        style.patch(match_style())
-                    } else {
-                        style
-                    };
-                    cells.push(Span::styled(piece, style));
-                }
-            }
-            Line::from(cells)
-        })
-        .collect();
-    let more = lines.len().saturating_sub(top + inner_height);
+            row.extend(columns(&cells, from + k * text_width, text_width));
+            shown.push(Line::from(row));
+        }
+    }
+    let more = lines.len().saturating_sub(last + 1);
     let title = match app.mode {
         Mode::Insert => " body -- INSERT ".to_string(),
         Mode::Visual => " body -- VISUAL ".to_string(),
@@ -248,19 +308,89 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         _ => " body ".to_string(),
     };
     let focused = app.focus == Focus::Body;
-    let paragraph = Paragraph::new(shown).block(pane_block(title, focused));
-    let paragraph = if app.options.wrap {
-        paragraph.wrap(ratatui::widgets::Wrap { trim: false })
-    } else {
-        paragraph
-    };
-    f.render_widget(paragraph, area);
+    f.render_widget(
+        Paragraph::new(shown).block(pane_block(app, title, focused)),
+        area,
+    );
 
-    if let Some((row, col)) = cursor {
-        let x = area.x + 1 + number_width as u16 + col.min(text_width.saturating_sub(1)) as u16;
-        let y = area.y + 1 + (row.saturating_sub(top)) as u16;
-        f.set_cursor_position((x, y));
+    if let (Some((row, _)), Some(col)) = (cursor, cursor_col) {
+        let (dy, dx) = match wrap {
+            true => (col / text_width, col % text_width),
+            false => (0, col - hscroll),
+        };
+        let y = (top..row).map(rows_of).sum::<usize>() + dy;
+        let x = area.x as usize + 1 + number_width + dx.min(text_width - 1);
+        f.set_cursor_position((
+            x as u16,
+            area.y + 1 + y.min(inner_height.saturating_sub(1)) as u16,
+        ));
     }
+}
+
+/// The columns a tab advances to: the node's `@tabwidth`, as a width.
+fn tab_stop(app: &App) -> usize {
+    app.outline()
+        .get_tab_width(&app.current)
+        .unsigned_abs()
+        .clamp(1, 16) as usize
+}
+
+/// The cells a character takes. A control character takes none.
+fn char_width(ch: char) -> usize {
+    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+}
+
+/// The screen column at which character `col` of `line` starts.
+pub fn display_col(line: &str, col: usize, tab: usize) -> usize {
+    line.chars().take(col).fold(0, |at, ch| match ch {
+        '\t' => at + tab - at % tab,
+        ch => at + char_width(ch),
+    })
+}
+
+/// A line's characters, each with its style and screen column, tabs expanded
+/// to blanks at stops of `tab` columns.
+fn expand(pieces: &[(&str, Style)], tab: usize) -> Vec<(char, Style, usize)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (text, style) in pieces {
+        for ch in text.chars() {
+            if ch == '\t' {
+                for _ in 0..tab - at % tab {
+                    out.push((' ', *style, at));
+                    at += 1;
+                }
+            } else if char_width(ch) > 0 {
+                out.push((ch, *style, at));
+                at += char_width(ch);
+            }
+        }
+    }
+    out
+}
+
+/// The spans covering `width` screen columns from column `from`. A wide
+/// character cut by either edge is drawn as a blank.
+fn columns(cells: &[(char, Style, usize)], from: usize, width: usize) -> Vec<Span<'static>> {
+    let end = from + width;
+    let mut spans: Vec<Span> = Vec::new();
+    let mut push = |text: String, style: Style| match spans.last_mut() {
+        Some(last) if last.style == style => last.content.to_mut().push_str(&text),
+        _ => spans.push(Span::styled(text, style)),
+    };
+    for &(ch, style, at) in cells {
+        let w = char_width(ch);
+        if at + w <= from || at >= end {
+            continue;
+        }
+        if at < from || at + w > end {
+            let blanks = (at + w).min(end) - at.max(from);
+            push(" ".repeat(blanks), style);
+        } else {
+            push(ch.to_string(), style);
+        }
+    }
+    spans
 }
 
 fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
@@ -323,7 +453,17 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// The help overlay, generated from the binding table.
 fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
-    let lines = help_lines(app.focus);
+    let (name, lines) = match &app.overlay {
+        Some((name, lines)) => (name.clone(), lines.clone()),
+        None => {
+            let pane = if app.focus == Focus::Tree {
+                "outline"
+            } else {
+                "body"
+            };
+            (format!("keys: {pane} pane"), help_lines(app.focus))
+        }
+    };
     // Never wider than 80, never narrower than the terminal allows.
     let w = area.width.saturating_sub(8).clamp(20, 80);
     let h = area.height.saturating_sub(4).max(6);
@@ -342,12 +482,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         .map(|l| Line::from(truncate(l, w.saturating_sub(2) as usize)))
         .collect();
     let title = format!(
-        " keys: {} pane  {}-{}/{}  q closes ",
-        if app.focus == Focus::Tree {
-            "outline"
-        } else {
-            "body"
-        },
+        " {name}  {}-{}/{}  q closes ",
         app.help_scroll + 1,
         (app.help_scroll + inner).min(lines.len()),
         lines.len()

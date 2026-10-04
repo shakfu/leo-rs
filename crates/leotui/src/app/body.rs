@@ -325,6 +325,55 @@ impl App {
             None => self.message = "nothing to extract".to_string(),
         }
     }
+
+    /// Leo's `goto-global-line`: select the node that writes line `n` of the
+    /// selection's external file, with the body cursor on that line.
+    pub fn goto_global_line(&mut self, n: usize) {
+        match leolib::goto::find_file_line(self.outline(), &self.current, n) {
+            Some((p, row)) => {
+                self.select(p);
+                self.focus = Focus::Body;
+                self.editor.cursor = (row, 0);
+                let lines = self.body_buffer();
+                self.editor.clamp(&lines);
+                self.scroll_to_cursor();
+                self.message = format!("goto-global-line found: {n}");
+            }
+            None => self.message = format!("goto-global-line not found: {n}"),
+        }
+    }
+
+    /// Leo's `show-file-line`, the reverse: the line of the external file
+    /// that the cursor's line is written to.
+    pub fn show_file_line(&mut self) {
+        let row = self.editor.cursor.0;
+        self.message = match leolib::goto::file_line(self.outline(), &self.current, row) {
+            Some(n) => format!("line {n}"),
+            None => "this line is in no external file".to_string(),
+        };
+    }
+
+    /// Leo's `reformat-paragraph`: wrap the paragraph at the cursor, or at the
+    /// start of the VISUAL lines, to `@pagewidth`, and move to the next one.
+    pub fn reformat_paragraph(&mut self) {
+        let mut row = self.editor.cursor.0;
+        if let Some((anchor, _)) = self.editor.visual.take() {
+            row = row.min(anchor.0);
+        }
+        if self.mode == Mode::Visual {
+            self.mode = Mode::Normal;
+        }
+        let p = self.current.clone();
+        match self.doc.reformat_paragraph(&p, row) {
+            Some(next) => {
+                self.editor.cursor = (next, 0);
+                let lines = self.body_buffer();
+                self.editor.clamp(&lines);
+                self.scroll_to_cursor();
+            }
+            None => self.message = "no paragraph here".to_string(),
+        }
+    }
 }
 
 /// `;` and `,` differ only in direction.

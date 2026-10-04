@@ -21,6 +21,8 @@ once_cell = "1"
 regex = "1"
 crossterm = "0.29"
 ratatui = "0.30"
+# Already in the build through ratatui; the body measures cursor columns with it.
+unicode-width = "0.2"
 clap = { version = "4", features = ["derive"] }
 
 # Colouring. Each grammar is a compiled parse table, about 1MB in the release

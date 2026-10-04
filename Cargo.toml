@@ -3,8 +3,9 @@ resolver = "2"
 members = ["crates/leolib", "crates/leotui"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
+# leotui's floor: tree-sitter-language 0.1.8 requires 1.90. leolib sets its own.
 rust-version = "1.90"
 license = "MIT"
 repository = "https://github.com/shakfu/leo-rs"
@@ -12,7 +13,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Keep in step with [workspace.package] version.
-leolib = { path = "crates/leolib", version = "0.5.0" }
+leolib = { path = "crates/leolib", version = "0.6.0" }
 
 [profile.release]
 lto = true

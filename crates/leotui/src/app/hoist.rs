@@ -22,7 +22,7 @@ impl App {
         let p = self.current.clone();
         let expanded = self.outline().is_expanded(&p);
         self.hoists.push((p.clone(), expanded));
-        self.doc.outline.expand(&p);
+        self.doc.outline_mut_untracked().expand(&p);
         self.message = format!("hoist: {}", p.h(self.outline()));
     }
 
@@ -32,7 +32,7 @@ impl App {
             return;
         };
         if !expanded {
-            self.doc.outline.contract(&p);
+            self.doc.outline_mut_untracked().contract(&p);
         }
         self.message = format!("dehoist: {}", p.h(self.outline()));
     }
@@ -45,7 +45,7 @@ impl App {
     /// Pop hoists until `p` shows, and any whose node an edit has moved.
     pub(super) fn dehoist_to_show(&mut self, p: &Position) {
         while let Some(h) = self.hoist_limit() {
-            if self.outline().position_is_linked(h) && self.in_view(p) {
+            if self.outline().position_exists(h) && self.in_view(p) {
                 break;
             }
             self.hoists.pop();

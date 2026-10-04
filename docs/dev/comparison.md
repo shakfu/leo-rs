@@ -27,7 +27,7 @@ How each row was measured:
 
 - **Commands:** entries in `COMMANDS`; distinct names in leo-editor's `@cmd`, `@g.command` and `@g.commander_command` decorators.
 
-- **Load:** `hyperfine`, ten warm runs each, from process start to exit. Both used leo-editor's `leo/core/LeoPyRef.leo`, and σ was under 5ms.
+- **Load:** `hyperfine`, ten warm runs each, from process start to exit. `make bench LEO_EDITOR=...` now times leolib's part in-process; on 2026-10-04, on Linux, it read leo-editor `e3b3841f64`'s outline and files in 64ms. Both used leo-editor's `leo/core/LeoPyRef.leo`, and σ was under 5ms.
 
   - leo-rs: `leotui LeoPyRef.leo --dump`, release build.
 

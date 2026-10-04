@@ -83,10 +83,13 @@ pub fn optimize_leading_whitespace(line: &str, tab_width: i32) -> String {
     )
 }
 
+/// True for a blank or a tab. Leo's `is_ws`.
 pub fn is_ws(ch: u8) -> bool {
     ch == b'\t' || ch == b' '
 }
 
+/// True if byte `i` of `s` is `
+/// ` or `\r`. Leo's `is_nl`.
 pub fn is_nl(s: &str, i: usize) -> bool {
     let b = s.as_bytes();
     i < b.len() && (b[i] == b'\n' || b[i] == b'\r')
@@ -150,6 +153,7 @@ pub fn skip_to_end_of_line(s: &str, i: usize) -> usize {
     }
 }
 
+/// Byte index of the first non-blank, non-tab at or after `i`. Leo's `skip_ws`.
 pub fn skip_ws(s: &str, mut i: usize) -> usize {
     let b = s.as_bytes();
     while i < b.len() && is_ws(b[i]) {
@@ -158,6 +162,9 @@ pub fn skip_ws(s: &str, mut i: usize) -> usize {
     i
 }
 
+/// Skip one `\r
+/// `, `
+/// ` or `\r` at byte `i`. Leo's `skip_nl`.
 pub fn skip_nl(s: &str, i: usize) -> usize {
     if matches_at(s, i, "\r\n") {
         return i + 2;
@@ -231,10 +238,12 @@ pub fn find_on_line(s: &str, i: usize, pattern: &str) -> Option<usize> {
     s[i..j].find(pattern).map(|k| i + k)
 }
 
+/// `<<s>>`, a section name. Leo's `angleBrackets`.
 pub fn angle_brackets(s: &str) -> String {
     format!("<<{s}>>")
 }
 
+/// `s` cut to `n` characters, ending in `...` when cut.
 pub fn truncate(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         return s.to_string();
@@ -299,6 +308,8 @@ pub fn set_delims_from_string(s: &str) -> (String, String, String) {
     (a, b_, c)
 }
 
+/// Bytes from hex digits, as Python's `binascii.unhexlify`.
+/// None for an odd length or a non-hex character.
 pub fn unhexlify(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
@@ -315,6 +326,7 @@ pub fn unhexlify(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Lowercase hex digits for `bytes`, as Python's `binascii.hexlify`.
 pub fn hexlify(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -362,6 +374,7 @@ fn expand_user(path: &str) -> String {
     path.to_string()
 }
 
+/// `$HOME`, else `%USERPROFILE%`, else `/`.
 pub fn home_dir() -> String {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -422,7 +435,9 @@ pub fn finalize_join(args: &[&str]) -> String {
 /// What a file looked like when last seen: enough to tell that it changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileStamp {
+    /// Size in bytes.
     pub len: u64,
+    /// Modification time. None where the platform does not report it.
     pub modified: Option<std::time::SystemTime>,
 }
 
@@ -435,6 +450,7 @@ pub fn file_stamp(path: &str) -> Option<FileStamp> {
     })
 }
 
+/// The directory part of `path`, with forward slashes. Empty for a bare name.
 pub fn os_path_dirname(path: &str) -> String {
     Path::new(path)
         .parent()
@@ -442,6 +458,7 @@ pub fn os_path_dirname(path: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The last component of `path`. Empty if there is none.
 pub fn os_path_basename(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -461,6 +478,7 @@ pub fn os_path_splitext(path: &str) -> (String, String) {
     }
 }
 
+/// The base name of `path`. Leo's `shortFileName`.
 pub fn short_file_name(path: &str) -> String {
     os_path_basename(path)
 }

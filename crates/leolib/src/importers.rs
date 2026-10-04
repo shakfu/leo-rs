@@ -8,7 +8,7 @@
 //! [`LanguageSpec`] configures.
 //!
 //! The contract an importer must keep: the nodes it creates, tangled back with
-//! no sentinels, reproduce the file it read. [`import_file`] checks that and
+//! no sentinels, reproduce the file it read. The `@auto` reader checks that and
 //! refuses a tree that fails, because an `@auto` node that does not round-trip
 //! overwrites the user's file with something else the next time it is written.
 
@@ -60,6 +60,7 @@ pub enum EndOfBlock {
 /// Which `find_blocks` variant a language needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindBlocks {
+    /// One block per pattern match, ended by the language's `EndOfBlock`.
     Default,
     /// Python: never nest a `def` inside a `def`.
     Python,
@@ -74,9 +75,11 @@ pub enum FindBlocks {
 pub enum Postprocess {
     /// Move blank lines to the end of the previous sibling. Every language.
     BlankLines,
+    /// Python headlines, the module preamble, and class docstrings.
     Python,
     /// Move the module preamble into the parent.
     Preamble,
+    /// Move the leading `use` statements and their comments to the root.
     Rust,
 }
 
@@ -94,9 +97,13 @@ pub enum HeadlineKind {
 /// A whole importer that does not use the block algorithm at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineImporter {
+    /// Emacs org-mode: `*` levels.
     Org,
+    /// vim-outliner: tab depth, with `: ` body lines.
     Otl,
+    /// Markdown: `#` headings.
     Markdown,
+    /// Treepad: `<node>` records.
     Treepad,
 }
 
@@ -112,10 +119,15 @@ pub struct LanguageSpec {
     pub compound_statements: Vec<&'static str>,
     /// Blocks smaller than this are not split out. 0 creates every block.
     pub minimum_block_size: usize,
+    /// How guide lines are made.
     pub guide_kind: GuideKind,
+    /// How the end of a block is found.
     pub end_of_block: EndOfBlock,
+    /// Which `find_blocks` variant to run.
     pub find_blocks: FindBlocks,
+    /// The language's work after the tree is built.
     pub postprocess: Postprocess,
+    /// How block headlines are computed.
     pub headline: HeadlineKind,
     /// Set for the four importers that do not use blocks at all.
     pub line_importer: Option<LineImporter>,
@@ -415,7 +427,7 @@ fn build_languages() -> Vec<LanguageSpec> {
     otl.allow_mixed_whitespace = true; // Tabs are part of the otl format.
     out.push(otl);
 
-    let mut md = LanguageSpec::new("md", &[".md", ".markdown"]);
+    let mut md = LanguageSpec::new("md", &[".md", ".markdown", ".rmd"]);
     md.line_importer = Some(LineImporter::Markdown);
     md.at_auto_names = &["@auto-md", "@auto-markdown"];
     out.push(md);
@@ -425,6 +437,14 @@ fn build_languages() -> Vec<LanguageSpec> {
     out.push(treepad);
 
     out
+}
+
+/// True if Leo has an importer for the `@auto` node that this port lacks:
+/// `leo_rst.py`. Such a file is not read whole, since Leo would split it.
+pub fn is_unported(headline: &str, path: &str) -> bool {
+    let (_, ext) = util::os_path_splitext(path);
+    util::match_word(headline.trim(), 0, "@auto-rst")
+        || matches!(ext.to_lowercase().as_str(), ".rst" | ".rest")
 }
 
 /// The importer for an `@auto` node: by `@auto-<name>` first, then extension.
@@ -447,7 +467,9 @@ pub fn spec_for(headline: &str, path: &str) -> Option<&'static LanguageSpec> {
 /// What an import did, for a caller that wants to check or report it.
 #[derive(Debug, Default)]
 pub struct ImportReport {
+    /// The `@language` the importer wrote.
     pub language: String,
+    /// Nodes in the imported tree, counting the `@auto` node itself.
     pub nodes: usize,
     /// Set when leading tabs were converted to blanks, or the reverse. The
     /// file is then rewritten the next time this @auto node is written.
