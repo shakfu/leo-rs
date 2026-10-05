@@ -119,10 +119,13 @@ What the window adds to leotui:
 - Cmd-P goes to a node by its headline; Cmd-Shift-P runs a command by name.
 - Cmd-Shift-F opens the find panel: find, replace, Clone Find All, over the outline, a subtree or the marked nodes.
 - An `@<file>` row shows when its file is unread, changed on disk, never read, or unwritten; a bar offers Reload or Keep for a changed file.
-- Cmd-. lists a language server's code actions at the cursor.
+- Cmd-. lists a language server's code actions at the cursor. The status bar's LSP dot opens each server's state and log.
+- A hoisted node is named above the outline, with a De-hoist button; a cloned row shows its clone count, and its context menu lists the clones.
+- Dropping a `.leo` file opens it; dropping any other file imports it as `@auto`.
 
 ```sh
 make gui FILE=FILE.leo                                   # a release build
+make gui-glow FILE=FILE.leo                              # the same, drawn with OpenGL
 cargo run -p leoegui -- FILE.leo [MORE.leo...]
 cargo run -p leoegui -- --no-session                    # neither restore nor save the session
 cargo run -p leoegui -- FILE.leo --press F1 --screenshot out.ppm   # one frame, then exit
@@ -342,7 +345,17 @@ lsp-rust = "rust-analyzer"
 
 None is started otherwise: a server runs code from the project around the outline, and opening a `.leo` file should not choose that code.
 
-A server sees each external file as leolib writes it, so diagnostics, hover, definitions and renames work across the nodes of an `@file`, `@clean`, `@nosent` or code `@auto` tree. A node in no file is a document of its own. Diagnostics are underlined in the body, and the one on the cursor's line is on the status line; the servers hear an edit when INSERT commits it. `:lsp-diagnostics` lists the body's, and `:lsp-rename NAME` renames the symbol under the cursor in every node at once, as one undo. `:lsp-code-action` lists the server's fixes at the cursor; Up/Down or `j`/`k` and Enter, a digit, or `:lsp-code-action N` applies one, as one undo. A rename that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
+A server does what it offers, no more. `ruff server` (`lsp-python = "ruff server"`) gives diagnostics and fixes but no hover, definitions or completion; `pylsp` gives those. A `rust-analyzer` installed by rustup is a stub until `rustup component add rust-analyzer`. `:lsp-status` (leoegui: the status bar's LSP dot) shows whether each server started, and what it logged if it did not.
+
+A server sees each external file as leolib writes it, so it works across the nodes of an `@file`, `@clean`, `@nosent` or code `@auto` tree. A node in no file is a document of its own. The servers hear an edit when INSERT commits it.
+
+- Diagnostics are underlined in the body, and the one on the cursor's line is on the status line. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's.
+- `K` shows the hover, and `Ctrl-]` goes to the definition.
+- `:lsp-rename NAME` renames the symbol under the cursor in every node at once, as one undo.
+- In INSERT, Tab after a word character or a dot lists what the server would complete there, and Ctrl-n anywhere. Typing narrows the list; Tab or Enter takes one.
+- `:lsp-code-action` (leoegui: Cmd-.) lists the server's fixes at the cursor. Up/Down or `j`/`k` and Enter, a digit, or `:lsp-code-action N` applies one, as one undo. A fix that replaces the whole file is applied to just the lines it changes.
+
+An edit that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
 
 ## `@auto`
 

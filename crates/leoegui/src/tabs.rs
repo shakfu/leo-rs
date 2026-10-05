@@ -18,8 +18,8 @@ pub struct Tab {
 #[derive(Default)]
 pub struct Tabs {
     list: Vec<Tab>,
-    /// Each tab's node, found again only when the outline's shape changes:
-    /// a search is O(outline), and every frame draws every tab.
+    /// Each tab's node, found again only when the outline's shape changes,
+    /// and every frame draws every tab.
     found: std::collections::HashMap<String, Position>,
     generation: Option<u64>,
 }
@@ -35,22 +35,18 @@ impl Tabs {
         }
     }
 
-    /// Find every tab's node in one walk, if the outline changed shape.
+    /// Find every tab's node again, if the outline changed shape.
     fn refresh(&mut self, app: &App) {
         let o = app.outline();
         if self.generation == Some(o.generation) {
             return;
         }
         self.generation = Some(o.generation);
-        let wanted: std::collections::HashSet<&str> =
-            self.list.iter().map(|t| t.gnx.as_str()).collect();
-        self.found.clear();
-        for p in o.all_unique_positions() {
-            let gnx = p.gnx(o);
-            if wanted.contains(gnx) && !self.found.contains_key(gnx) {
-                self.found.insert(gnx.to_string(), p);
-            }
-        }
+        self.found = self
+            .list
+            .iter()
+            .filter_map(|t| Some((t.gnx.clone(), o.position_of_gnx(&t.gnx)?)))
+            .collect();
     }
 
     /// Open the selection in a tab, and pin a tab whose node was edited.

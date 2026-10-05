@@ -47,6 +47,41 @@ pub enum Request {
     /// The fixes and refactorings on offer at the position, with the
     /// diagnostics on its line.
     CodeActions,
+    /// What could be typed at the position.
+    Completion,
+}
+
+/// Something a server offers to type at a position.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Completion {
+    pub label: String,
+    /// A signature or type, when the server gives one.
+    pub detail: Option<String>,
+    /// `Function`, `Variable` and so on.
+    pub kind: Option<String>,
+    /// What to type.
+    pub text: String,
+    /// Where in the body the text replaces, when the server says: on one
+    /// row, from the start of the word to the position asked about.
+    pub range: Option<(BodyPos, BodyPos)>,
+}
+
+/// How many completions a list keeps, best first.
+const COMPLETIONS: usize = 200;
+
+/// How many lines `Lsp::log` keeps.
+const LOG: usize = 500;
+
+/// Where a configured server is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerState {
+    /// Nothing in its language has been visited yet.
+    NotStarted,
+    /// Started, waiting for its answer to `initialize`.
+    Starting,
+    Running,
+    /// It would not start, or stopped; why.
+    Failed(String),
 }
 
 /// A fix or refactoring a server offers.
@@ -109,6 +144,8 @@ pub enum Event {
     Definition(Vec<Target>),
     Rename(Result<Vec<BodyEdit>, String>),
     CodeActions(Vec<CodeAction>),
+    /// The completions on offer, best first.
+    Completions(Vec<Completion>),
     /// An edit a server asks to make, as a command it ran asks; its label.
     Edit(String, Result<Vec<BodyEdit>, String>),
     /// A server's message, or why one could not start or answer.
@@ -163,7 +200,9 @@ pub struct Lsp {
     /// By language.
     servers: HashMap<String, Server>,
     /// Languages whose server could not start or stopped, said once.
-    failed: HashSet<String>,
+    failed: HashMap<String, String>,
+    /// What the servers logged, and what happened to them, oldest first.
+    log: std::collections::VecDeque<String>,
     /// By document key: the decoded path of a file, else the URI.
     docs: HashMap<String, Open>,
     /// Which document each synced node is in.
@@ -239,17 +278,11 @@ fn render(o: &Outline, source: Source, root: Position, language: String) -> Opti
     let (uri, doc) = match &source {
         Source::File(path) => {
             let map = goto::line_map_of(o, &root)?;
-            let doc = Doc {
-                text: map.text.clone(),
-                mapping: Mapping::File(map),
-            };
+            let doc = Doc::new(map.text.clone(), Mapping::File(map));
             (uri::from_path(path), doc)
         }
         Source::Node(gnx) => {
-            let doc = Doc {
-                text: goto::body_as_code(o, &root),
-                mapping: Mapping::Node(gnx.clone()),
-            };
+            let doc = Doc::new(goto::body_as_code(o, &root), Mapping::Node(gnx.clone()));
             (format!("untitled:leo/{gnx}"), doc)
         }
     };
@@ -265,10 +298,9 @@ fn render(o: &Outline, source: Source, root: Position, language: String) -> Opti
 
 /// The node whose document `source` is, now.
 fn locate(o: &Outline, source: &Source) -> Option<Position> {
-    let positions = o.all_unique_positions();
     match source {
-        Source::Node(gnx) => positions.into_iter().find(|p| p.gnx(o) == gnx),
-        Source::File(path) => positions.into_iter().find(|p| {
+        Source::Node(gnx) => o.position_of_gnx(gnx),
+        Source::File(path) => o.all_unique_positions().into_iter().find(|p| {
             p.is_any_at_file_node(o)
                 && std::path::absolute(o.full_path(p)).is_ok_and(|q| q == *path)
         }),
@@ -297,7 +329,8 @@ impl Lsp {
             wake,
             connect,
             servers: HashMap::new(),
-            failed: HashSet::new(),
+            failed: HashMap::new(),
+            log: Default::default(),
             docs: HashMap::new(),
             node_docs: HashMap::new(),
             diagnostics: HashMap::new(),
@@ -329,16 +362,19 @@ impl Lsp {
     fn server(&mut self, language: &str, events: &mut Vec<Event>) -> Option<&mut Server> {
         if !self.servers.contains_key(language) {
             let cfg = self.config_for(language)?;
-            if self.failed.contains(language) {
+            if self.failed.contains_key(language) {
                 return None;
             }
             match (self.connect)(&cfg, &self.root, self.wake.clone()) {
                 Ok(server) => {
+                    self.note(language, &format!("started {}", cfg.command));
                     self.servers.insert(language.to_string(), server);
                 }
                 Err(e) => {
-                    self.failed.insert(language.to_string());
-                    events.push(Event::Message(format!("{}: {e}", cfg.command)));
+                    let why = format!("{}: {e}", cfg.command);
+                    self.note(language, &why);
+                    self.failed.insert(language.to_string(), why.clone());
+                    events.push(Event::Message(why));
                     return None;
                 }
             }
@@ -357,7 +393,8 @@ impl Lsp {
         if let Some((source, root)) = source_of(o, p) {
             let language = o.get_language(&root);
             let open = self.docs.values().any(|d| d.source == source);
-            let served = self.config_for(&language).is_some() && !self.failed.contains(&language);
+            let served =
+                self.config_for(&language).is_some() && !self.failed.contains_key(&language);
             if !open && served {
                 if let Some(r) = render(o, source, root, language) {
                     self.update(r, &mut events);
@@ -505,6 +542,7 @@ impl Lsp {
                 params["newName"] = json!(name);
                 "textDocument/rename"
             }
+            Request::Completion => "textDocument/completion",
             Request::CodeActions => {
                 let here = params["position"].clone();
                 let on_line: Vec<&Diagnostic> = self
@@ -530,6 +568,23 @@ impl Lsp {
         };
         self.pending.insert((open.language.clone(), id), pending);
         Ok(())
+    }
+
+    /// Render the document p is in and send it now, whatever the outline's
+    /// generation says: for a caller that changed p's body in place, as the
+    /// INSERT working copy is put there for a completion.
+    pub fn refresh(&mut self, o: &Outline, p: &Position) -> Vec<Event> {
+        let mut events = Vec::new();
+        let Some((source, root)) = source_of(o, p) else {
+            return events;
+        };
+        let language = o.get_language(&root);
+        if self.config_for(&language).is_some() && !self.failed.contains_key(&language) {
+            if let Some(r) = render(o, source, root, language) {
+                self.update(r, &mut events);
+            }
+        }
+        events
     }
 
     /// Run a code action's command on the server of node `gnx`'s document.
@@ -561,13 +616,14 @@ impl Lsp {
             let encoding = server.encoding;
             if let Some(error) = server.error.take() {
                 self.servers.remove(&language);
-                self.failed.insert(language.clone());
+                self.note(&language, &error);
+                self.failed.insert(language.clone(), error.clone());
                 events.push(Event::Message(error));
             }
             for msg in incoming {
                 match msg {
                     Incoming::Notification { method, params } => {
-                        if let Some(event) = self.notification(&method, params) {
+                        if let Some(event) = self.notification(&language, &method, params) {
                             events.push(event);
                         }
                     }
@@ -620,7 +676,43 @@ impl Lsp {
         }
     }
 
-    fn notification(&mut self, method: &str, params: Value) -> Option<Event> {
+    /// Add a line to the log, as `language: text`, dropping the oldest past
+    /// `LOG` lines.
+    fn note(&mut self, language: &str, text: &str) {
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            self.log.push_back(format!("{language}: {line}"));
+        }
+        while self.log.len() > LOG {
+            self.log.pop_front();
+        }
+    }
+
+    /// The log, oldest first: servers started and stopped, what they wrote
+    /// to stderr, and their `window/logMessage` and `window/showMessage`.
+    pub fn log(&self) -> impl Iterator<Item = &String> {
+        self.log.iter()
+    }
+
+    /// Each configured server's state, in the settings' order.
+    pub fn status(&self) -> Vec<(ServerConfig, ServerState)> {
+        self.configs
+            .iter()
+            .map(|cfg| {
+                let state = match (
+                    self.servers.get(&cfg.language),
+                    self.failed.get(&cfg.language),
+                ) {
+                    (Some(s), _) if s.initialized => ServerState::Running,
+                    (Some(_), _) => ServerState::Starting,
+                    (None, Some(why)) => ServerState::Failed(why.clone()),
+                    (None, None) => ServerState::NotStarted,
+                };
+                (cfg.clone(), state)
+            })
+            .collect()
+    }
+
+    fn notification(&mut self, language: &str, method: &str, params: Value) -> Option<Event> {
         match method {
             "textDocument/publishDiagnostics" => {
                 let params: PublishDiagnosticsParams = serde_json::from_value(params).ok()?;
@@ -628,7 +720,15 @@ impl Lsp {
                     .insert(key_of(params.uri.as_str()), params.diagnostics);
                 Some(Event::Diagnostics)
             }
-            "window/showMessage" => Some(Event::Message(params["message"].as_str()?.to_string())),
+            "window/showMessage" => {
+                let message = params["message"].as_str()?.to_string();
+                self.note(language, &message);
+                Some(Event::Message(message))
+            }
+            "window/logMessage" | server::STDERR => {
+                self.note(language, params["message"].as_str()?);
+                None
+            }
             _ => None,
         }
     }
@@ -666,6 +766,50 @@ impl Lsp {
                     .filter_map(|(uri, at)| self.target(o, &uri, at, enc))
                     .collect();
                 Event::Definition(targets)
+            }
+            Request::Completion => {
+                let found: Option<lsp_types::CompletionResponse> =
+                    serde_json::from_value(value).unwrap_or(None);
+                let mut items = match found {
+                    None => vec![],
+                    Some(lsp_types::CompletionResponse::Array(items)) => items,
+                    Some(lsp_types::CompletionResponse::List(list)) => list.items,
+                };
+                items.sort_by(|a, b| {
+                    let key = |i: &lsp_types::CompletionItem| {
+                        i.sort_text.clone().unwrap_or_else(|| i.label.clone())
+                    };
+                    key(a).cmp(&key(b))
+                });
+                items.truncate(COMPLETIONS);
+                let doc = self.docs.get(&pending.key).map(|d| &d.doc);
+                let completions = items
+                    .into_iter()
+                    .map(|item| {
+                        let (text, range) = match item.text_edit {
+                            Some(lsp_types::CompletionTextEdit::Edit(e)) => {
+                                (e.new_text, Some(e.range))
+                            }
+                            Some(lsp_types::CompletionTextEdit::InsertAndReplace(e)) => {
+                                (e.new_text, Some(e.insert))
+                            }
+                            None => (item.insert_text.unwrap_or_else(|| item.label.clone()), None),
+                        };
+                        let range = range.zip(doc).and_then(|(r, doc)| {
+                            let (s, e) = (r.start, r.end);
+                            doc.range_to_body((s.line, s.character), (e.line, e.character), enc)
+                                .filter(|(a, b)| a.row == b.row)
+                        });
+                        Completion {
+                            label: item.label,
+                            detail: item.detail,
+                            kind: item.kind.map(|k| format!("{k:?}")),
+                            text,
+                            range,
+                        }
+                    })
+                    .collect();
+                Event::Completions(completions)
             }
             Request::CodeActions => {
                 if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
@@ -733,12 +877,7 @@ impl Lsp {
         let path = uri::to_path(uri)?;
         let held = locate(o, &Source::File(path.clone()))
             .and_then(|root| goto::line_map_of(o, &root))
-            .and_then(|map| {
-                body(&Doc {
-                    text: map.text.clone(),
-                    mapping: Mapping::File(map),
-                })
-            });
+            .and_then(|map| body(&Doc::new(map.text.clone(), Mapping::File(map))));
         Some(held.unwrap_or(Target::File {
             path,
             line: at.line,

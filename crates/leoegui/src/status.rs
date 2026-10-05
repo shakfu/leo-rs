@@ -4,11 +4,13 @@ use eframe::egui::{self, vec2, RichText, Sense};
 use leoapp::app::{App, Focus};
 use leoapp::view::Severity;
 
+use crate::menus::Action;
 use crate::style::{self, Palette};
 
-/// Draw the bar. True if the problem counts were clicked.
-pub fn ui(ui: &mut egui::Ui, app: &mut App, colours: &Palette) -> bool {
-    let mut clicked = false;
+/// Draw the bar. The panel to open, if the problem counts or the servers'
+/// state were clicked.
+pub fn ui(ui: &mut egui::Ui, app: &mut App, colours: &Palette) -> Option<Action> {
+    let mut clicked = None;
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         ui.visuals_mut().override_text_color = Some(colours.statusbar_text);
@@ -88,11 +90,43 @@ pub fn ui(ui: &mut egui::Ui, app: &mut App, colours: &Palette) -> bool {
                     });
                 let link = ui.add(egui::Label::new(text).sense(Sense::click()));
                 if link.clicked() {
-                    clicked = true;
+                    clicked = Some(Action::Problems);
                 }
                 link.on_hover_text("Problems in this node");
+                if servers(ui, app, colours) {
+                    clicked = Some(Action::Servers);
+                }
             }
         });
     });
     clicked
+}
+
+/// "LSP" with a dot for the servers' state: lit while one runs, the error
+/// colour if one failed. True if clicked.
+fn servers(ui: &mut egui::Ui, app: &App, colours: &Palette) -> bool {
+    let Some(lsp) = &app.lsp else { return false };
+    let states: Vec<leolsp::ServerState> = lsp.status().into_iter().map(|(_, s)| s).collect();
+    let failed = states
+        .iter()
+        .any(|s| matches!(s, leolsp::ServerState::Failed(_)));
+    let running = states.contains(&leolsp::ServerState::Running);
+    let dot = if failed {
+        colours.mark(Severity::Error).gutter
+    } else if running {
+        colours.accent
+    } else {
+        colours.dim
+    };
+    let response = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new("LSP").size(12.0).color(colours.dim));
+            let (r, _) = ui.allocate_exact_size(vec2(8.0, 12.0), Sense::hover());
+            ui.painter().circle_filled(r.center(), 3.5, dot);
+        })
+        .response
+        .interact(Sense::click());
+    let response = response.on_hover_text(app.lsp_status_lines().join("\n"));
+    response.clicked()
 }

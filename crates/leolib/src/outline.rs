@@ -262,6 +262,35 @@ impl Outline {
         self.gnx_dict.get(gnx).copied()
     }
 
+    /// A position of node `v`, by its first parent link at each level, as
+    /// Leo's `c.vnode2position`. None if `v` is not in the tree, as a node
+    /// deleted but kept for undo is not. Depth, not outline size, bounds it.
+    pub fn position_of(&self, v: VnodeId) -> Option<Position> {
+        // (node, its index in its parent), from v up.
+        let mut path = Vec::new();
+        let mut cur = v;
+        while cur != self.hidden_root {
+            let parent = *self.node(cur).parents.first()?;
+            let index = self.node(parent).children.iter().position(|c| *c == cur)?;
+            path.push((cur, index));
+            if path.len() > self.nodes.len() {
+                return None;
+            }
+            cur = parent;
+        }
+        if path.is_empty() {
+            return None;
+        }
+        let (v, child_index) = path.remove(0);
+        path.reverse();
+        Some(Position::new(v, child_index, path))
+    }
+
+    /// A position of the node with `gnx`; see [`Outline::position_of`].
+    pub fn position_of_gnx(&self, gnx: &str) -> Option<Position> {
+        self.position_of(self.find_gnx(gnx)?)
+    }
+
     // --- Positions --------------------------------------------------------
 
     /// The first top-level node. None for an outline with no nodes.
@@ -1357,6 +1386,29 @@ fn at_language_directives(s: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nodes_position_is_found_from_its_gnx() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        let a = o.insert_as_last_child(&root);
+        let b = o.insert_as_last_child(&a);
+        let c = o.insert_after(&root);
+        // Every position the walk finds is the one built from its gnx.
+        for p in [&root, &a, &b, &c] {
+            let found = o.position_of_gnx(p.gnx(&o)).unwrap();
+            assert_eq!(found, *p);
+            assert!(o.position_exists(&found));
+        }
+        // A clone is found at its first parent link.
+        let clone = o.clone_node(&b);
+        let found = o.position_of(clone.v).unwrap();
+        assert!(found == b || found == clone);
+        o.delete_position(&c);
+        assert_eq!(o.position_of(c.v), None);
+        assert_eq!(o.position_of_gnx("nobody"), None);
+        assert_eq!(o.position_of(o.hidden_root), None);
+    }
 
     #[test]
     fn a_new_outline_has_one_node() {

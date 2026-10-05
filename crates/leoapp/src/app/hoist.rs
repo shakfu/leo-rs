@@ -12,6 +12,20 @@ impl App {
         self.hoists.last().map(|(p, _)| p)
     }
 
+    /// How many hoists are in force: `dehoist` undoes one.
+    pub fn hoist_depth(&self) -> usize {
+        self.hoists.len()
+    }
+
+    /// Every position of p's node, in outline order: p and its clones.
+    pub fn clones_of(&self, p: &Position) -> Vec<Position> {
+        let o = self.outline();
+        o.all_positions()
+            .into_iter()
+            .filter(|q| q.v == p.v)
+            .collect()
+    }
+
     /// Whether `p` is the hoisted node or below it.
     pub fn in_view(&self, p: &Position) -> bool {
         self.hoist_limit()

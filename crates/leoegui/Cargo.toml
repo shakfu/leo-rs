@@ -6,19 +6,30 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 readme.workspace = true
+# `cargo run -p leoegui` runs the wgpu one.
+default-run = "leoegui"
 # eframe 0.36 sets its own floor above the workspace's.
 rust-version = "1.95"
 
+# The library's name is the binaries' too, so the binaries are not
+# documented: `cargo doc` would write both to one place.
 [[bin]]
 name = "leoegui"
 path = "src/main.rs"
+doc = false
+
+[[bin]]
+name = "leoegui-glow"
+path = "src/bin/glow.rs"
+doc = false
 
 [dependencies]
 leolib.workspace = true
 leoapp.workspace = true
 leolsp.workspace = true
 leomcp.workspace = true
-eframe = "0.36"
+# wgpu is eframe's default renderer; glow is for `leoegui-glow`.
+eframe = { version = "0.36", features = ["glow"] }
 clap = { version = "4", features = ["derive"] }
 # Native Open and Save dialogs: the portal on Linux, the system's elsewhere.
 rfd = "0.17"

@@ -6,7 +6,7 @@
 #
 #     make corpus LEO_EDITOR=~/projects/leo-editor
 
-.PHONY: test corpus bench build release fmt lint audit check run gui dump clean
+.PHONY: test corpus bench build release fmt lint audit check run gui gui-glow dump clean
 
 test:
 	cargo test --workspace
@@ -44,7 +44,11 @@ run:
 
 # Release: egui's debug build is slow to draw.
 gui:
-	cargo run --release -p leoegui -- $(FILE)
+	cargo run --release -p leoegui --bin leoegui -- $(FILE)
+
+# The same, drawn with OpenGL (glow) instead of wgpu, to compare.
+gui-glow:
+	cargo run --release -p leoegui --bin leoegui-glow -- $(FILE)
 
 dump:
 	cargo run -q -p leotui -- $(FILE) --dump

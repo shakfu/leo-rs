@@ -37,6 +37,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_help(f, app, area);
     }
     draw_menu(f, app, area);
+    draw_completions(f, app, area);
     if app.depth == Depth::None {
         strip_colour(f.buffer_mut());
     }
@@ -399,6 +400,56 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title(format!(" {} themes ", menu.items.len())),
+        ),
+        popup,
+    );
+}
+
+/// The language server's completions, a drop-down above the status line,
+/// the selected one lit and kept on screen.
+fn draw_completions(f: &mut Frame, app: &App, area: Rect) {
+    let Some(menu) = &app.completion else {
+        return;
+    };
+    if app.mode != Mode::Insert || area.height < 4 {
+        return;
+    }
+    let height = (menu.shown.len() as u16 + 2)
+        .min(12)
+        .min(area.height.saturating_sub(1));
+    let visible = height.saturating_sub(2) as usize;
+    let first = (menu.selected + 1).saturating_sub(visible);
+    let lines: Vec<Line> = (first..menu.shown.len().min(first + visible))
+        .filter_map(|i| {
+            let c = menu.shown_item(i)?;
+            let style = match i == menu.selected {
+                true => Style::default().bg(Color::Blue).fg(Color::White),
+                false => Style::default(),
+            };
+            let mut spans = vec![Span::styled(c.label.clone(), style)];
+            if let Some(detail) = &c.detail {
+                let detail: String = detail.chars().take(60).collect();
+                spans.push(Span::styled(
+                    format!("  {detail}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            Some(Line::from(spans))
+        })
+        .collect();
+    let popup = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(1 + height),
+        width: area.width,
+        height,
+    };
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(format!(" {} completions; Tab takes one ", menu.shown.len())),
         ),
         popup,
     );

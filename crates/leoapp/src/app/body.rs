@@ -228,9 +228,18 @@ impl App {
 
     /// INSERT. Escape commits the change.
     pub(super) fn insert_key(&mut self, event: KeyEvent) {
+        if self.completion_key(&event) {
+            return;
+        }
         let mut lines = self.buffer.clone().unwrap_or_else(|| self.body_buffer());
         match event.code {
+            // Tab completes after a word where a server can; else it indents.
+            KeyCode::Tab if self.completes_here(&lines) => return self.request_completion(),
+            KeyCode::Char('n') if event.modifiers == KeyModifiers::CONTROL => {
+                return self.request_completion();
+            }
             KeyCode::Esc => {
+                self.completion = None;
                 self.editor.end_insert(&mut lines);
                 self.commit_body(&lines);
                 self.mode = Mode::Normal;
@@ -280,6 +289,7 @@ impl App {
         }
         self.buffer = Some(lines);
         self.scroll_to_cursor();
+        self.refilter_completion();
     }
 
     /// The section branch of Leo's `open-url-under-cursor`: select the node

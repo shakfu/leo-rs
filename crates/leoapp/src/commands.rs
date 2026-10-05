@@ -664,6 +664,11 @@ pub static COMMANDS: &[Command] = &[
     // The command line runs these too: they take arguments.
     c("import-at-file", "import a file as an @file tree", noop),
     c(
+        "import-auto",
+        "import a file as an @auto tree, no sentinels",
+        noop,
+    ),
+    c(
         "lsp-hover",
         "what the language server says of the symbol under the cursor",
         |app, _| app.lsp_request(leolsp::Request::Hover),
@@ -687,6 +692,11 @@ pub static COMMANDS: &[Command] = &[
         "lsp-diagnostics",
         "list this body's diagnostics",
         |app, _| app.show_diagnostics(),
+    ),
+    c(
+        "lsp-status",
+        "each language server's state, and what they logged",
+        |app, _| app.show_lsp_status(),
     ),
     c(
         "lsp-code-action",

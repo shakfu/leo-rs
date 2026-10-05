@@ -435,6 +435,35 @@ mod tests {
         assert!(tree.contains("undo") && body.contains("undo"));
     }
 
+    #[test]
+    fn completions_drop_down_above_the_status_line() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_body(&root, "pr\n");
+        let mut app = App::new(Document::new(o));
+        app.focus = app::Focus::Body;
+        app.begin_body_edit();
+        let item = |label: &str| app::Completion {
+            label: label.into(),
+            detail: Some(format!("def {label}()")),
+            kind: None,
+            text: label.into(),
+            range: None,
+        };
+        app.completion = Some(app::CompletionMenu {
+            items: vec![item("print"), item("property")],
+            shown: vec![0, 1],
+            selected: 1,
+            start: (0, 0),
+        });
+        let lines = render(&mut app, 60, 10);
+        let screen = lines.join("\n");
+        assert!(screen.contains("2 completions; Tab takes one"), "{screen}");
+        assert!(screen.contains("property  def property()"), "{screen}");
+        // Just above the status line.
+        assert!(lines[8].contains("\u{2570}"), "{screen}");
+    }
+
     /// The background of the last row, which is the status line.
     fn status_backgrounds(app: &mut App, width: u16, height: u16) -> Vec<Color> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

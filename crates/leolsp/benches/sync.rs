@@ -3,8 +3,9 @@
 //!     cargo bench -p leolsp
 //!
 //! An outline of 20 `@file` trees, each 300 nodes and about 6,300 lines, all
-//! open with a stand-in server that answers `initialize` and nothing else,
-//! so the time is the client's: rendering, mapping and sending.
+//! open with a stand-in server that answers `initialize` and publishes 500
+//! diagnostics for each file it opens, so the time is the client's:
+//! rendering, mapping and sending.
 
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -60,6 +61,19 @@ fn stand_in() -> Connect {
                         json!({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {}}});
                     let _ = write_message(&mut writer, &reply);
                 }
+                // 500 diagnostics, one every 12 lines.
+                if msg["method"] == "textDocument/didOpen" {
+                    let uri = msg["params"]["textDocument"]["uri"].clone();
+                    let diagnostics: Vec<_> = (0..500)
+                        .map(|i| {
+                            let at = json!({"line": i * 12 + 1, "character": 4});
+                            json!({"range": {"start": at, "end": at}, "message": "x"})
+                        })
+                        .collect();
+                    let note = json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+                        "params": {"uri": uri, "diagnostics": diagnostics}});
+                    let _ = write_message(&mut writer, &note);
+                }
             }
         });
         Ok(Server::connect(from_server, to_server, root, wake))
@@ -99,6 +113,10 @@ fn sync(c: &mut Criterion) {
             o.set_body(&leaf, &body);
             lsp.sync(&o, &leaf)
         })
+    });
+    let gnx = leaves[1].gnx(&o).to_string();
+    group.bench_function("a body's diagnostics, of 500 in its file", |b| {
+        b.iter(|| lsp.diagnostics(&gnx))
     });
     group.finish();
 }

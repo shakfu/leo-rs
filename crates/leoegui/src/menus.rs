@@ -23,6 +23,7 @@ pub enum Action {
     Import,
     CloseOutline,
     Quit,
+    Servers,
     Problems,
     Log,
     About,
@@ -155,6 +156,7 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Gui("Go to Node...", Action::GoToNode, "Ctrl-p"),
             Gui("Problems", Action::Problems, ""),
             Gui("Log", Action::Log, ""),
+            Gui("Language Servers", Action::Servers, ""),
             Sep,
             Toggle("Wrap Lines", Opt::Wrap),
             Toggle("Line Numbers", Opt::Number),
@@ -181,6 +183,7 @@ pub const MENUS: &[(&str, &[Item])] = &[
 pub const ASKS: &[&str] = &[
     "theme",
     "import-at-file",
+    "import-auto",
     "clone-find-all",
     "clone-find-all-flattened",
     "save-as",

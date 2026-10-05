@@ -67,6 +67,13 @@ fn lsp(seen: Seen) -> Lsp {
                     Some("textDocument/definition") => {
                         reply(json!({"uri": uri, "range": range(2, 8, 9)}))
                     }
+                    Some("textDocument/completion") => {
+                        reply(json!({"isIncomplete": false, "items": [
+                            {"label": "zeta", "sortText": "2", "insertText": "zeta"},
+                            {"label": "retry()", "sortText": "1", "kind": 3, "detail": "def retry()",
+                             "textEdit": {"range": range(3, 8, 11), "newText": "retry"}},
+                        ]}))
+                    }
                     Some("textDocument/codeAction") => {
                         let n = msg["params"]["context"]["diagnostics"]
                             .as_array()
@@ -403,4 +410,124 @@ fn a_file_whose_node_moved_is_found_again() {
     o.set_body(&leaf, "b = 3\n");
     lsp.sync(&o, &leaf);
     assert_eq!(changes(&seen, "b.py", 1), ["b = 3\n"]);
+}
+
+#[test]
+fn a_servers_state_and_log_are_kept() {
+    let configs = vec![ServerConfig {
+        language: "python".into(),
+        command: "fake".into(),
+    }];
+    let connect: Connect = Box::new(|_, _, _| {
+        Ok(server::fake::server(
+            Box::new(|msg| match msg["method"].as_str() {
+                Some("textDocument/didOpen") => vec![json!({
+                    "jsonrpc": "2.0", "method": "window/logMessage",
+                    "params": {"type": 3, "message": "indexing\ndone"},
+                })],
+                _ => vec![],
+            }),
+            "utf-16",
+        ))
+    });
+    let mut lsp = Lsp::with_connect(configs, PathBuf::from("/tmp"), Arc::new(|| {}), connect);
+    assert_eq!(lsp.status()[0].1, ServerState::NotStarted);
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    for _ in 0..500 {
+        lsp.poll(&o);
+        if lsp.log().any(|l| l == "python: done") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(lsp.status()[0].1, ServerState::Running);
+    let log: Vec<&String> = lsp.log().collect();
+    assert_eq!(
+        log,
+        ["python: started fake", "python: indexing", "python: done"]
+    );
+}
+
+#[test]
+fn a_server_that_cannot_start_says_why_in_its_state() {
+    let configs = vec![ServerConfig {
+        language: "python".into(),
+        command: "/nonexistent/leolsp-server".into(),
+    }];
+    let mut lsp = Lsp::new(configs, PathBuf::from("/tmp"), Arc::new(|| {}));
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    match &lsp.status()[0].1 {
+        ServerState::Failed(why) => assert!(why.contains("leolsp-server"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(lsp.log().any(|l| l.starts_with("python: /nonexistent")));
+}
+
+#[cfg(unix)]
+#[test]
+fn what_a_server_writes_to_stderr_is_logged() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("leolsp-stderr-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("server.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\necho 'starting up' >&2\nexec cat >/dev/null\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let configs = vec![ServerConfig {
+        language: "python".into(),
+        command: script.to_string_lossy().into_owned(),
+    }];
+    let mut lsp = Lsp::new(configs, dir.clone(), Arc::new(|| {}));
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    for _ in 0..500 {
+        lsp.poll(&o);
+        if lsp.log().any(|l| l == "python: starting up") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let logged = lsp.log().any(|l| l == "python: starting up");
+    drop(lsp);
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(logged);
+}
+
+#[test]
+fn completions_come_sorted_with_their_ranges_in_body_positions() {
+    let mut lsp = lsp(Default::default());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    lsp.request(f.gnx(&o), 1, 7, Request::Completion).unwrap();
+    let Event::Completions(items) = wait(&mut lsp, &o, |e| matches!(e, Event::Completions(_)))
+    else {
+        unreachable!()
+    };
+    let labels: Vec<&str> = items.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels, ["retry()", "zeta"]);
+    assert_eq!(items[0].text, "retry");
+    assert_eq!(items[0].kind.as_deref(), Some("Function"));
+    assert_eq!(items[0].range, Some((at(&o, &f, 1, 4), at(&o, &f, 1, 7))));
+    assert_eq!(items[1].range, None);
+}
+
+#[test]
+fn a_refresh_sends_a_body_changed_in_place() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (mut o, _, f) = outline();
+    lsp.sync(&o, &f);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    // Changed without a new generation, as a working copy is put in place.
+    o.node_mut(f.v).b = "def f():\n    return 9\n".into();
+    lsp.sync(&o, &f);
+    lsp.refresh(&o, &f);
+    let sent = changes(&seen, "x.py", 1);
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].ends_with("return 9\n"), "{}", sent[0]);
 }

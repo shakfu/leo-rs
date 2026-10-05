@@ -11,6 +11,7 @@ pub enum PanelTab {
     Problems,
     Log,
     Find,
+    Servers,
 }
 
 impl PanelTab {
@@ -20,13 +21,19 @@ impl PanelTab {
             PanelTab::Problems => "problems",
             PanelTab::Log => "log",
             PanelTab::Find => "find",
+            PanelTab::Servers => "servers",
         }
     }
 
     pub fn from_name(name: &str) -> Option<PanelTab> {
-        [PanelTab::Problems, PanelTab::Log, PanelTab::Find]
-            .into_iter()
-            .find(|t| t.name() == name)
+        [
+            PanelTab::Problems,
+            PanelTab::Log,
+            PanelTab::Find,
+            PanelTab::Servers,
+        ]
+        .into_iter()
+        .find(|t| t.name() == name)
     }
 }
 
@@ -44,6 +51,7 @@ pub fn ui(
         ui.selectable_value(tab, PanelTab::Problems, problems);
         ui.selectable_value(tab, PanelTab::Log, "Log");
         ui.selectable_value(tab, PanelTab::Find, "Find");
+        ui.selectable_value(tab, PanelTab::Servers, "Servers");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button("Close").clicked() {
                 open = false;
@@ -58,10 +66,11 @@ pub fn ui(
     egui::ScrollArea::vertical()
         .id_salt(*tab as u8)
         .auto_shrink([false, false])
-        .stick_to_bottom(*tab == PanelTab::Log)
+        .stick_to_bottom(matches!(*tab, PanelTab::Log | PanelTab::Servers))
         .show(ui, |ui| match tab {
             PanelTab::Problems => problems(ui, app, colours),
             PanelTab::Find => {}
+            PanelTab::Servers => servers(ui, app, colours),
             PanelTab::Log => {
                 for line in &app.messages {
                     ui.label(RichText::new(line).size(12.5));
@@ -72,6 +81,23 @@ pub fn ui(
             }
         });
     open
+}
+
+/// Each configured server's state, then what they logged.
+fn servers(ui: &mut egui::Ui, app: &App, colours: &Palette) {
+    for line in app.lsp_status_lines() {
+        ui.label(RichText::new(line).size(12.5).strong());
+    }
+    let Some(lsp) = &app.lsp else { return };
+    ui.separator();
+    let mut any = false;
+    for line in lsp.log() {
+        any = true;
+        ui.label(RichText::new(line).monospace().size(12.0));
+    }
+    if !any {
+        ui.label(RichText::new("Nothing logged.").color(colours.dim));
+    }
 }
 
 fn problems(ui: &mut egui::Ui, app: &mut App, colours: &Palette) {

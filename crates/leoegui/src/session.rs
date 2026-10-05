@@ -5,13 +5,15 @@
 //! One line per fact, so a hand edit or an older file reads as far as it
 //! makes sense:
 //!
-//!     window 1280 800
-//!     panel find
-//!     outline /home/me/a.leo
-//!     active
-//!     select ekr.20240101.1 3 4
-//!     tab ekr.20240101.1
-//!     pinned ekr.20240101.7
+//! ```text
+//! window 1280 800
+//! panel find
+//! outline /home/me/a.leo
+//! active
+//! select ekr.20240101.1 3 4
+//! tab ekr.20240101.1
+//! pinned ekr.20240101.7
+//! ```
 
 use std::path::{Path, PathBuf};
 

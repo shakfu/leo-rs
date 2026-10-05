@@ -115,7 +115,7 @@ impl App {
         }
     }
 
-    fn lsp_event(&mut self, event: Event) {
+    pub(super) fn lsp_event(&mut self, event: Event) {
         // An answer that arrives while a line or a change is being typed
         // would move the cursor or the text under the typing.
         let idle = self.mode == Mode::Normal && self.buffer.is_none();
@@ -143,6 +143,8 @@ impl App {
             Event::Rename(Ok(edits)) if idle => {
                 self.apply_edits(edits, "rename", "renamed");
             }
+            // Completions come while typing: that is when they are asked for.
+            Event::Completions(items) => self.offer_completions(items),
             Event::CodeActions(list) if list.is_empty() => {
                 self.message = "no code actions here".into()
             }
@@ -167,7 +169,7 @@ impl App {
         let o = self.doc.outline();
         let target = match self.current.gnx(o) == gnx {
             true => Some(self.current.clone()),
-            false => o.all_positions().into_iter().find(|p| p.gnx(o) == gnx),
+            false => o.position_of_gnx(gnx),
         };
         let Some(p) = target else {
             self.message = "the definition's node is gone".into();
@@ -309,10 +311,7 @@ impl App {
             {
                 Some((_, _, list)) => list.push(edit),
                 None => {
-                    let found = o
-                        .all_positions()
-                        .into_iter()
-                        .find(|p| p.gnx(o) == edit.start.gnx);
+                    let found = o.position_of_gnx(&edit.start.gnx);
                     let Some(p) = found else {
                         self.message = format!("{what} refused: a node it edits is gone");
                         return false;
@@ -392,6 +391,45 @@ impl App {
         self.diagnostics
             .iter()
             .find(|d| d.row <= row && row <= d.end_row)
+    }
+
+    /// Each configured server and its state, one line each.
+    pub fn lsp_status_lines(&self) -> Vec<String> {
+        let Some(lsp) = &self.lsp else {
+            return vec![
+                "no language server: name one in the settings, as lsp-python = \"pylsp\"".into(),
+            ];
+        };
+        lsp.status()
+            .into_iter()
+            .map(|(cfg, state)| {
+                let state = match state {
+                    leolsp::ServerState::NotStarted => {
+                        "not started: no node in its language visited".to_string()
+                    }
+                    leolsp::ServerState::Starting => "starting".to_string(),
+                    leolsp::ServerState::Running => "running".to_string(),
+                    leolsp::ServerState::Failed(why) => format!("failed: {why}"),
+                };
+                format!("{}: {}  ({state})", cfg.language, cfg.command)
+            })
+            .collect()
+    }
+
+    /// `:lsp-status`: the servers' states and their log, in the overlay.
+    pub fn show_lsp_status(&mut self) {
+        let mut lines = self.lsp_status_lines();
+        if let Some(lsp) = &self.lsp {
+            lines.push(String::new());
+            let log: Vec<&String> = lsp.log().collect();
+            match log.is_empty() {
+                true => lines.push("nothing logged".into()),
+                false => lines.extend(log.into_iter().cloned()),
+            }
+        }
+        self.help_scroll = 0;
+        self.overlay = Some(("language servers".to_string(), lines));
+        self.mode = Mode::Help;
     }
 
     /// `:lsp-diagnostics`: this body's diagnostics, in the help overlay.
@@ -628,6 +666,30 @@ mod tests {
         app.diagnostics.clear();
         app.next_diagnostic(true, 1);
         assert_eq!(app.message, "no diagnostics");
+    }
+
+    #[test]
+    fn the_status_lists_each_configured_server() {
+        let mut app = app("x\n");
+        app.show_lsp_status();
+        assert!(app.overlay.as_ref().unwrap().1[0].starts_with("no language server"));
+        let settings = crate::config::Config {
+            servers: vec![leolsp::ServerConfig {
+                language: "python".into(),
+                command: "pylsp".into(),
+            }],
+            ..Default::default()
+        };
+        app.set_lsp(&settings, std::sync::Arc::new(|| {}));
+        app.show_lsp_status();
+        let (name, lines) = app.overlay.clone().unwrap();
+        assert_eq!(name, "language servers");
+        assert!(
+            lines[0].starts_with("python: pylsp  (not started"),
+            "{}",
+            lines[0]
+        );
+        assert_eq!(lines.last().unwrap(), "nothing logged");
     }
 
     #[test]

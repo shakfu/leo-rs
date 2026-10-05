@@ -20,6 +20,9 @@ use crate::minibuffer::{self, MiniKind, Minibuffer};
 use crate::search::{self, Direction, LastSearch, Scope};
 
 mod body;
+mod complete;
+pub use complete::CompletionMenu;
+pub use leolsp::Completion;
 mod ex;
 mod files;
 mod find;
@@ -216,6 +219,10 @@ pub struct App {
     code_actions_at: u64,
     /// The code action Enter applies; the arrows move it.
     pub code_action_selected: usize,
+    /// The completions on offer in INSERT, and the node and row a request
+    /// waiting on the server was made at.
+    pub completion: Option<CompletionMenu>,
+    completion_asked: Option<(String, usize)>,
     /// External files whose last read failed, by full path, and why.
     pub unread: std::collections::HashMap<String, String>,
     /// External files `check_disk` found changed by another program, by
@@ -399,6 +406,8 @@ pub struct Row {
     pub marked: bool,
     pub dirty: bool,
     pub cloned: bool,
+    /// How many places the node appears: Leo's clone count, its parents.
+    pub clones: usize,
     pub is_file: bool,
     /// Whether the body holds any text.
     pub has_body: bool,
@@ -469,6 +478,8 @@ impl App {
             code_actions: Vec::new(),
             code_actions_at: 0,
             code_action_selected: 0,
+            completion: None,
+            completion_asked: None,
             unread: Default::default(),
             changed_on_disk: Vec::new(),
         };
@@ -697,6 +708,7 @@ impl App {
             marked: p.is_marked(o),
             dirty: p.is_dirty(o),
             cloned: p.is_cloned(o),
+            clones: o.node(p.v).parents.len(),
             is_file: p.is_any_at_file_node(o),
             has_body: !p.b(o).is_empty(),
             headline: p.h(o).to_string(),
@@ -802,6 +814,7 @@ impl App {
         self.current = p;
         // The body is a different buffer now.
         self.buffer = None;
+        self.completion = None;
         self.editor.cursor = cursor;
         self.editor.visual = None;
         let lines = self.body_buffer();
@@ -815,12 +828,7 @@ impl App {
     /// Select node `gnx` with the body cursor at `cursor`, clamped to the
     /// body, as a restored session left it. False if no node has the gnx.
     pub fn restore_selection(&mut self, gnx: &str, cursor: (usize, usize)) -> bool {
-        let o = self.outline();
-        let Some(p) = o
-            .all_unique_positions()
-            .into_iter()
-            .find(|p| p.gnx(o) == gnx)
-        else {
+        let Some(p) = self.outline().position_of_gnx(gnx) else {
             return false;
         };
         self.select(p);

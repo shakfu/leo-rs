@@ -85,6 +85,7 @@ impl Tree {
         let mut run: Option<(&str, Position)> = None;
         let mut fold: Option<Position> = None;
         let mut click: Option<(Position, bool)> = None;
+        let mut goto: Option<Position> = None;
 
         let output = area.show_rows(ui, ROW, total, |ui, range| {
             let first = range.start;
@@ -139,6 +140,16 @@ impl Tree {
                     painter.circle_filled(pos2(fx, rect.center().y), 3.0, colours.dim);
                     fx -= 12.0;
                 }
+                if row.cloned {
+                    let count = painter.text(
+                        pos2(fx, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        row.clones.to_string(),
+                        FontId::proportional(11.0),
+                        colours.dim,
+                    );
+                    fx = count.left() - 6.0;
+                }
                 if row.marked {
                     let c = pos2(fx, rect.center().y);
                     painter.add(Shape::convex_polygon(
@@ -181,9 +192,19 @@ impl Tree {
                     }
                 }
 
-                let response = match row.file_state {
-                    Some(state) => response.on_hover_text(file_tip(app, &row.position, state)),
-                    None => response,
+                let mut tip = Vec::new();
+                if let Some(state) = row.file_state {
+                    tip.push(file_tip(app, &row.position, state));
+                }
+                if row.cloned {
+                    tip.push(format!(
+                        "In {} places. ]c or Alt-N goes to the next; the menu lists them.",
+                        row.clones
+                    ));
+                }
+                let response = match tip.is_empty() {
+                    true => response,
+                    false => response.on_hover_text(tip.join("\n\n")),
                 };
                 if response.drag_started() && app.mode == Mode::Normal {
                     self.drag = Some(row.position.clone());
@@ -206,6 +227,23 @@ impl Tree {
                             run = Some((command, row.position.clone()));
                             ui.close();
                         }
+                    }
+                    if row.cloned {
+                        ui.separator();
+                        ui.menu_button(format!("Clones ({})", row.clones), |ui| {
+                            for p in app.clones_of(&row.position) {
+                                let o = app.outline();
+                                let mut path: Vec<&str> =
+                                    p.self_and_parents(o).iter().map(|q| q.h(o)).collect();
+                                path.reverse();
+                                let here = p == row.position;
+                                let label = egui::RichText::new(path.join(" > "));
+                                if ui.selectable_label(here, label).clicked() {
+                                    goto = Some(p);
+                                    ui.close();
+                                }
+                            }
+                        });
                     }
                 });
             }
@@ -231,6 +269,11 @@ impl Tree {
                     tabs.pin(p.gnx(app.outline()));
                     app.focus = Focus::Body;
                 }
+            }
+        }
+        if let Some(p) = goto {
+            if app.run_chosen("") {
+                app.select(p);
             }
         }
         if let Some((command, p)) = run {

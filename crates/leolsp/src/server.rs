@@ -15,6 +15,10 @@ use serde_json::{json, Value};
 
 use crate::map::Encoding;
 
+/// The method a line the server wrote to stderr arrives under, as if the
+/// server had sent it as a notification.
+pub const STDERR: &str = "leolsp/stderr";
+
 /// Called from the reader thread when a message arrives, so a front end that
 /// sleeps between events can wake and poll.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -100,12 +104,14 @@ impl Server {
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // A terminal front end draws on stderr's terminal.
-            .stderr(Stdio::null())
+            // A terminal front end draws on stderr's terminal, so the
+            // server's goes to the log.
+            .stderr(Stdio::piped())
             .spawn()?;
         let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
-        let mut server = Server::connect(stdout, stdin, root, wake);
+        let stderr = child.stderr.take().expect("piped");
+        let mut server = Server::connect_with(stdout, stdin, Some(stderr), root, wake);
         server.child = Some(child);
         Ok(server)
     }
@@ -117,7 +123,31 @@ impl Server {
         root: &Path,
         wake: Wake,
     ) -> Server {
+        Server::connect_with(reader, writer, None::<io::Empty>, root, wake)
+    }
+
+    /// `connect`, with the lines of `stderr` arriving as `STDERR`
+    /// notifications.
+    fn connect_with(
+        reader: impl Read + Send + 'static,
+        writer: impl Write + Send + 'static,
+        stderr: Option<impl Read + Send + 'static>,
+        root: &Path,
+        wake: Wake,
+    ) -> Server {
         let (tx, rx) = mpsc::channel();
+        if let Some(stderr) = stderr {
+            let (tx, wake) = (tx.clone(), wake.clone());
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    let msg = json!({"method": STDERR, "params": {"message": line}});
+                    if tx.send(msg).is_err() {
+                        break;
+                    }
+                    wake();
+                }
+            });
+        }
         std::thread::spawn(move || {
             let mut reader = BufReader::new(reader);
             while let Ok(Some(msg)) = read_message(&mut reader) {
@@ -161,6 +191,12 @@ impl Server {
                     "hover": {"contentFormat": ["plaintext", "markdown"]},
                     "definition": {"linkSupport": true},
                     "rename": {"prepareSupport": false},
+                    // Plain text only: a snippet's placeholders need an
+                    // editor that can tab between them.
+                    "completion": {
+                        "completionItem": {"snippetSupport": false},
+                        "contextSupport": false,
+                    },
                     "codeAction": {
                         "isPreferredSupport": true,
                         "disabledSupport": true,

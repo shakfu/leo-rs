@@ -6,6 +6,14 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ### Added
 
+- **`leoegui-glow`: leoegui drawn with OpenGL**, to compare with `leoegui`'s wgpu (`make gui-glow`). On Linux a glow-only build reached its first frame in 0.09 s and 117 MB against wgpu's 0.28 s and 198 MB (`docs/dev/gui-roadmap.md`, Performance 7). wgpu stays the default because OpenGL is deprecated on macOS. leoegui is now a library with the two as thin binaries, each holding both renderers.
+
+- **Completion from the language server, in both front ends.** In INSERT, Tab after a word character or a dot asks the server what could be typed there, and Ctrl-n asks anywhere; elsewhere Tab still indents. The completions show under the cursor in leoegui and above the status line in leotui. Typing narrows them, Up/Down or Ctrl-n/Ctrl-p select, Tab or Enter types the selected one over the word, and Escape closes the list and stays in INSERT. The servers see committed text only, so the request first sends the working copy: it is put in the node's body for one render and taken out, so neither undo nor the outline's generation sees it. Snippets are not asked for, and an item's additional edits, such as an auto-import, are not applied.
+
+- **leoegui: hoist banner, clone counts, and drop to import.** While a node is hoisted, the sidebar names it with a De-hoist button. A cloned row shows how many places its node appears, and its context menu lists them to jump to. Dropping a `.leo` file on the window opens it; any other file is imported as an `@auto` tree, which `:import-auto PATH` also does in both front ends.
+
+- **Language-server status and log, in both front ends.** Each configured server's state, and the last 500 lines the servers sent to `window/logMessage`, `window/showMessage` and stderr, which was discarded before. `:lsp-status` shows them; in leoegui the status bar's LSP dot, lit while a server runs and red if one failed, opens them in View > Language Servers.
+
 - **leoegui restores the session.** Started with no outline named, it reopens the outlines open at the last quit, each with its selected node, body cursor and tabs, and the bottom panel and window size, from `session` beside the settings. Quitting writes it; an unsaved outline, or one whose file is gone, is left out. Named outlines or `--press` skip the restore, so a scripted run opens only what it names. `--no-session` neither restores nor saves, so a one-off run leaves the session as it was.
 
 - **leoegui opens several outlines, a tab each.** File > Open... and Save As... use the system's dialogs (`rfd`), File > Open Recent lists the last ten outlines (kept in `recent-outlines` beside the settings), and `leoegui a.leo b.leo` opens both. Quitting asks of each outline with unsaved work, and a no stops it. Each outline has its own undo, language servers and sidebar; options, histories, theme and settings are shared. The MCP server stays with one outline and moves to the next when that one closes, as a second server would need a second port. `:e` still replaces the outline shown.
@@ -35,6 +43,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 - **An inheriting Helix theme now takes its own palette.** A variant that is `inherits` plus a `[palette]`, as `catppuccin_latte` and `rose_pine_dawn` are, drew its parent's scopes in the parent's colours: each file's scopes were resolved with that file's palette before the chain was merged. Palettes are merged first now, child over parent, as Helix does, so a light variant is light in leotui too.
 
 ### Changed
+
+- **Faster lookups by node and by line.** `Outline::position_of_gnx` finds a node's position from leolib's gnx map by walking up its parents, where tabs, go to definition, a server's edits and session restore walked the whole outline: 1.2 ms to 1.5 us for 16 tabs at 11,600 nodes. leolsp keeps each document's line offsets, so mapping a body's diagnostics, 500 in a 6,300-line file, takes 8.7 us instead of 8 ms.
 
 - **Language servers no longer slow the outline as files are visited.** Each sync rendered every open document again, about 5 ms per 6,000-line file, and the app syncs whenever the selection moves: with 20 of leo-editor's Python files visited, each arrow key took 99 ms. A document is now rendered only when it opens or a fingerprint of its tree and ancestors changes, and nothing is checked while the outline is unchanged: a selection move takes 0.01 ms and an edit 6.8 ms. A fingerprint over the tree, rather than a list of edited nodes, catches a node moved between files and a directive changed in an ancestor. `cargo bench -p leolsp` times it; `Lsp::with_connect` is public for the bench's stand-in server.
 

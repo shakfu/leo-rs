@@ -79,6 +79,7 @@ impl App {
             "open" if parsed.force => self.open_file_now(&parsed.arg),
             "open" => self.open_file(&parsed.arg),
             "import-at-file" => self.import_at_file(&parsed.arg),
+            "import-auto" => self.import_auto(parsed.arg.trim()),
             "goto-global-line" => match parsed.arg.trim().parse::<usize>() {
                 Ok(n) => self.goto_global_line(n),
                 Err(_) => self.message = "usage: :goto-global-line N".to_string(),
@@ -294,6 +295,33 @@ impl App {
             }
         }
         Ok(app)
+    }
+
+    /// `:import-auto path`, and a file dropped on leoegui: import it as an
+    /// `@auto` tree and select it.
+    pub fn import_auto(&mut self, path: &str) {
+        if path.is_empty() {
+            self.message = "import-auto: needs a file name".to_string();
+            return;
+        }
+        let p = self.current.clone();
+        match self.doc.import_auto(&p, path) {
+            Ok((node, result)) => {
+                self.buffer = None;
+                self.focus = Focus::Tree;
+                self.select(node.clone());
+                for e in &result.errors {
+                    self.unread.insert(e.path.clone(), e.error.to_string());
+                }
+                for line in read_report_lines(&result) {
+                    self.log(line);
+                }
+                let name = node.h(self.outline()).to_string();
+                self.message = read_report_message(&result)
+                    .unwrap_or_else(|| format!("imported {name}; undo history cleared"));
+            }
+            Err(e) => self.message = format!("import-auto: {e}"),
+        }
     }
 
     /// `:import-at-file path` -- import a file as an `@file` tree, then ask

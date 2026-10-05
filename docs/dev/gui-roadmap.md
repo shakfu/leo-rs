@@ -49,9 +49,17 @@ Proposed after the 2026-10-05 profile (release build, Apple M1, the 21,020-node 
 2. **Colour the visible lines first on a body's first visit** (small). Measured: 46 ms the first time the 5,000-line body is shown, as tree-sitter colours it whole. The typing path's partial colouring already does visible-first; the rest follows after the first frame, or on a thread.
 3. **Keep a few colourings, by node** (small). Measured: switching between two large bodies pays the 46 ms each time, as the cache holds one. A small cache keyed by node and outline generation makes switching back free.
 4. **Split the body once a frame and drop the per-frame hash** (small). Measured: 2 ms a frame on the 5,000-line body with nothing changing, against 0.25 ms for a small one. `body_buffer()` splits the body twice a frame (`body_view` and the gutter width), and `Colouring::of` hashes every line to find its cache key; key both on the node and the outline generation.
-5. **Line offsets for diagnostics** (small). From the code: `Doc::line(n)` scans from the start of the text, once per diagnostic per poll that changes them. Offsets computed once per document make it constant; it matters only for hundreds of diagnostics in a big file.
-6. **A gnx index in leolib** (small). Measured: tabs walk every position after each commit to find their nodes, 1.7 ms at 21,000 nodes.
-7. **Startup and size** (small, to measure). 0.2 s and about 75 MB before any outline, which looks like eframe's window, renderer and fonts; compare the glow and wgpu renderers. `strip = true` shrinks the 23 MB binary, which is disk, not speed.
+5. **Line offsets for diagnostics** (done). `Doc::line(n)` scanned from the start of the text for each diagnostic. With offsets computed once per document, a body's diagnostics, 500 in a 6,300-line file, map in 8.7 us instead of 8 ms (`cargo bench -p leolsp`). They are mapped on every poll that moves the selection.
+6. **A gnx index in leolib** (done). `Outline::position_of_gnx` builds a position from the existing gnx map by walking up parent links. Tabs, go to definition, applying a server's edits, session restore and leolsp's node documents use it instead of walking the outline: 16 tabs on leo-editor's 11,600 nodes are found in 1.5 us instead of 1.2 ms.
+7. **Startup and size** (measured 2026-10-05; release build, Linux, Ryzen 9 7940HX, no outline, to the first drawn frame):
+
+   | build | first frame | peak memory | binary |
+   |-|-|-|-|
+   | wgpu, eframe's default | 0.28 s | 198 MB | 35.5 MB |
+   | glow only | 0.09 s | 117 MB | 29.5 MB |
+   | glow only, stripped | | | 26.7 MB |
+
+   leoapp's own start is 0.02 s and 13 MB (`leotui --dump`), so the rest is the window and the renderer. Glow is three times faster to the first frame and uses 80 MB less here; the case for wgpu is macOS, where OpenGL is deprecated, though it still runs there. `strip = true` saves 10%, and costs symbol names in a release panic's backtrace; not applied.
 
 Not worth doing: tree rows (0.003 ms for a screen), idle CPU (none), egui's text layout (cached; a small outline's frame is 0.12 ms). Incremental document sync waits on a profile showing full-text sync matters.
 

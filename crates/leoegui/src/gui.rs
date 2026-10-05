@@ -378,6 +378,7 @@ impl Gui {
             menus::Action::Quit => self.quit_all(),
             menus::Action::Problems => self.panel = Some(PanelTab::Problems),
             menus::Action::Log => self.panel = Some(PanelTab::Log),
+            menus::Action::Servers => self.panel = Some(PanelTab::Servers),
             menus::Action::About => self.about = true,
             menus::Action::Settings => self.settings.show_dialog(&self.app),
             menus::Action::Themes => {
@@ -580,6 +581,21 @@ impl Gui {
         }
     }
 
+    /// A file dropped on the window: an outline opens in a tab, any other
+    /// file is imported as an `@auto` tree.
+    fn drop_file(&mut self, path: &std::path::Path) {
+        let text = path.to_string_lossy();
+        let outline = path
+            .extension()
+            .is_some_and(|e| ["leo", "leojs", "db"].contains(&e.to_string_lossy().as_ref()));
+        if outline {
+            self.open_outline(Some(&text));
+        } else if self.app.run_chosen("") {
+            self.app.import_auto(&text);
+            self.app.log_message();
+        }
+    }
+
     /// Add the active outline's file to Open Recent when it changes.
     fn record_recent(&mut self) {
         let file = &self.app.outline().file_name;
@@ -662,6 +678,17 @@ impl eframe::App for Gui {
             self.quit_all();
         }
         self.record_recent();
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        });
+        for path in dropped {
+            self.drop_file(&path);
+        }
         if let Some(r) = ctx.input(|i| i.viewport().inner_rect) {
             self.window = Some([r.width(), r.height()]);
         }
@@ -702,8 +729,8 @@ impl eframe::App for Gui {
             .exact_size(26.0)
             .frame(status_frame)
             .show(ui, |ui| {
-                if status::ui(ui, &mut self.app, &colours) {
-                    action = Some(menus::Action::Problems);
+                if let Some(a) = status::ui(ui, &mut self.app, &colours) {
+                    action = Some(a);
                 }
             });
         if let Some(mut tab) = self.panel {
@@ -747,6 +774,7 @@ impl eframe::App for Gui {
                     .color(colours.dim)
                     .strong(),
             );
+            hoist_banner(ui, &mut self.app, &colours);
             self.tree.ui(ui, &mut self.app, &colours, &mut self.tabs);
         });
         let percent = (shown.response.rect.width() / screen.width() * 100.0).round() as u16;
@@ -814,7 +842,62 @@ impl eframe::App for Gui {
             }
             None => {}
         }
+        drop_hint(&ctx, &colours);
         self.settle_quits(&ctx);
+    }
+}
+
+/// While a file is dragged over the window, what dropping it does.
+fn drop_hint(ctx: &egui::Context, colours: &Palette) {
+    if ctx.input(|i| i.raw.hovered_files.is_empty()) {
+        return;
+    }
+    let screen = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("drop"),
+    ));
+    painter.rect_filled(screen, 0.0, colours.bg.gamma_multiply(0.8));
+    painter.text(
+        screen.center(),
+        egui::Align2::CENTER_CENTER,
+        "Drop a .leo file to open it, any other file to import it as @auto",
+        egui::FontId::proportional(18.0),
+        colours.fg,
+    );
+}
+
+/// The hoisted node, while one is, and a button to de-hoist.
+fn hoist_banner(ui: &mut egui::Ui, app: &mut App, colours: &Palette) {
+    let Some(hoisted) = app.hoist_limit() else {
+        return;
+    };
+    let name = hoisted.h(app.outline()).to_string();
+    let depth = app.hoist_depth();
+    let mut dehoist = false;
+    egui::Frame::NONE
+        .fill(colours.accent.gamma_multiply(0.15))
+        .inner_margin(egui::Margin::symmetric(6, 3))
+        .corner_radius(3.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let what = match depth {
+                    1 => "Hoisted:".to_string(),
+                    n => format!("Hoisted ({n}):"),
+                };
+                ui.label(egui::RichText::new(what).size(12.0).color(colours.dim));
+                ui.label(egui::RichText::new(name).size(12.5).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    dehoist = ui
+                        .small_button("De-hoist")
+                        .on_hover_text("Undo the last hoist")
+                        .clicked();
+                });
+            });
+        });
+    if dehoist {
+        app.run_chosen("dehoist");
     }
 }
 

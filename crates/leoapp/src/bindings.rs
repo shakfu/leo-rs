@@ -299,10 +299,12 @@ mod tests {
     const COMMAND_LINE_ONLY: &[&str] = &[
         "lsp-rename",
         "lsp-code-action",
+        "lsp-status",
         "lsp-diagnostics",
         "goto-visible-row",
         "theme",
         "import-at-file",
+        "import-auto",
         "substitute",
         "nohlsearch",
         "bufdo",

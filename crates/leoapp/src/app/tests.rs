@@ -2059,3 +2059,36 @@ fn a_restored_selection_puts_the_cursor_back_within_the_body() {
     assert_eq!(app.focus, Focus::Tree);
     assert!(!app.restore_selection("nobody", (0, 0)));
 }
+
+#[test]
+fn a_rows_clone_count_and_its_clones_are_known() {
+    let mut app = app();
+    app.run("clone-node", 1);
+    let rows = app.rows();
+    let cloned: Vec<_> = rows.iter().filter(|r| r.cloned).collect();
+    assert_eq!(cloned.len(), 2);
+    assert!(cloned.iter().all(|r| r.clones == 2));
+    let clones = app.clones_of(&app.current);
+    assert_eq!(clones.len(), 2);
+    assert!(clones.contains(&app.current));
+    assert!(rows.iter().filter(|r| !r.cloned).all(|r| r.clones == 1));
+}
+
+#[test]
+fn a_file_imports_as_an_auto_tree_from_the_command_line() {
+    let dir = scratch("import-auto");
+    std::fs::create_dir_all(&dir).unwrap();
+    let py = dir.join("y.py");
+    std::fs::write(&py, "def f():\n    return 1\n").unwrap();
+    let mut app = app();
+    app.run_command_line(&format!("import-auto {}", py.display()));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(
+        app.current.h(app.outline()).starts_with("@auto "),
+        "{}",
+        app.message
+    );
+    assert!(app.message.starts_with("imported @auto"), "{}", app.message);
+    // The importer split it: the def is a child.
+    assert!(app.current.has_children(app.outline()));
+}

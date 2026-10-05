@@ -1019,35 +1019,9 @@ impl Document {
     /// `@<file>` nodes do not nest. Returns the node, and whether it still
     /// needs writing (see [`external::import_at_file`]).
     pub fn import_at_file(&mut self, p: &Position, path: &str) -> Result<(Position, bool)> {
-        let abs = util::finalize_join(&[path]);
-        let o = &self.outline;
-        let existing = o
-            .all_positions()
-            .into_iter()
-            .find(|q| q.is_any_at_file_node(o) && o.full_path(q) == abs);
-        if let Some(q) = existing {
-            return Err(crate::Error::Import {
-                path: abs,
-                detail: format!("already in the outline as {}", q.h(o)),
-            });
-        }
-        let after = p
-            .self_and_parents(o)
-            .into_iter()
-            .rev()
-            .find(|q| q.is_any_at_file_node(o))
-            .unwrap_or_else(|| p.clone());
-
+        let was_changed = self.outline.changed;
+        let new = self.new_file_node(p, path, "@file")?;
         let o = &mut self.outline;
-        let was_changed = o.changed;
-        let new = o.insert_after(&after);
-        let dir = o.get_path(&new);
-        let name = match std::path::Path::new(&abs).strip_prefix(&dir) {
-            // An unsaved outline has no directory of its own to be relative to.
-            Ok(rel) if !o.file_name.is_empty() => rel.to_string_lossy().to_string(),
-            _ => abs.clone(),
-        };
-        o.set_headline(&new, &format!("@file {name}"));
         match external::import_at_file(o, &new) {
             Err(e) => {
                 o.delete_position(&new);
@@ -1070,9 +1044,75 @@ impl Document {
     }
 }
 
+impl Document {
+    /// A new node headed `kind path`, not yet in the undo history, after the
+    /// outermost `@<file>` node at or above p, since `@<file>` nodes do not
+    /// nest. The path is relative to the outline's directory where it can
+    /// be. An error if the outline already holds the file.
+    fn new_file_node(&mut self, p: &Position, path: &str, kind: &str) -> Result<Position> {
+        let abs = util::finalize_join(&[path]);
+        let o = &self.outline;
+        let existing = o
+            .all_positions()
+            .into_iter()
+            .find(|q| q.is_any_at_file_node(o) && o.full_path(q) == abs);
+        if let Some(q) = existing {
+            return Err(crate::Error::Import {
+                path: abs,
+                detail: format!("already in the outline as {}", q.h(o)),
+            });
+        }
+        let after = p
+            .self_and_parents(o)
+            .into_iter()
+            .rev()
+            .find(|q| q.is_any_at_file_node(o))
+            .unwrap_or_else(|| p.clone());
+
+        let o = &mut self.outline;
+        let new = o.insert_after(&after);
+        let dir = o.get_path(&new);
+        let name = match std::path::Path::new(&abs).strip_prefix(&dir) {
+            // An unsaved outline has no directory of its own to be relative to.
+            Ok(rel) if !o.file_name.is_empty() => rel.to_string_lossy().to_string(),
+            _ => abs.clone(),
+        };
+        o.set_headline(&new, &format!("{kind} {name}"));
+        Ok(new)
+    }
+
+    /// Import the file at `path` as an `@auto` tree: Leo's importer splits
+    /// it, and writing it back adds no sentinels. As any read, it clears the
+    /// undo history. Returns the node and what the read reported.
+    pub fn import_auto(&mut self, p: &Position, path: &str) -> Result<(Position, ReadResult)> {
+        let new = self.new_file_node(p, path, "@auto")?;
+        self.outline.expand(&new);
+        let result = self.read_files(vec![new.clone()]);
+        Ok((new, result))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_imports_as_an_auto_tree_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let py = dir.path().join("x.py");
+        std::fs::write(&py, "def f():\n    return 1\n\ndef g():\n    return 2\n").unwrap();
+        let leo = dir.path().join("x.leo");
+        let mut d = Document::new_empty(leo.to_str().unwrap());
+        let root = d.outline.root_position().unwrap();
+        let (node, result) = d.import_auto(&root, py.to_str().unwrap()).unwrap();
+        let o = &d.outline;
+        assert!(result.errors.is_empty());
+        assert_eq!(node.h(o), "@auto x.py");
+        let children: Vec<&str> = node.children(o).iter().map(|c| c.h(o)).collect();
+        assert_eq!(children, ["function: f", "function: g"]);
+        let again = d.import_auto(&root, py.to_str().unwrap());
+        assert!(matches!(again, Err(crate::Error::Import { .. })));
+    }
 
     fn abc() -> (Document, Vec<Position>) {
         let mut d = Document::new_empty("");

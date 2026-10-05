@@ -26,6 +26,7 @@ impl Prompts {
             Mode::Command | Mode::Search => quick_input(ctx, app, colours),
             Mode::Confirm => confirm(ctx, app),
             Mode::Help => self.help(ctx, app, colours, hover_at),
+            Mode::Insert if app.completion.is_some() => completions(ctx, app, colours, hover_at),
             _ => self.help_pane = None,
         }
     }
@@ -125,6 +126,57 @@ impl Prompts {
         if !open {
             app.run("close-help", 1);
         }
+    }
+}
+
+/// The completions on offer, as a menu under the body cursor. The keys go
+/// to the app; a click accepts one.
+fn completions(ctx: &egui::Context, app: &mut App, colours: &Palette, at: Option<Pos2>) {
+    let Some(menu) = &app.completion else { return };
+    let at = at.unwrap_or(ctx.content_rect().center());
+    let mut chosen = None;
+    egui::Area::new(egui::Id::new("completions"))
+        .fixed_pos(at + egui::vec2(0.0, 20.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(colours.popup)
+                .show(ui, |ui| {
+                    ui.set_min_width(260.0);
+                    ui.set_max_width(520.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(260.0)
+                        .show(ui, |ui| {
+                            for i in 0..menu.shown.len() {
+                                let Some(c) = menu.shown_item(i) else { break };
+                                let selected = i == menu.selected;
+                                let row = ui.horizontal(|ui| {
+                                    let label = RichText::new(&c.label).monospace();
+                                    let r = ui.selectable_label(selected, label);
+                                    if let Some(detail) = &c.detail {
+                                        let detail: String = detail.chars().take(60).collect();
+                                        ui.label(
+                                            RichText::new(detail).size(12.0).color(colours.dim),
+                                        );
+                                    }
+                                    r
+                                });
+                                if selected {
+                                    row.response.scroll_to_me(None);
+                                }
+                                let r = match &c.kind {
+                                    Some(kind) => row.inner.on_hover_text(kind),
+                                    None => row.inner,
+                                };
+                                if r.clicked() {
+                                    chosen = Some(i);
+                                }
+                            }
+                        });
+                });
+        });
+    if let Some(i) = chosen {
+        app.accept_completion(i);
     }
 }
 
