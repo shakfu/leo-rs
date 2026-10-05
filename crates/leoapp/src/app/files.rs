@@ -148,9 +148,9 @@ impl App {
     /// Run when the terminal regains focus: the likeliest moment another
     /// program has written them.
     pub fn check_disk(&mut self) {
+        self.changed_on_disk = self.outline().changed_files();
         let mut changed: Vec<String> = self
-            .outline()
-            .changed_files()
+            .changed_on_disk
             .iter()
             .map(|path| leolib::util::short_file_name(path))
             .collect();
@@ -161,6 +161,73 @@ impl App {
         self.message = format!(
             "changed on disk: {}. :refresh-from-disk or :read-at-file-nodes reads them, :e! the .leo file",
             changed.join(", ")
+        );
+    }
+
+    /// The files `check_disk` found changed that are still changed: a read,
+    /// a write or `keep_changed_files` since may have settled one.
+    pub fn files_changed_on_disk(&self) -> Vec<String> {
+        let o = self.outline();
+        self.changed_on_disk
+            .iter()
+            .filter(|path| o.changed_on_disk(path))
+            .cloned()
+            .collect()
+    }
+
+    /// What needs attention in p's external file, if p is an `@<file>` node.
+    pub fn file_state(&self, p: &Position) -> Option<FileState> {
+        let o = self.outline();
+        if !p.is_any_at_file_node(o) {
+            return None;
+        }
+        let path = o.full_path(p);
+        if self.unread.contains_key(&path) {
+            Some(FileState::Unread)
+        } else if self.changed_on_disk.contains(&path) && o.changed_on_disk(&path) {
+            Some(FileState::ChangedOnDisk)
+        } else if !o.may_overwrite(p) {
+            Some(FileState::Refused)
+        } else if p.is_dirty(o) {
+            Some(FileState::Unwritten)
+        } else {
+            None
+        }
+    }
+
+    /// Read again the files changed on disk, asking first if that would
+    /// discard edits not yet written.
+    pub fn reload_changed_files(&mut self) {
+        let changed = self.files_changed_on_disk();
+        let o = self.outline();
+        let Some(root) = o.root_position() else {
+            return;
+        };
+        // `@asis` and `@nosent` files are never read; only Keep settles one.
+        let (mut files, _) = leolib::external::find_files_to_read(o, &root, true);
+        files.retain(|p| changed.contains(&o.full_path(p)));
+        if files.is_empty() {
+            self.message = match changed.is_empty() {
+                true => "no external file has changed on disk".to_string(),
+                false => "the changed files are never read; Keep settles them".to_string(),
+            };
+            return;
+        }
+        self.read_or_ask(files, false);
+    }
+
+    /// Keep the outline's text of the files changed on disk: the next write
+    /// overwrites them without asking.
+    pub fn keep_changed_files(&mut self) {
+        let changed = self.files_changed_on_disk();
+        let o = self.doc.outline_mut_untracked();
+        for path in &changed {
+            o.record_file_stamp(path, leolib::util::file_stamp(path));
+        }
+        self.changed_on_disk.clear();
+        self.message = format!(
+            "kept the outline's text of {}",
+            plural(changed.len(), "file")
         );
     }
 
@@ -210,6 +277,9 @@ impl App {
     pub(super) fn read_files(&mut self, files: Vec<Position>, refresh: bool) {
         // A selection inside a tree being rebuilt names nodes about to go, so
         // it moves to that tree's root, which the read keeps.
+        for p in &files {
+            self.unread.remove(&self.doc.outline().full_path(p));
+        }
         let o = self.outline();
         let inside = self
             .current
@@ -226,6 +296,9 @@ impl App {
             None => self.clamp_current(),
         }
         self.buffer = None;
+        for e in &result.errors {
+            self.unread.insert(e.path.clone(), e.error.to_string());
+        }
         for line in read_report_lines(&result) {
             self.log(line);
         }

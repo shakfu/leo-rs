@@ -9,21 +9,31 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+/// What an opcode does to `a` to make `b`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tag {
+    /// `a[ai..aj]` equals `b[bi..bj]`.
     Equal,
+    /// `a[ai..aj]` becomes `b[bi..bj]`.
     Replace,
+    /// `a[ai..aj]` goes.
     Delete,
+    /// `b[bi..bj]` goes in at `ai`.
     Insert,
 }
 
 /// `(tag, a_start, a_end, b_start, b_end)`, as `get_opcodes` returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Opcode {
+    /// What the range does.
     pub tag: Tag,
+    /// The range in `a`.
     pub ai: usize,
+    /// The end of the range in `a`.
     pub aj: usize,
+    /// The range in `b`.
     pub bi: usize,
+    /// The end of the range in `b`.
     pub bj: usize,
 }
 
@@ -34,6 +44,7 @@ struct Match {
     size: usize,
 }
 
+/// Python's `SequenceMatcher` over two slices.
 pub struct SequenceMatcher<'a, T: Hash + Eq> {
     a: &'a [T],
     b: &'a [T],
@@ -41,6 +52,7 @@ pub struct SequenceMatcher<'a, T: Hash + Eq> {
 }
 
 impl<'a, T: Hash + Eq> SequenceMatcher<'a, T> {
+    /// A matcher turning `a` into `b`.
     pub fn new(a: &'a [T], b: &'a [T]) -> Self {
         let mut b2j: HashMap<&T, Vec<usize>> = HashMap::new();
         for (i, elt) in b.iter().enumerate() {
@@ -156,6 +168,7 @@ impl<'a, T: Hash + Eq> SequenceMatcher<'a, T> {
         out
     }
 
+    /// The edits from `a` to `b`, in order, as Python's `get_opcodes`.
     pub fn opcodes(&self) -> Vec<Opcode> {
         let (mut i, mut j) = (0usize, 0usize);
         let mut out = Vec::new();

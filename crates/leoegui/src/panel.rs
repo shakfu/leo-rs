@@ -1,23 +1,49 @@
-//! The bottom panel: the node's problems, and the message log.
+//! The bottom panel: the node's problems, the message log, and find.
 
 use eframe::egui::{self, RichText, Sense};
 use leoapp::app::App;
 
+use crate::find::FindPanel;
 use crate::style::Palette;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelTab {
     Problems,
     Log,
+    Find,
+}
+
+impl PanelTab {
+    /// The tab's name in the session file.
+    pub fn name(self) -> &'static str {
+        match self {
+            PanelTab::Problems => "problems",
+            PanelTab::Log => "log",
+            PanelTab::Find => "find",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<PanelTab> {
+        [PanelTab::Problems, PanelTab::Log, PanelTab::Find]
+            .into_iter()
+            .find(|t| t.name() == name)
+    }
 }
 
 /// Draw the panel. False if it was closed.
-pub fn ui(ui: &mut egui::Ui, app: &mut App, tab: &mut PanelTab, colours: &Palette) -> bool {
+pub fn ui(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    tab: &mut PanelTab,
+    find: &mut FindPanel,
+    colours: &Palette,
+) -> bool {
     let mut open = true;
     ui.horizontal(|ui| {
         let problems = format!("Problems ({})", app.diagnostics.len());
         ui.selectable_value(tab, PanelTab::Problems, problems);
         ui.selectable_value(tab, PanelTab::Log, "Log");
+        ui.selectable_value(tab, PanelTab::Find, "Find");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button("Close").clicked() {
                 open = false;
@@ -25,12 +51,17 @@ pub fn ui(ui: &mut egui::Ui, app: &mut App, tab: &mut PanelTab, colours: &Palett
         });
     });
     ui.separator();
+    if *tab == PanelTab::Find {
+        find.ui(ui, app, colours);
+        return open;
+    }
     egui::ScrollArea::vertical()
         .id_salt(*tab as u8)
         .auto_shrink([false, false])
         .stick_to_bottom(*tab == PanelTab::Log)
         .show(ui, |ui| match tab {
             PanelTab::Problems => problems(ui, app, colours),
+            PanelTab::Find => {}
             PanelTab::Log => {
                 for line in &app.messages {
                     ui.label(RichText::new(line).size(12.5));

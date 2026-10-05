@@ -88,6 +88,106 @@ pub fn ranges(re: &Regex, text: &str) -> Vec<Range<usize>> {
         .collect()
 }
 
+/// Which nodes the find panel searches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FindScope {
+    #[default]
+    Outline,
+    /// The selected node and its descendants.
+    Subtree,
+    Marked,
+}
+
+/// What the find panel searches for, as Leo's Find tab sets it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Find {
+    pub pattern: String,
+    /// A regex, or the text as typed.
+    pub regex: bool,
+    pub whole_word: bool,
+    pub ignore_case: bool,
+    pub headlines: bool,
+    pub bodies: bool,
+    pub scope: FindScope,
+}
+
+impl Default for Find {
+    fn default() -> Self {
+        Find {
+            pattern: String::new(),
+            regex: false,
+            whole_word: false,
+            ignore_case: true,
+            headlines: true,
+            bodies: true,
+            scope: FindScope::Outline,
+        }
+    }
+}
+
+impl Find {
+    /// The settings as one regex, for `/`'s `n` to carry on with. The case
+    /// flag is explicit, so smartcase does not override it.
+    pub fn as_regex(&self) -> String {
+        let mut core = match self.regex {
+            true => self.pattern.clone(),
+            false => regex::escape(&self.pattern),
+        };
+        if self.whole_word {
+            core = format!(r"\b(?:{core})\b");
+        }
+        let case = if self.ignore_case { "(?i)" } else { "(?-i)" };
+        format!("{case}{core}")
+    }
+
+    pub fn compile(&self) -> Result<Regex, String> {
+        if self.pattern.is_empty() {
+            return Err("find: nothing to find".to_string());
+        }
+        compile(&self.as_regex())
+    }
+
+    /// Whether node `p` has a match where this looks.
+    pub fn matches(&self, re: &Regex, o: &Outline, p: &Position) -> bool {
+        (self.headlines && re.is_match(p.h(o))) || (self.bodies && re.is_match(p.b(o)))
+    }
+}
+
+/// A match the find panel lists: its node and place, and the line it is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Found {
+    pub node: Position,
+    pub place: Place,
+    pub line: String,
+}
+
+/// Every match in `nodes`, in order, each node once however many clones it
+/// has.
+pub fn find_all(o: &Outline, nodes: &[Position], find: &Find, re: &Regex) -> Vec<Found> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let scope = match find.bodies {
+        true => Scope::All,
+        false => Scope::Headlines,
+    };
+    for p in nodes.iter().filter(|p| seen.insert(p.v)) {
+        let lines: Vec<&str> = p.b(o).split('\n').collect();
+        for place in places(o, p, re, scope) {
+            let line = match place {
+                Place::Headline(_) if !find.headlines => continue,
+                Place::Headline(_) => p.h(o),
+                Place::Body(row, _) => lines.get(row).copied().unwrap_or(""),
+            };
+            out.push(Found {
+                node: p.clone(),
+                place,
+                line: line.to_string(),
+            });
+        }
+    }
+    out
+}
+
 /// Every match in node `p`, in order.
 fn places(o: &Outline, p: &Position, re: &Regex, scope: Scope) -> Vec<Place> {
     let mut out: Vec<Place> = re
@@ -243,6 +343,56 @@ mod tests {
         let only = at(&all[3], Place::Headline(0));
         let hit = next(&o, "delta", &only, Direction::Forward, Scope::All).unwrap();
         assert_eq!(hit, (only, true));
+    }
+
+    #[test]
+    fn the_find_panels_settings_make_one_regex() {
+        let mut f = Find {
+            pattern: "a.b".into(),
+            ..Find::default()
+        };
+        let re = f.compile().unwrap();
+        assert!(re.is_match("xA.Bx") && !re.is_match("axb"));
+        f.regex = true;
+        f.ignore_case = false;
+        f.whole_word = true;
+        let re = f.compile().unwrap();
+        assert!(re.is_match("a b axb") && !re.is_match("aaxb") && !re.is_match("AxB"));
+        // Not smartcase: a capital does not turn case back on.
+        f.pattern = "Gamma".into();
+        f.ignore_case = true;
+        assert!(compile(&f.as_regex()).unwrap().is_match("gamma"));
+        assert!(Find::default().compile().is_err());
+    }
+
+    #[test]
+    fn find_all_lists_each_match_with_its_line() {
+        let (o, all) = outline();
+        let f = Find {
+            pattern: "needle".into(),
+            ..Find::default()
+        };
+        let re = f.compile().unwrap();
+        let found = find_all(&o, &all, &f, &re);
+        let places: Vec<_> = found.iter().map(|x| (x.place, x.line.as_str())).collect();
+        assert_eq!(
+            places,
+            [
+                (Place::Body(0, 2), "x needle"),
+                (Place::Body(1, 0), "needle y"),
+                (Place::Body(0, 0), "needle"),
+            ]
+        );
+        let heads = Find {
+            pattern: "a$".into(),
+            regex: true,
+            bodies: false,
+            ..Find::default()
+        };
+        let re = heads.compile().unwrap();
+        let found = find_all(&o, &all, &heads, &re);
+        assert_eq!(found.len(), 4);
+        assert_eq!(found[2].line, "Gamma");
     }
 
     #[test]

@@ -6,6 +6,18 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ### Added
 
+- **leoegui restores the session.** Started with no outline named, it reopens the outlines open at the last quit, each with its selected node, body cursor and tabs, and the bottom panel and window size, from `session` beside the settings. Quitting writes it; an unsaved outline, or one whose file is gone, is left out. Named outlines or `--press` skip the restore, so a scripted run opens only what it names. `--no-session` neither restores nor saves, so a one-off run leaves the session as it was.
+
+- **leoegui opens several outlines, a tab each.** File > Open... and Save As... use the system's dialogs (`rfd`), File > Open Recent lists the last ten outlines (kept in `recent-outlines` beside the settings), and `leoegui a.leo b.leo` opens both. Quitting asks of each outline with unsaved work, and a no stops it. Each outline has its own undo, language servers and sidebar; options, histories, theme and settings are shared. The MCP server stays with one outline and moves to the next when that one closes, as a second server would need a second port. `:e` still replaces the outline shown.
+
+- **leoegui's go to node, Cmd-P.** Every headline, ranked as the command palette ranks commands; a match in a node's ancestors ranks below one in its headline.
+
+- **leoegui shows each external file's state.** An `@<file>` row is badged unread (its read failed), changed on disk, not read (it exists but was never read, so a write asks first), or unwritten. A bar above the body offers Reload or Keep for files changed on disk; Keep records the file's current stamp, so the next write overwrites it without asking.
+
+- **Language-server code actions, in both front ends.** `:lsp-code-action` (leoegui: Cmd-. or Body > Code Actions...) lists the server's fixes for the cursor, sent with the diagnostics on its line, the server's preferred one selected; Up/Down or `j`/`k` and Enter, a digit, or `:lsp-code-action N` applies one as one undo. An action that is only a command runs on the server, and the edit it sends back (`workspace/applyEdit`) is applied the same way. Edits map to bodies as a rename's do, and a list offered before the outline changed is refused. An edit wider than one body, as ruff's fix-all replacing the whole file, is cut by a line diff into the lines it changes, each mapped to its node; it is refused whole only if a changed run crosses a sentinel or another node, or drops a line's `@others` indent. `leolib::seqmatch` is public for it.
+
+- **leoegui's find panel, Leo's Find tab.** Ctrl-Shift-F opens it in the bottom panel: find and replace text, regex, whole word and ignore case, headlines and bodies, and a scope of outline, subtree or marked nodes. Find All lists every match to click to; Replace All is one undo; Clone Find All and its flattened form clone the matches in scope under a `Found` node. Its search becomes `/`'s, so `n` continues it. Case is set by the checkbox, not by smartcase.
+
 - **MCP access to the open outline.** With `mcp = true` in the settings, the running app serves its outline to MCP clients on 127.0.0.1, over streamable HTTP, behind a bearer token and a check that `Host` and `Origin` are local. Clients read nodes by gnx, search, and see the selection; with `mcp-edit` they change headlines and bodies and insert, move, delete and select nodes, each an undo step, and with `mcp-save` they save. Off by default, and read-only once on. The tools are answered on the app's own thread, so an edit lands in the live outline, not in the file behind it.
 
 - **A settings dialog, and a settings file both front ends share.** `~/.config/leotui/config.toml` is renamed to `settings.toml` on first start. leoegui's File > Settings... edits appearance, themes, editor defaults (`number`, `wrap`, `syntax`), keys, language servers and MCP, and writes only what changed. `lsp = false` starts no language server; the dialog turning it off stops the running ones.
@@ -18,9 +30,13 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ### Fixed
 
+- **`:e` keeps the language servers, settings and MCP server.** Opening another outline in place built a new app and copied only part of the session across, so language servers, the MCP server and the settings read at launch were lost until restart. The servers now restart in the new outline's directory.
+
 - **An inheriting Helix theme now takes its own palette.** A variant that is `inherits` plus a `[palette]`, as `catppuccin_latte` and `rose_pine_dawn` are, drew its parent's scopes in the parent's colours: each file's scopes were resolved with that file's palette before the chain was merged. Palettes are merged first now, child over parent, as Helix does, so a light variant is light in leotui too.
 
 ### Changed
+
+- **Language servers no longer slow the outline as files are visited.** Each sync rendered every open document again, about 5 ms per 6,000-line file, and the app syncs whenever the selection moves: with 20 of leo-editor's Python files visited, each arrow key took 99 ms. A document is now rendered only when it opens or a fingerprint of its tree and ancestors changes, and nothing is checked while the outline is unchanged: a selection move takes 0.01 ms and an edit 6.8 ms. A fingerprint over the tree, rather than a list of edited nodes, catches a node moved between files and a directive changed in an ancestor. `cargo bench -p leolsp` times it; `Lsp::with_connect` is public for the bench's stand-in server.
 
 - **The outline takes Leo's own keys.** `Ctrl-r` `Ctrl-l` `Ctrl-u` `Ctrl-d` move the node right, left, up and down, as Leo's `move-outline-*`, where they were vim's redo and half pages; the body keeps vim's. Leo's Alt-arrows navigate and Alt-Shift-arrows move from either pane, `Ctrl-Shift-c` `-x` `-v` `-d` copy, cut, paste and extract a node, `Ctrl-{` `Ctrl-}` promote and demote, and `Alt-d` `Alt-t` `Ctrl-t` `Ctrl-g` are Leo's pane keys and keyboard-quit. Leo leaves go-back and go-forward unbound, so they move from Alt-arrows to `H` and `L` in the outline. This reverses `tui-design.md`'s rule that a Ctrl key means the same in both panes: Leo's outline keys win in the outline. While a headline is being typed, those chords keep the headline and act on the node, as in Leo's headline editor, where they were swallowed: a new node can be indented before it is named.
 

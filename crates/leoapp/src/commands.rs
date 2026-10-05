@@ -689,6 +689,11 @@ pub static COMMANDS: &[Command] = &[
         |app, _| app.show_diagnostics(),
     ),
     c(
+        "lsp-code-action",
+        "the language server's fixes here; :lsp-code-action N applies one",
+        |app, _| app.lsp_request(leolsp::Request::CodeActions),
+    ),
+    c(
         "lsp-rename",
         "rename the symbol under the cursor everywhere (:lsp-rename NAME)",
         |app, _| app.open_mini(MiniKind::Command, "lsp-rename ".to_string()),

@@ -82,6 +82,27 @@ impl Tabs {
         }
     }
 
+    /// Each tab's gnx and whether it is pinned, for the session.
+    pub fn saved(&self) -> Vec<(String, bool)> {
+        self.list
+            .iter()
+            .map(|t| (t.gnx.clone(), t.pinned))
+            .collect()
+    }
+
+    /// Open the tabs a session saved. A tab whose node is gone closes on
+    /// the next frame, as any such tab does.
+    pub fn restore(&mut self, tabs: &[(String, bool)]) {
+        self.list = tabs
+            .iter()
+            .map(|(gnx, pinned)| Tab {
+                gnx: gnx.clone(),
+                pinned: *pinned,
+            })
+            .collect();
+        self.generation = None;
+    }
+
     pub fn pin(&mut self, gnx: &str) {
         if let Some(t) = self.list.iter_mut().find(|t| t.gnx == gnx) {
             t.pinned = true;

@@ -31,7 +31,7 @@ crates/leotui     the terminal front end: leoapp drawn with ratatui.
 crates/leoegui    the desktop front end: leoapp drawn with egui.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leoegui` adds `eframe` and `clap`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leoegui` adds `eframe`, `rfd` and `clap`.
 
 ## Installing
 
@@ -113,9 +113,18 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 
 leoegui is the same editor in a window: the same keys, commands, settings and themes, drawn in a monospace grid. On macOS, Cmd is Leo's Ctrl, as in Leo: a Cmd chord the outline binds runs from either pane, so Cmd-R indents the node even in the body, and any other Cmd chord is Ctrl. Control keeps leotui's keys, vim's in the body. Leo's `qt-mac-dont-swap-ctrl-and-meta = true` in the settings leaves Cmd unbound. The outline and body take clicks and the wheel in NORMAL. View > Appearance picks dark, light, or the system's choice, saved as `appearance = "dark" | "light" | "system"`; the dark theme is `theme` and the light one `theme-light` (default `onelight`), and `:theme` sets whichever is showing. View > Theme... lists your Helix themes as dark or light and previews each under the pointer; the window's parts take the Helix scopes for them, such as `ui.statusline.insert` for the INSERT badge and `diagnostic.warning` for a warning's underline. A yes/no dialog answers to `y` or `n` alone.
 
+What the window adds to leotui:
+
+- Several outlines, a tab each, with the system's Open and Save As dialogs and File > Open Recent. Started with no outline named, leoegui reopens those open at the last quit, with their selections and tabs.
+- Cmd-P goes to a node by its headline; Cmd-Shift-P runs a command by name.
+- Cmd-Shift-F opens the find panel: find, replace, Clone Find All, over the outline, a subtree or the marked nodes.
+- An `@<file>` row shows when its file is unread, changed on disk, never read, or unwritten; a bar offers Reload or Keep for a changed file.
+- Cmd-. lists a language server's code actions at the cursor.
+
 ```sh
 make gui FILE=FILE.leo                                   # a release build
-cargo run -p leoegui -- FILE.leo
+cargo run -p leoegui -- FILE.leo [MORE.leo...]
+cargo run -p leoegui -- --no-session                    # neither restore nor save the session
 cargo run -p leoegui -- FILE.leo --press F1 --screenshot out.ppm   # one frame, then exit
 ```
 
@@ -333,7 +342,7 @@ lsp-rust = "rust-analyzer"
 
 None is started otherwise: a server runs code from the project around the outline, and opening a `.leo` file should not choose that code.
 
-A server sees each external file as leolib writes it, so diagnostics, hover, definitions and renames work across the nodes of an `@file`, `@clean`, `@nosent` or code `@auto` tree. A node in no file is a document of its own. Diagnostics are underlined in the body, and the one on the cursor's line is on the status line; the servers hear an edit when INSERT commits it. `:lsp-diagnostics` lists the body's, and `:lsp-rename NAME` renames the symbol under the cursor in every node at once, as one undo. A rename that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
+A server sees each external file as leolib writes it, so diagnostics, hover, definitions and renames work across the nodes of an `@file`, `@clean`, `@nosent` or code `@auto` tree. A node in no file is a document of its own. Diagnostics are underlined in the body, and the one on the cursor's line is on the status line; the servers hear an edit when INSERT commits it. `:lsp-diagnostics` lists the body's, and `:lsp-rename NAME` renames the symbol under the cursor in every node at once, as one undo. `:lsp-code-action` lists the server's fixes at the cursor; Up/Down or `j`/`k` and Enter, a digit, or `:lsp-code-action N` applies one, as one undo. A rename that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
 
 ## `@auto`
 

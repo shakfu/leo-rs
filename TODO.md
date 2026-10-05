@@ -4,14 +4,6 @@
 
 ## High
 
-### Upstream (Leo)
-
-Leo's bugs, which this port does not reproduce. Nothing to change here.
-
-- [ ] **Leo's `descendentVnodeUnknownAttributes` blob is not stable across a read.** Its pickled dict comes back in another key order, so opening a `.leo` file with two uAs on one node and saving it rewrites the file with no edit. `demo/cases/uas` puts one uA per node to stay inside leo-editor's "rewritten unchanged" test. This port rebuilds the blob from the tree, in the key order the tree gives.
-
-- [ ] **Leo reads a section reference back with its delimiters regex-escaped** when `@section-delims` set them (`leoAtFile.py:4016` assigns `re.escape`'d delims to `section_delim1`), so `{ imports }` becomes `\{ imports \}` in the body it hands back. This port keeps what the file spells. Report upstream; `corpus.rs`'s `KNOWN` holds it meanwhile.
-
 ## Medium
 
 - [ ] **Tab completion from the language server.** In INSERT, Tab (or vim's `Ctrl-n`) asks the server for `textDocument/completion` at the cursor and shows the items in a list: a popup in leoegui, the drop-down above the status line in leotui. The chosen item's `textEdit` maps back to the body like a rename's edits, and is refused if it crosses a line the body does not write. The servers see committed text only (`app/lsp.rs`), so the working copy has to be synced first, or the request made at the last commit's position. Tab is INSERT's indent today, so completing on Tab has to fall back to a tab where the server has nothing.
@@ -20,13 +12,13 @@ Leo's bugs, which this port does not reproduce. Nothing to change here.
 
 ### leoegui
 
-Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`. The first five are the recommended order.
+Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`.
 
-- [ ] Go to node: fuzzy quick open over every headline (Cmd-P).
-- [ ] External-file status in the outline: unwritten, changed on disk, unread, refused; Reload or Keep.
-- [ ] Language-server code actions and quick fixes.
-- [ ] Find panel: Leo's Find tab, with replace and `clone-find-all`.
-- [ ] Several outlines: tabs or windows, Open Recent, native Open and Save As dialogs.
+- [x] Go to node: fuzzy quick open over every headline (Cmd-P).
+- [x] External-file status in the outline: unwritten, changed on disk, unread, refused; Reload or Keep.
+- [x] Language-server code actions and quick fixes.
+- [x] Find panel: Leo's Find tab, with replace and `clone-find-all`.
+- [x] Several outlines: tabs, Open Recent, native Open and Save As dialogs. Separate windows are not done.
 - [ ] Rendered view of markdown, reStructuredText and image nodes.
 - [ ] Clone navigation: clone count on the row, and a list of a node's clones.
 - [ ] Hoist banner with a de-hoist button.
@@ -36,9 +28,9 @@ Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`. The fi
 - [ ] Matching bracket highlight; `@pagewidth` ruler, whitespace and indent guides; sticky headers.
 - [ ] Multi-select in the outline.
 - [ ] Drop a file on the outline to import it as `@auto`.
-- [ ] Session restore.
+- [x] Session restore.
 - [ ] Performance, in this order (detail and measurements in the roadmap's Performance section):
-  - [ ] Measure language-server sync on a large `@file` tree; then re-render only dirty documents, and keep each document's root position.
+  - [x] Language-server sync: a selection move with 20 documents open went from 99 ms to 0.01 ms, an edit from 99 ms to 6.8 ms (roadmap Performance 1).
   - [ ] Colour the visible lines first on a body's first visit (46 ms at 5,000 lines).
   - [ ] Keep a few colourings by node, so switching between large bodies does not recolour.
   - [ ] Split the body once a frame and key the colouring on node and generation, not a hash (2 ms a frame at 5,000 lines).

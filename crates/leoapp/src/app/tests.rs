@@ -1906,3 +1906,156 @@ fn ctrl_i_after_a_headline_keeps_it_and_starts_the_next() {
     press(&mut app, "Ctrl-g");
     assert_eq!(app.mode, Mode::Normal);
 }
+
+#[test]
+fn a_file_changed_on_disk_is_flagged_until_reloaded() {
+    let dir = scratch("reload");
+    let (mut app, py) = on_disk(&dir);
+    let root = app.current.clone();
+    assert_eq!(app.file_state(&root), None);
+    let theirs = std::fs::read_to_string(&py)
+        .unwrap()
+        .replace("x = 1", "x = 1  # theirs");
+    std::fs::write(&py, theirs).unwrap();
+    // Not until the outline looks.
+    assert_eq!(app.file_state(&root), None);
+    app.check_disk();
+    assert_eq!(app.file_state(&root), Some(FileState::ChangedOnDisk));
+    assert_eq!(app.files_changed_on_disk().len(), 1);
+
+    app.reload_changed_files();
+    let body = app.current.b(app.outline()).to_string();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(body.contains("# theirs"), "{body}");
+    assert!(app.files_changed_on_disk().is_empty());
+    assert_eq!(app.file_state(&app.current), None);
+}
+
+#[test]
+fn keeping_a_changed_file_lets_the_next_write_overwrite_it() {
+    let dir = scratch("keep");
+    let (mut app, py) = on_disk(&dir);
+    let theirs = std::fs::read_to_string(&py)
+        .unwrap()
+        .replace("x = 1", "x = 1  # theirs");
+    std::fs::write(&py, theirs).unwrap();
+    app.check_disk();
+    let root = app.current.clone();
+    app.doc.set_body(&root, "x = 2\n");
+    app.keep_changed_files();
+    assert_eq!(app.message, "kept the outline's text of 1 file");
+    assert_eq!(app.file_state(&root), Some(FileState::Unwritten));
+    app.write_dirty_at_file_nodes();
+    let written = std::fs::read_to_string(&py).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(written.contains("x = 2"), "{written}");
+    assert_eq!(app.file_state(&root), None);
+}
+
+#[test]
+fn an_unread_file_and_a_refused_one_are_flagged() {
+    let dir = scratch("states");
+    std::fs::create_dir_all(&dir).unwrap();
+    let exists = dir.join("exists.py");
+    std::fs::write(&exists, "print('theirs')\n").unwrap();
+    let mut doc = Document::new_empty("");
+    let root = doc.outline().root_position().unwrap();
+    doc.set_headline(&root, &format!("@file {}", exists.display()));
+    let unreadable = doc.outline_mut_untracked().insert_after(&root);
+    // A directory where the file should be: the read fails.
+    let gone = dir.join("dir.py");
+    std::fs::create_dir_all(&gone).unwrap();
+    doc.set_headline(&unreadable, &format!("@file {}", gone.display()));
+    let mut app = App::new(doc);
+    // Never read, so writing it would lose what it holds.
+    assert_eq!(app.file_state(&root), Some(FileState::Refused));
+    let other = app.row_position(1).unwrap();
+    app.select(other.clone());
+    app.read_at_file_nodes();
+    // A new node is dirty, so the read asks first.
+    type_text(&mut app, "y");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let rows = app.rows();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(app.message.contains("not read"), "{}", app.message);
+    assert_eq!(rows[0].file_state, Some(FileState::Refused));
+    assert_eq!(rows[1].file_state, Some(FileState::Unread));
+}
+
+#[test]
+fn an_outline_opened_beside_shares_the_session() {
+    let dir = scratch("beside");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut first = app();
+    first.options.number = true;
+    first.command_history.push("set number".into());
+    first.settings.wrap = Some(true);
+    let path = dir.join("other.leo");
+    let second = first
+        .open_beside(Some(path.to_str().unwrap()), std::sync::Arc::new(|| {}))
+        .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(second.options.number);
+    assert_eq!(second.command_history, ["set number"]);
+    assert_eq!(second.settings.wrap, Some(true));
+    assert!(
+        second.message.starts_with("new outline: "),
+        "{}",
+        second.message
+    );
+    assert!(second.outline().file_name.ends_with("other.leo"));
+    // The first outline is untouched.
+    assert_eq!(heads(&first)[0], "a");
+    let unsaved = first.open_beside(None, std::sync::Arc::new(|| {})).unwrap();
+    assert!(unsaved.outline().file_name.is_empty());
+    assert!(unsaved.message.is_empty());
+}
+
+#[test]
+fn opening_another_outline_keeps_the_settings_and_servers() {
+    let dir = scratch("reopen");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = app();
+    app.settings.lsp = true;
+    app.settings.wrap = Some(true);
+    app.settings.servers = vec![leolsp::ServerConfig {
+        language: "python".into(),
+        command: "pylsp".into(),
+    }];
+    let woken = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = woken.clone();
+    let wake: leolsp::server::Wake =
+        std::sync::Arc::new(move || flag.store(true, std::sync::atomic::Ordering::SeqCst));
+    let settings = app.settings.clone();
+    app.set_lsp(&settings, wake);
+    app.theme_setting = "theme-light";
+    let path = dir.join("other.leo");
+    app.run_command_line(&format!("e! {}", path.display()));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(
+        app.outline().file_name.ends_with("other.leo"),
+        "{}",
+        app.message
+    );
+    assert_eq!(app.settings, settings);
+    assert_eq!(app.theme_setting, "theme-light");
+    // A server is started on first use; the front end's wake goes with it.
+    let lsp = app.lsp.as_ref().expect("servers kept");
+    (lsp.wake())();
+    assert!(woken.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn a_restored_selection_puts_the_cursor_back_within_the_body() {
+    let mut app = app();
+    let o = app.outline();
+    let b = o.all_positions()[3].clone();
+    let gnx = b.gnx(o).to_string();
+    app.doc.set_body(&b, "one\ntwo\n");
+    assert!(app.restore_selection(&gnx, (1, 99)));
+    assert_eq!(app.current.h(app.outline()), "b");
+    assert_eq!(app.editor.cursor, (1, 2));
+    assert_eq!(app.focus, Focus::Tree);
+    assert!(!app.restore_selection("nobody", (0, 0)));
+}

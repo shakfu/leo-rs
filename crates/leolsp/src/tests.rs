@@ -67,6 +67,28 @@ fn lsp(seen: Seen) -> Lsp {
                     Some("textDocument/definition") => {
                         reply(json!({"uri": uri, "range": range(2, 8, 9)}))
                     }
+                    Some("textDocument/codeAction") => {
+                        let n = msg["params"]["context"]["diagnostics"]
+                            .as_array()
+                            .unwrap()
+                            .len();
+                        reply(json!([
+                            {"title": format!("return 2 ({n} diagnostic)"), "kind": "quickfix",
+                             "isPreferred": true,
+                             "edit": {"changes": {uri.as_str().unwrap(): [
+                                 {"range": range(3, 15, 16), "newText": "2"},
+                             ]}}},
+                            {"title": "organize", "command": "organize", "arguments": []},
+                            {"title": "off", "disabled": {"reason": "not here"}},
+                        ]))
+                    }
+                    Some("workspace/executeCommand") => vec![
+                        json!({"jsonrpc": "2.0", "id": msg["id"], "result": null}),
+                        json!({"jsonrpc": "2.0", "id": 77, "method": "workspace/applyEdit",
+                        "params": {"label": "organize", "edit": {"changes": {
+                            uri.as_str().unwrap(): [{"range": range(0, 7, 9), "newText": "sys"}],
+                        }}}}),
+                    ],
                     Some("textDocument/rename") => {
                         reply(json!({"changes": {uri.as_str().unwrap(): [
                             {"range": range(2, 8, 9), "newText": msg["params"]["newName"]},
@@ -246,4 +268,139 @@ fn a_server_that_cannot_start_is_said_once() {
     let events = lsp.sync(&o, &f);
     assert!(matches!(events.as_slice(), [Event::Message(m)] if m.contains("leolsp-server")));
     assert!(lsp.sync(&o, &f).is_empty());
+}
+
+#[test]
+fn code_actions_come_with_their_edits_in_body_positions() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (o, root, f) = outline();
+    lsp.sync(&o, &f);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    lsp.request(f.gnx(&o), 1, 4, Request::CodeActions).unwrap();
+    let Event::CodeActions(actions) = wait(&mut lsp, &o, |e| matches!(e, Event::CodeActions(_)))
+    else {
+        unreachable!()
+    };
+    // The disabled one is left out; the line's diagnostic went with the ask.
+    let titles: Vec<&str> = actions.iter().map(|a| a.title.as_str()).collect();
+    assert_eq!(titles, ["return 2 (1 diagnostic)", "organize"]);
+    assert!(actions[0].preferred);
+    assert_eq!(actions[0].kind.as_deref(), Some("quickfix"));
+    let fix = BodyEdit {
+        start: at(&o, &f, 1, 11),
+        end: at(&o, &f, 1, 12),
+        text: "2".into(),
+    };
+    assert_eq!(actions[0].edit, Some(Ok(vec![fix])));
+
+    // A command runs on the server, which sends its edit back to apply.
+    let command = actions[1].command.clone().unwrap();
+    lsp.execute(f.gnx(&o), &command).unwrap();
+    let edit = wait(&mut lsp, &o, |e| matches!(e, Event::Edit(..)));
+    let organize = BodyEdit {
+        start: at(&o, &root, 1, 7),
+        end: at(&o, &root, 1, 9),
+        text: "sys".into(),
+    };
+    assert_eq!(edit, Event::Edit("organize".into(), Ok(vec![organize])));
+    for _ in 0..100 {
+        if seen.lock().unwrap().iter().any(|m| m["id"] == 77) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let seen = seen.lock().unwrap();
+    let answer = seen.iter().find(|m| m["id"] == 77).expect("answered");
+    assert_eq!(answer["result"], json!({"applied": true}));
+}
+
+/// `top` with `@clean a.py` and `@clean b.py`, each with one child.
+fn two_files() -> (Outline, Vec<Position>) {
+    let mut o = Outline::new_empty();
+    let top = o.root_position().unwrap();
+    o.set_headline(&top, "top");
+    o.set_body(&top, "@language python\n");
+    let mut leaves = Vec::new();
+    for name in ["a", "b"] {
+        let file = o.insert_as_last_child(&top);
+        o.set_headline(&file, &format!("@clean {name}.py"));
+        o.set_body(&file, "@others\n");
+        let leaf = o.insert_as_last_child(&file);
+        o.set_headline(&leaf, name);
+        o.set_body(&leaf, &format!("{name} = 1\n"));
+        leaves.push(leaf);
+    }
+    (o, leaves)
+}
+
+/// The text of each `didChange` sent for a file named `name`, waiting a
+/// little for `want` of them.
+fn changes(seen: &Seen, name: &str, want: usize) -> Vec<String> {
+    let find = || -> Vec<String> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|m| m["method"] == "textDocument/didChange")
+            .filter(|m| {
+                m["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .is_some_and(|u| u.ends_with(name))
+            })
+            .map(|m| {
+                m["params"]["contentChanges"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    };
+    for _ in 0..100 {
+        if find().len() >= want {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    find()
+}
+
+#[test]
+fn an_edit_in_another_open_file_is_sent_and_nothing_else_is() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (mut o, leaves) = two_files();
+    lsp.sync(&o, &leaves[0]);
+    lsp.sync(&o, &leaves[1]);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    // Moving between them, or editing nothing, sends nothing.
+    lsp.sync(&o, &leaves[0]);
+    lsp.sync(&o, &leaves[1]);
+    o.set_body(&leaves[1], "b = 1\n");
+    lsp.sync(&o, &leaves[0]);
+    // With `a` selected, `b`'s edit still goes out.
+    o.set_body(&leaves[1], "b = 2\n");
+    lsp.sync(&o, &leaves[0]);
+    assert_eq!(changes(&seen, "b.py", 1), ["b = 2\n"]);
+    assert!(changes(&seen, "a.py", 0).is_empty());
+}
+
+#[test]
+fn a_file_whose_node_moved_is_found_again() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (mut o, leaves) = two_files();
+    lsp.sync(&o, &leaves[1]);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    // A node inserted before both files moves every position after it.
+    let top = o.root_position().unwrap();
+    let first = top.first_child(&o).unwrap();
+    o.insert_before(&first);
+    let leaf = o
+        .all_positions()
+        .into_iter()
+        .find(|p| p.h(&o) == "b")
+        .unwrap();
+    o.set_body(&leaf, "b = 3\n");
+    lsp.sync(&o, &leaf);
+    assert_eq!(changes(&seen, "b.py", 1), ["b = 3\n"]);
 }

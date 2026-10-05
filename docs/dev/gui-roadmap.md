@@ -1,6 +1,6 @@
 # leoegui roadmap
 
-Features proposed for leoegui on 2026-10-05, after the GUI redesign, the Leo key bindings and the Helix theme work. Effort is a rough estimate against this codebase: small is a day or less, medium a few days, large needs a design first. None is started. Language-server completion and semantic colouring are in `TODO.md` already.
+Features proposed for leoegui on 2026-10-05, after the GUI redesign, the Leo key bindings and the Helix theme work. Effort is a rough estimate against this codebase: small is a day or less, medium a few days, large needs a design first. Done: go-to-node, external-file status, code actions, the find panel and several outlines (see `CHANGELOG.md`). Language-server completion and semantic colouring are in `TODO.md` already.
 
 The first five, by value for effort: go-to-node, external-file status, code actions, the find panel, several outlines.
 
@@ -37,7 +37,15 @@ The first five, by value for effort: go-to-node, external-file status, code acti
 
 Proposed after the 2026-10-05 profile (release build, Apple M1, the 21,020-node stress outline with a 5,000-line body), which already cut a stress frame from 6.2 ms to 0.2 ms and a key in the big body from 35 ms to 1.8 ms. Measured costs are marked as such; the rest come from reading the code and need measuring first. In recommended order:
 
-1. **Measure language-server sync on a large `@file` tree** (small). Unmeasured, and the one cost expected to grow with use: every commit regenerates every open document, each by writing the file three times (`file_contents` and the writer with and without sentinels) and finding its root by walking the outline. Then re-render only documents whose subtree is dirty, and keep each document's root position instead of searching for it.
+1. **Language-server sync** (done). Measured 2026-10-05 on leo-editor's `LeoPyRef.leo` with its files (11,596 nodes, 376 mappable files; release build, Ryzen 9 7940HX), `Lsp::sync` against `ruff server`, 20 Python files open:
+
+   | | before | after |
+   |-|-|-|
+   | selection moves | 99 ms | 0.01 ms |
+   | one body edited | 99 ms | 6.8 ms |
+   | first visit to a file | 13 ms | 6 ms |
+
+   Before, every sync rendered every open document, about 5 ms each for a 6,000-line file (`line_map_of`: `file_contents` plus two sentinel writes and the row map), found each root by walking the outline (1 ms), and rendered the selection's document twice. `App::poll` syncs when the selection moves, so each arrow key cost 100 ms. Now a document is rendered only when it opens or the fingerprint of its tree and ancestors changes, nothing is checked while the outline generation is unchanged, and each root is remembered and looked up again only when an edit moved it. `cargo bench -p leolsp` times the same two cases on a synthetic outline: 79 ms to 1.5 us, and 79 ms to 4.4 ms.
 2. **Colour the visible lines first on a body's first visit** (small). Measured: 46 ms the first time the 5,000-line body is shown, as tree-sitter colours it whole. The typing path's partial colouring already does visible-first; the rest follows after the first frame, or on a thread.
 3. **Keep a few colourings, by node** (small). Measured: switching between two large bodies pays the 46 ms each time, as the cache holds one. A small cache keyed by node and outline generation makes switching back free.
 4. **Split the body once a frame and drop the per-frame hash** (small). Measured: 2 ms a frame on the 5,000-line body with nothing changing, against 0.25 ms for a small one. `body_buffer()` splits the body twice a frame (`body_view` and the gutter width), and `Colouring::of` hashes every line to find its cache key; key both on the node and the outline generation.

@@ -64,6 +64,13 @@ pub enum Incoming {
         method: String,
         params: Value,
     },
+    /// A request of ours to answer with `respond`: only those the front end
+    /// acts on come here.
+    Request {
+        id: Value,
+        method: String,
+        params: Value,
+    },
 }
 
 pub struct Server {
@@ -154,8 +161,21 @@ impl Server {
                     "hover": {"contentFormat": ["plaintext", "markdown"]},
                     "definition": {"linkSupport": true},
                     "rename": {"prepareSupport": false},
+                    "codeAction": {
+                        "isPreferredSupport": true,
+                        "disabledSupport": true,
+                        "codeActionLiteralSupport": {"codeActionKind": {"valueSet": [
+                            "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
+                            "refactor.rewrite", "source", "source.organizeImports",
+                        ]}},
+                    },
                 },
-                "workspace": {"workspaceFolders": true, "configuration": true},
+                "workspace": {
+                    "workspaceFolders": true,
+                    "configuration": true,
+                    "applyEdit": true,
+                    "executeCommand": {},
+                },
             },
         });
         self.initialize_id = self.next_id;
@@ -194,7 +214,7 @@ impl Server {
     }
 
     /// The messages that have arrived. A request from the server is
-    /// answered here, as no front end acts on one.
+    /// answered here, except `workspace/applyEdit`, which the caller answers.
     pub fn poll(&mut self) -> Vec<Incoming> {
         let mut out = Vec::new();
         loop {
@@ -209,9 +229,14 @@ impl Server {
             };
             let id = msg.get("id").cloned();
             match (msg.get("method").and_then(Value::as_str), id) {
+                (Some("workspace/applyEdit"), Some(id)) => out.push(Incoming::Request {
+                    id,
+                    method: "workspace/applyEdit".to_string(),
+                    params: msg["params"].clone(),
+                }),
                 (Some(method), Some(id)) => {
                     let result = server_request_result(method, &msg["params"]);
-                    self.write(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
+                    self.respond(id, result);
                 }
                 (Some(method), None) => out.push(Incoming::Notification {
                     method: method.to_string(),
@@ -233,6 +258,11 @@ impl Server {
             }
         }
         out
+    }
+
+    /// Answer request `id` of the server's.
+    pub fn respond(&mut self, id: Value, result: Value) {
+        self.write(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
     }
 
     fn initialized(&mut self, result: Result<Value, String>) {

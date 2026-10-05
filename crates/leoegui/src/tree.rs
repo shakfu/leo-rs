@@ -5,7 +5,8 @@ use eframe::egui::{
     self, pos2, vec2, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind,
 };
-use leoapp::app::{App, Focus, Mode};
+use leoapp::app::{App, FileState, Focus, Mode};
+use leoapp::view::Severity;
 use leolib::{Place, Position};
 
 use crate::style::Palette;
@@ -129,9 +130,12 @@ impl Tree {
                     paint_headline(&painter, row, text_x, rect, colours, app);
                 }
 
-                // Flags at the right: marked, then changed since the save.
+                // Flags at the right: the file's state or changed since the
+                // save, then marked.
                 let mut fx = rect.right() - 10.0;
-                if row.dirty {
+                if let Some(state) = row.file_state {
+                    fx = file_badge(&painter, state, fx, rect.center().y, colours) - 6.0;
+                } else if row.dirty {
                     painter.circle_filled(pos2(fx, rect.center().y), 3.0, colours.dim);
                     fx -= 12.0;
                 }
@@ -177,6 +181,10 @@ impl Tree {
                     }
                 }
 
+                let response = match row.file_state {
+                    Some(state) => response.on_hover_text(file_tip(app, &row.position, state)),
+                    None => response,
+                };
                 if response.drag_started() && app.mode == Mode::Normal {
                     self.drag = Some(row.position.clone());
                 }
@@ -273,6 +281,53 @@ impl Tree {
             field.shrink(3.0).y_range(),
             Stroke::new(1.5, colours.fg),
         );
+    }
+}
+
+/// The word a file state is shown as, and its colour.
+fn file_word(state: FileState, colours: &Palette) -> (&'static str, Color32) {
+    match state {
+        FileState::Unread => ("unread", colours.mark(Severity::Error).gutter),
+        FileState::ChangedOnDisk => ("changed on disk", colours.warning),
+        FileState::Refused => ("not read", colours.warning),
+        FileState::Unwritten => ("unwritten", colours.dim),
+    }
+}
+
+/// A file state's word in a box, its right edge at `right`. Returns the
+/// box's left edge.
+fn file_badge(
+    painter: &egui::Painter,
+    state: FileState,
+    right: f32,
+    y: f32,
+    colours: &Palette,
+) -> f32 {
+    let (word, colour) = file_word(state, colours);
+    let galley = painter.layout_no_wrap(word.to_string(), FontId::proportional(11.0), colour);
+    let size = galley.size() + vec2(8.0, 2.0);
+    let r = Rect::from_min_size(pos2(right - size.x, y - size.y / 2.0), size);
+    painter.rect_stroke(r, 3.0, Stroke::new(1.0, colour), StrokeKind::Inside);
+    painter.galley(r.min + vec2(4.0, 1.0), galley, colour);
+    r.left()
+}
+
+/// What a file state means, and what to do about it.
+fn file_tip(app: &App, p: &leolib::Position, state: FileState) -> String {
+    match state {
+        FileState::Unread => {
+            let path = app.outline().full_path(p);
+            let why = app.unread.get(&path).map_or("", String::as_str);
+            format!("The last read failed: {why}\nThe node does not hold the file.")
+        }
+        FileState::ChangedOnDisk => {
+            "Another program changed the file.\nReload or Keep it in the bar above the body."
+                .to_string()
+        }
+        FileState::Refused => "The file exists but was never read, so writing it asks first.\nFile > Read Files Here reads it.".to_string(),
+        FileState::Unwritten => {
+            "Edits not yet in the file.\nFile > Write Changed Files writes them.".to_string()
+        }
     }
 }
 

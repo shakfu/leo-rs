@@ -1,6 +1,7 @@
 //! leoegui: a desktop front end for leolib, drawn with egui.
 //!
-//!     leoegui FILE.leo                         edit an outline
+//!     leoegui FILE.leo...                      edit outlines, a tab each
+//!     leoegui                                  the outlines open at the last quit
 //!     leoegui F.leo --press "l,l" --screenshot out.ppm
 //!                                              press keys, save one frame, exit
 //!
@@ -9,12 +10,16 @@
 //! command palette, an outline sidebar, tabs, a status bar and a panel.
 
 mod editor;
+mod find;
+mod goto;
 mod gui;
 mod input;
 mod menus;
+mod outlines;
 mod palette;
 mod panel;
 mod prompts;
+mod session;
 mod settings;
 mod status;
 mod style;
@@ -33,9 +38,13 @@ use leoapp::theme::Depth;
 #[derive(Parser)]
 #[command(name = "leoegui", version)]
 struct Args {
-    /// The outline to open. Without one, leoegui starts an unsaved outline.
+    /// The outlines to open, a tab each. Without one, leoegui opens those
+    /// open when it last quit, or an unsaved outline.
     #[arg(value_name = "FILE.leo")]
-    path: Option<String>,
+    paths: Vec<String>,
+    /// Neither restore the last session nor save this one.
+    #[arg(long)]
+    no_session: bool,
     /// Open the outline without reading its external files.
     #[arg(long)]
     no_external: bool,
@@ -54,7 +63,7 @@ struct Args {
 fn main() -> eframe::Result {
     let args = Args::parse();
     let (mut app, settings) = match app::launch(
-        args.path.as_deref(),
+        args.paths.first().map(String::as_str),
         !args.no_external,
         args.theme.as_deref(),
     ) {
@@ -90,6 +99,16 @@ fn main() -> eframe::Result {
         })),
         ..Default::default()
     };
+    // Keys pressed from the command line are for the outline named, so a
+    // session is restored only when nothing is.
+    let saved = match args.paths.is_empty() && args.press.is_empty() && !args.no_session {
+        true => session::path().and_then(|p| session::load(&p)),
+        false => None,
+    };
+    let mut options = options;
+    if let Some(size) = saved.as_ref().and_then(|s| s.window) {
+        options.viewport = options.viewport.with_inner_size(size);
+    }
     let cmd_is_ctrl = !settings.mac_dont_swap_ctrl_and_meta;
     eframe::run_native(
         "leoegui",
@@ -105,7 +124,7 @@ fn main() -> eframe::Result {
             if let Some(mcp) = &app.mcp {
                 mcp.set_wake(wake);
             }
-            let gui = gui::Gui::new(
+            let mut gui = gui::Gui::new(
                 &cc.egui_ctx,
                 app,
                 cmd_is_ctrl,
@@ -113,6 +132,17 @@ fn main() -> eframe::Result {
                 &settings,
                 args.theme.as_deref(),
             );
+            for path in args.paths.iter().skip(1) {
+                gui.open_outline(Some(path));
+            }
+            // `--press` went to the first.
+            gui.switch_to(0);
+            if let Some(saved) = &saved {
+                gui.restore(saved);
+            }
+            if args.no_session {
+                gui.session_path = None;
+            }
             Ok(Box::new(gui))
         }),
     )

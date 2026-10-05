@@ -6,6 +6,7 @@
 //! in the encoding the server chose.
 
 use leolib::goto::LineMap;
+use leolib::seqmatch::{SequenceMatcher, Tag};
 
 /// How a server counts columns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +151,103 @@ impl Doc {
     }
 }
 
+impl Doc {
+    /// Document line `n`'s node, body row and indent, if a body row writes it.
+    fn row(&self, n: usize) -> Option<(&str, usize, usize)> {
+        match &self.mapping {
+            Mapping::File(map) => {
+                let l = map.lines.get(n)?;
+                Some((l.gnx.as_str(), l.row, l.indent?))
+            }
+            Mapping::Node(gnx) => Some((gnx.as_str(), n, 0)),
+        }
+    }
+
+    /// A document edit as body edits: start, end and replacement.
+    ///
+    /// An edit inside one body maps as it is. A wider one, such as a
+    /// formatter's or a fix-all's replacement of the whole file, is cut by a
+    /// line diff into the runs of lines it changes, and each run must lie in
+    /// one body. None if a run does not, or if a changed line under
+    /// `@others` loses its indent.
+    pub fn edit_to_body(
+        &self,
+        start: (u32, u32),
+        end: (u32, u32),
+        text: &str,
+        enc: Encoding,
+    ) -> Option<Vec<(BodyPos, BodyPos, String)>> {
+        if let Some((a, b)) = self.range_to_body(start, end, enc) {
+            return Some(vec![(a, b, text.to_string())]);
+        }
+        // Widen the edit to whole lines, so old and new are lists of lines.
+        let lines: Vec<&str> = self.text.split_inclusive('\n').collect();
+        let (l0, l1) = (start.0 as usize, end.0 as usize);
+        if l0 > l1 || l0 > lines.len() {
+            return None;
+        }
+        let bare = |n: usize| {
+            lines
+                .get(n)
+                .map_or("", |l| l.trim_end_matches(['\n', '\r']))
+        };
+        let head = &bare(l0)[..enc.byte(bare(l0), start.1 as usize)];
+        let tail = lines
+            .get(l1)
+            .map_or("", |l| &l[enc.byte(bare(l1), end.1 as usize)..]);
+        let old = &lines[l0..(l1 + 1).min(lines.len())];
+        let new_text = format!("{head}{text}{tail}");
+        let new: Vec<&str> = new_text.split_inclusive('\n').collect();
+
+        let mut out = Vec::new();
+        for op in SequenceMatcher::new(old, &new).opcodes() {
+            if op.tag == Tag::Equal {
+                continue;
+            }
+            let (first, last) = (l0 + op.ai, l0 + op.aj);
+            // Where the run lands: its own lines; for an insertion, before
+            // the line it precedes, else after the line it follows. `at` is
+            // the document line whose indent the new lines carry.
+            let (gnx, row, end_row, indent, at) = if first < last {
+                let (gnx, row, indent) = self.row(first)?;
+                for (k, n) in (first..last).enumerate() {
+                    let (g, r, _) = self.row(n)?;
+                    if g != gnx || r != row + k {
+                        return None;
+                    }
+                }
+                (gnx, row, row + (last - first), indent, first)
+            } else if let Some((gnx, row, indent)) = self.row(first).filter(|_| first < lines.len())
+            {
+                (gnx, row, row, indent, first)
+            } else {
+                let before = first.checked_sub(1)?;
+                let (gnx, row, indent) = self.row(before)?;
+                (gnx, row + 1, row + 1, indent, before)
+            };
+            let prefix = lines.get(at).and_then(|l| l.get(..indent)).unwrap_or("");
+            let mut body = String::new();
+            for l in &new[op.bi..op.bj] {
+                // A blank line carries no indent.
+                if l.trim().is_empty() {
+                    if l.ends_with('\n') {
+                        body.push('\n');
+                    }
+                } else {
+                    body.push_str(l.strip_prefix(prefix)?);
+                }
+            }
+            let pos = |row| BodyPos {
+                gnx: gnx.to_string(),
+                row,
+                col: 0,
+            };
+            out.push((pos(row), pos(end_row), body));
+        }
+        Some(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +313,71 @@ mod tests {
         // Across the sentinel, or from one node into another.
         assert_eq!(d.range_to_body((0, 0), (2, 5), Encoding::Utf16), None);
         assert_eq!(d.range_to_body((1, 0), (1, 1), Encoding::Utf16), None);
+    }
+
+    /// An `@auto` file: the root's imports, child `f` under a four-space
+    /// `@others`, then the root's last line. No sentinels.
+    fn auto() -> Doc {
+        let line = |gnx: &str, row, indent| FileLine {
+            gnx: gnx.to_string(),
+            row,
+            indent: Some(indent),
+        };
+        Doc {
+            text: "import os\nimport sys\n    def f():\n        return os\nx = 1\n".into(),
+            mapping: Mapping::File(LineMap {
+                text: String::new(),
+                lines: vec![
+                    line("r", 0, 0),
+                    line("r", 1, 0),
+                    line("f", 0, 4),
+                    line("f", 1, 4),
+                    line("r", 3, 0),
+                ],
+            }),
+        }
+    }
+
+    #[test]
+    fn a_whole_file_replacement_is_cut_into_each_bodys_changes() {
+        let d = auto();
+        let fixed = "import sys\n    def f():\n        return sys\nx = 1\n";
+        let edits = d
+            .edit_to_body((0, 0), (5, 0), fixed, Encoding::Utf16)
+            .unwrap();
+        assert_eq!(
+            edits,
+            [
+                (at("r", 0, 0), at("r", 1, 0), String::new()),
+                (at("f", 1, 0), at("f", 2, 0), "    return sys\n".into()),
+            ]
+        );
+        let added = "import re\nimport os\nimport sys\n    def f():\n        return os\nx = 1\n";
+        let edits = d
+            .edit_to_body((0, 0), (5, 0), added, Encoding::Utf16)
+            .unwrap();
+        assert_eq!(
+            edits,
+            [(at("r", 0, 0), at("r", 0, 0), "import re\n".into())]
+        );
+        // Unchanged text is no edit.
+        assert_eq!(
+            d.edit_to_body((0, 0), (5, 0), &d.text.clone(), Encoding::Utf16),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn a_change_that_drops_the_indent_or_meets_a_sentinel_is_refused() {
+        let d = auto();
+        let outdented = "import os\nimport sys\n    def f():\nreturn os\nx = 1\n";
+        assert_eq!(
+            d.edit_to_body((0, 0), (5, 0), outdented, Encoding::Utf16),
+            None
+        );
+        let d = doc();
+        let text = "a = 1\n#@+others edited\n    x = 1 + y\n";
+        assert_eq!(d.edit_to_body((0, 0), (3, 0), text, Encoding::Utf16), None);
     }
 
     #[test]

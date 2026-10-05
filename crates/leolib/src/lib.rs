@@ -32,7 +32,7 @@ pub mod outline;
 pub(crate) mod pickle;
 pub mod position;
 pub mod reformat;
-pub(crate) mod seqmatch;
+pub mod seqmatch;
 pub mod state;
 pub mod undo;
 pub mod util;

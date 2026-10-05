@@ -22,10 +22,11 @@ use crate::search::{self, Direction, LastSearch, Scope};
 mod body;
 mod ex;
 mod files;
+mod find;
 mod hoist;
 mod lsp;
 mod mcp;
-pub use lsp::diagnostic_line;
+pub use lsp::{diagnostic_line, CODE_ACTIONS};
 pub use mcp::Access;
 mod prompt;
 #[cfg(test)]
@@ -75,6 +76,7 @@ impl Mode {
 }
 
 /// Options `:set` changes.
+#[derive(Clone)]
 pub struct Options {
     pub search_scope: Scope,
     pub wrap: bool,
@@ -208,6 +210,31 @@ pub struct App {
     /// The settings as read at launch and changed since, for a front end
     /// that shows them.
     pub settings: crate::config::Config,
+    /// The code actions last offered, and the outline generation they were
+    /// offered at: a later edit makes them stale.
+    pub code_actions: Vec<leolsp::CodeAction>,
+    code_actions_at: u64,
+    /// The code action Enter applies; the arrows move it.
+    pub code_action_selected: usize,
+    /// External files whose last read failed, by full path, and why.
+    pub unread: std::collections::HashMap<String, String>,
+    /// External files `check_disk` found changed by another program, by
+    /// full path. Each is checked again when asked about.
+    changed_on_disk: Vec<String>,
+}
+
+/// Why an `@<file>` node's file needs attention. A node in several states
+/// shows the first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileState {
+    /// The last read failed, so the node does not hold the file.
+    Unread,
+    /// Another program changed the file since the outline read or wrote it.
+    ChangedOnDisk,
+    /// The file exists but was never read, so a write is refused.
+    Refused,
+    /// The tree has edits the file does not.
+    Unwritten,
 }
 
 /// The status line's account of external files that could not be read.
@@ -376,6 +403,8 @@ pub struct Row {
     /// Whether the body holds any text.
     pub has_body: bool,
     pub headline: String,
+    /// What needs attention in an `@<file>` node's file.
+    pub file_state: Option<FileState>,
 }
 impl App {
     pub fn new(doc: Document) -> Self {
@@ -437,7 +466,19 @@ impl App {
             mcp: None,
             mcp_access: Access::default(),
             settings: crate::config::Config::default(),
+            code_actions: Vec::new(),
+            code_actions_at: 0,
+            code_action_selected: 0,
+            unread: Default::default(),
+            changed_on_disk: Vec::new(),
         };
+        app.unread = app
+            .doc
+            .read_report
+            .errors
+            .iter()
+            .map(|e| (e.path.clone(), e.error.to_string()))
+            .collect();
         app.expand_ancestors();
         app.history.update(&app.current);
         app
@@ -473,7 +514,12 @@ impl App {
                 Mode::Insert => self.insert_key(event),
                 Mode::Visual => self.body_key(event),
                 Mode::Normal if self.focus == Focus::Body => self.body_key(event),
-                Mode::Normal | Mode::Help => self.command_key(event),
+                Mode::Help => {
+                    if !self.code_action_key(&event) {
+                        self.command_key(event)
+                    }
+                }
+                Mode::Normal => self.command_key(event),
             }
         }
         self.log_message();
@@ -654,6 +700,7 @@ impl App {
             is_file: p.is_any_at_file_node(o),
             has_body: !p.b(o).is_empty(),
             headline: p.h(o).to_string(),
+            file_state: self.file_state(p),
             position: p.clone(),
         }
     }
@@ -763,6 +810,26 @@ impl App {
         self.body_scroll = scroll.min(lines.len().saturating_sub(1));
         self.body_hscroll = 0;
         self.expand_ancestors();
+    }
+
+    /// Select node `gnx` with the body cursor at `cursor`, clamped to the
+    /// body, as a restored session left it. False if no node has the gnx.
+    pub fn restore_selection(&mut self, gnx: &str, cursor: (usize, usize)) -> bool {
+        let o = self.outline();
+        let Some(p) = o
+            .all_unique_positions()
+            .into_iter()
+            .find(|p| p.gnx(o) == gnx)
+        else {
+            return false;
+        };
+        self.select(p);
+        self.editor.cursor = cursor;
+        let lines = self.body_buffer();
+        self.editor.clamp(&lines);
+        self.editor.desired_col = self.editor.cursor.1;
+        self.scroll_to_cursor();
+        true
     }
 
     /// Leo's `go-back` (`step` -1) and `go-forward` (+1), `count` times.

@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use leolsp::{BodyEdit, Event, Request, Severity, Target};
+use leolsp::{BodyEdit, CodeAction, Event, Request, Severity, Target};
 
 use super::*;
 
@@ -140,8 +140,22 @@ impl App {
                 }
             },
             Event::Rename(Err(e)) => self.message = format!("rename refused: {e}"),
-            Event::Rename(Ok(edits)) if idle => self.apply_edits(edits),
-            Event::Hover(_) | Event::Definition(_) | Event::Rename(_) => {
+            Event::Rename(Ok(edits)) if idle => {
+                self.apply_edits(edits, "rename", "renamed");
+            }
+            Event::CodeActions(list) if list.is_empty() => {
+                self.message = "no code actions here".into()
+            }
+            Event::CodeActions(list) if idle => self.offer_code_actions(list),
+            Event::Edit(label, Err(e)) => self.message = format!("{label} refused: {e}"),
+            Event::Edit(label, Ok(edits)) if idle => {
+                self.apply_edits(edits, &label, &format!("applied {label}"));
+            }
+            Event::Hover(_)
+            | Event::Definition(_)
+            | Event::Rename(_)
+            | Event::CodeActions(_)
+            | Event::Edit(..) => {
                 self.message = "a language server answered while you were typing; ask again".into()
             }
         }
@@ -168,8 +182,124 @@ impl App {
         self.scroll_to_cursor();
     }
 
-    /// Apply a server's edits as one undo step, every body or none.
-    fn apply_edits(&mut self, edits: Vec<BodyEdit>) {
+    /// Show the code actions in the overlay, numbered, for a digit or
+    /// `:lsp-code-action N` to apply.
+    fn offer_code_actions(&mut self, list: Vec<CodeAction>) {
+        self.code_action_selected = list.iter().position(|a| a.preferred).unwrap_or(0);
+        self.code_actions = list;
+        self.code_actions_at = self.doc.outline().generation;
+        self.help_scroll = 0;
+        self.overlay = Some((CODE_ACTIONS.to_string(), self.code_action_lines()));
+        self.mode = Mode::Help;
+    }
+
+    /// The overlay's lines: each action numbered, `>` at the selected one,
+    /// `*` at a preferred one.
+    fn code_action_lines(&self) -> Vec<String> {
+        let mut lines: Vec<String> = self
+            .code_actions
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let at = if i == self.code_action_selected {
+                    ">"
+                } else {
+                    " "
+                };
+                let preferred = if a.preferred { "*" } else { " " };
+                let kind = a
+                    .kind
+                    .as_deref()
+                    .map_or(String::new(), |k| format!("  ({k})"));
+                format!("{at}{:>2}{preferred} {}{kind}", i + 1, a.title)
+            })
+            .collect();
+        lines.push(String::new());
+        lines.push("Up/Down or j/k selects, Enter or 1-9 applies; q closes".into());
+        lines
+    }
+
+    /// While the code actions are shown: the arrows and j/k move the
+    /// selection, Enter applies it, a digit applies that one.
+    pub(super) fn code_action_key(&mut self, event: &KeyEvent) -> bool {
+        let offered = self
+            .overlay
+            .as_ref()
+            .is_some_and(|(name, _)| name == CODE_ACTIONS);
+        if !offered || !event.modifiers.is_empty() {
+            return false;
+        }
+        let last = self.code_actions.len().saturating_sub(1);
+        let chosen = match event.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.code_action_selected = self.code_action_selected.saturating_sub(1);
+                None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.code_action_selected = (self.code_action_selected + 1).min(last);
+                None
+            }
+            KeyCode::Enter => Some(self.code_action_selected),
+            KeyCode::Char(c) => match c.to_digit(10) {
+                Some(n) if n > 0 => Some(n as usize - 1),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        match chosen {
+            Some(i) => {
+                self.run("close-help", 1);
+                self.apply_code_action(i);
+            }
+            None => {
+                let lines = self.code_action_lines();
+                self.overlay = Some((CODE_ACTIONS.to_string(), lines));
+            }
+        }
+        true
+    }
+
+    /// Apply code action `i` of those last offered: its edit, then its
+    /// command, which the server runs and may answer with an edit.
+    pub fn apply_code_action(&mut self, i: usize) {
+        let Some(action) = self.code_actions.get(i).cloned() else {
+            self.message = format!("no code action {}", i + 1);
+            return;
+        };
+        if self.code_actions_at != self.doc.outline().generation {
+            self.message = "the text changed since the code actions were offered; ask again".into();
+            return;
+        }
+        self.code_actions.clear();
+        match action.edit {
+            Some(Err(e)) => {
+                self.message = format!("code action refused: {e}");
+                return;
+            }
+            Some(Ok(edits)) => {
+                let done = format!("applied {}", action.title);
+                if !self.apply_edits(edits, "code action", &done) {
+                    return;
+                }
+            }
+            None => self.message = format!("running {}", action.title),
+        }
+        let Some(command) = &action.command else {
+            return;
+        };
+        self.sync_now();
+        let gnx = self.current.gnx(self.doc.outline()).to_string();
+        if let Some(lsp) = self.lsp.as_mut() {
+            if let Err(e) = lsp.execute(&gnx, command) {
+                self.message = e;
+            }
+        }
+    }
+
+    /// Apply a server's edits as one undo step, every body or none. `what`
+    /// names them in a refusal, `done` in the message after. False if
+    /// refused.
+    fn apply_edits(&mut self, edits: Vec<BodyEdit>, what: &str, done: &str) -> bool {
         let o = self.doc.outline();
         let mut bodies: Vec<(Position, String, Vec<BodyEdit>)> = Vec::new();
         for edit in edits {
@@ -184,8 +314,8 @@ impl App {
                         .into_iter()
                         .find(|p| p.gnx(o) == edit.start.gnx);
                     let Some(p) = found else {
-                        self.message = "rename refused: a node it edits is gone".into();
-                        return;
+                        self.message = format!("{what} refused: a node it edits is gone");
+                        return false;
                     };
                     let text = p.b(o).to_string();
                     bodies.push((p, text, vec![edit]));
@@ -202,26 +332,27 @@ impl App {
                     offset(&text, e.start.row, e.start.col),
                     offset(&text, e.end.row, e.end.col),
                 ) else {
-                    self.message = "rename refused: an edit is outside its body".into();
-                    return;
+                    self.message = format!("{what} refused: an edit is outside its body");
+                    return false;
                 };
                 if a > b {
-                    self.message = "rename refused: an edit ends before it starts".into();
-                    return;
+                    self.message = format!("{what} refused: an edit ends before it starts");
+                    return false;
                 }
                 text.replace_range(a..b, &e.text);
             }
             changed.push((p, text));
         }
         let n = changed.len();
-        self.doc.begin_group("rename");
+        self.doc.begin_group(what);
         for (p, text) in changed {
             self.doc.set_body(&p, &text);
         }
         self.doc.end_group();
         let lines = self.body_buffer();
         self.editor.clamp(&lines);
-        self.message = format!("renamed in {}", plural(n, "node"));
+        self.message = format!("{done} in {}", plural(n, "node"));
+        true
     }
 
     /// `]d` and `[d`: the next or previous diagnostic in this body, round
@@ -278,6 +409,9 @@ impl App {
         self.mode = Mode::Help;
     }
 }
+
+/// The overlay's title while code actions are offered.
+pub const CODE_ACTIONS: &str = "code actions";
 
 /// `E: message`, with the severity's letter, as the status line shows it.
 pub fn diagnostic_line(d: &leolsp::BodyDiagnostic) -> String {
@@ -369,6 +503,97 @@ mod tests {
         assert_eq!(app.message, "renamed in 1 node");
         app.doc.undo();
         assert_eq!(app.current.b(app.outline()), "def f():\n    return f\n");
+    }
+
+    fn fix(app: &App, title: &str, row: usize, text: &str) -> CodeAction {
+        CodeAction {
+            title: title.into(),
+            kind: Some("quickfix".into()),
+            preferred: false,
+            edit: Some(Ok(vec![BodyEdit {
+                start: pos(app, row, 0),
+                end: pos(app, row, 1),
+                text: text.into(),
+            }])),
+            command: None,
+        }
+    }
+
+    #[test]
+    fn a_digit_applies_an_offered_code_action() {
+        let mut app = app("a\nb\n");
+        let list = vec![fix(&app, "first", 0, "A"), fix(&app, "second", 1, "B")];
+        app.lsp_event(Event::CodeActions(list));
+        assert_eq!(app.mode, Mode::Help);
+        let (name, lines) = app.overlay.clone().unwrap();
+        assert_eq!(name, CODE_ACTIONS);
+        assert_eq!(lines[0], "> 1  first  (quickfix)");
+        assert_eq!(lines[1], "  2  second  (quickfix)");
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.current.b(app.outline()), "a\nB\n");
+        assert_eq!(app.message, "applied second in 1 node");
+        // The list is spent.
+        app.run_command_line("lsp-code-action 1");
+        assert_eq!(app.message, "no code action 1");
+    }
+
+    #[test]
+    fn the_arrows_select_a_code_action_and_enter_applies_it() {
+        let mut app = app("a\nb\nc\n");
+        let mut preferred = fix(&app, "second", 1, "B");
+        preferred.preferred = true;
+        let list = vec![
+            fix(&app, "first", 0, "A"),
+            preferred,
+            fix(&app, "third", 2, "C"),
+        ];
+        app.lsp_event(Event::CodeActions(list));
+        // The preferred one starts selected.
+        assert_eq!(app.code_action_selected, 1);
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.code_action_selected, 2);
+        assert!(app.overlay.as_ref().unwrap().1[2].starts_with('>'));
+        app.handle_key(key(KeyCode::Char('k')));
+        app.handle_key(key(KeyCode::Up));
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.code_action_selected, 0);
+        app.handle_key(key(KeyCode::Char('j')));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.current.b(app.outline()), "a\nB\nc\n");
+    }
+
+    #[test]
+    fn a_code_action_offered_before_an_edit_is_refused() {
+        let mut app = app("a\nb\n");
+        let list = vec![fix(&app, "first", 0, "A")];
+        app.lsp_event(Event::CodeActions(list));
+        app.run("close-help", 1);
+        let root = app.current.clone();
+        app.doc.set_body(&root, "a\nb\nc\n");
+        app.run_command_line("lsp-code-action 1");
+        assert!(app.message.contains("ask again"), "{}", app.message);
+        assert_eq!(app.current.b(app.outline()), "a\nb\nc\n");
+        app.lsp_event(Event::CodeActions(vec![]));
+        assert_eq!(app.message, "no code actions here");
+    }
+
+    #[test]
+    fn an_edit_a_server_sends_applies_as_one_undo_step() {
+        let mut app = app("import os\n");
+        let edit = BodyEdit {
+            start: pos(&app, 0, 7),
+            end: pos(&app, 0, 9),
+            text: "sys".into(),
+        };
+        app.lsp_event(Event::Edit("organize".into(), Ok(vec![edit])));
+        assert_eq!(app.current.b(app.outline()), "import sys\n");
+        assert_eq!(app.message, "applied organize in 1 node");
+        app.lsp_event(Event::Edit("organize".into(), Err("no".into())));
+        assert_eq!(app.message, "organize refused: no");
     }
 
     #[test]

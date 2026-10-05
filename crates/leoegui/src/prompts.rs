@@ -39,6 +39,10 @@ impl Prompts {
     ) {
         let mut open = true;
         match app.overlay.clone() {
+            Some((name, _)) if name == leoapp::app::CODE_ACTIONS => {
+                code_actions(ctx, app, colours, hover_at);
+                return;
+            }
             Some((name, lines)) if name == "hover" => {
                 let at = hover_at.unwrap_or(ctx.content_rect().center());
                 egui::Area::new(egui::Id::new("hover"))
@@ -121,6 +125,55 @@ impl Prompts {
         if !open {
             app.run("close-help", 1);
         }
+    }
+}
+
+/// The code actions offered, as a menu at the body cursor. The arrows or
+/// j/k select, Enter, a digit or a click applies; q or Escape closes it.
+fn code_actions(ctx: &egui::Context, app: &mut App, colours: &Palette, at: Option<Pos2>) {
+    let at = at.unwrap_or(ctx.content_rect().center());
+    let mut chosen = None;
+    egui::Area::new(egui::Id::new("code-actions"))
+        .fixed_pos(at + egui::vec2(0.0, 22.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(colours.popup)
+                .show(ui, |ui| {
+                    ui.set_max_width(560.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for (i, a) in app.code_actions.iter().enumerate() {
+                                let mut text = RichText::new(format!("{}  {}", i + 1, a.title));
+                                if a.preferred {
+                                    text = text.strong();
+                                }
+                                let selected = i == app.code_action_selected;
+                                let row = ui.selectable_label(selected, text);
+                                if selected {
+                                    row.scroll_to_me(None);
+                                }
+                                let row = match &a.kind {
+                                    Some(kind) => row.on_hover_text(kind),
+                                    None => row,
+                                };
+                                if row.clicked() {
+                                    chosen = Some(i);
+                                }
+                            }
+                        });
+                    ui.label(
+                        RichText::new("Up/Down selects, Enter or 1-9 applies; q or Escape closes")
+                            .size(11.5)
+                            .color(colours.dim),
+                    );
+                });
+        });
+    if let Some(i) = chosen {
+        app.run("close-help", 1);
+        app.apply_code_action(i);
+        app.log_message();
     }
 }
 

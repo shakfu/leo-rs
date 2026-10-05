@@ -83,6 +83,12 @@ impl App {
                 Ok(n) => self.goto_global_line(n),
                 Err(_) => self.message = "usage: :goto-global-line N".to_string(),
             },
+            "lsp-code-action" if !parsed.arg.is_empty() => {
+                match parsed.arg.trim().parse::<usize>() {
+                    Ok(n) if n > 0 => self.apply_code_action(n - 1),
+                    _ => self.message = "usage: :lsp-code-action [N]".to_string(),
+                }
+            }
             "lsp-rename" => match parsed.arg.trim() {
                 "" => self.message = "usage: :lsp-rename NAME".to_string(),
                 name => self.lsp_request(leolsp::Request::Rename(name.to_string())),
@@ -210,7 +216,18 @@ impl App {
                 self.depth = keep.depth;
                 self.theme_names = keep.theme_names;
                 self.config_path = keep.config_path;
+                self.theme_setting = keep.theme_setting;
                 self.messages = keep.messages;
+                self.mcp = keep.mcp;
+                self.mcp_access = keep.mcp_access;
+                // The servers restart, as their workspace is the outline's
+                // directory; the front end's wake goes with them.
+                let wake = match &keep.lsp {
+                    Some(lsp) => lsp.wake(),
+                    None => std::sync::Arc::new(|| {}),
+                };
+                self.set_lsp(&keep.settings, wake);
+                self.settings = keep.settings;
                 self.editor.register = keep.editor.register;
                 self.editor.last_change = keep.editor.last_change;
                 self.editor.last_find = keep.editor.last_find;
@@ -225,6 +242,58 @@ impl App {
             }
             Err(e) => self.message = format!("open failed: {e}"),
         }
+    }
+
+    /// Take what belongs to the session, not to an outline, from `from`:
+    /// options, histories, theme and settings. A front end showing several
+    /// outlines keeps them alike.
+    pub fn carry_session(&mut self, from: &App) {
+        self.options = from.options.clone();
+        self.command_history = from.command_history.clone();
+        self.search_history = from.search_history.clone();
+        self.last_search = from.last_search.clone();
+        self.tree_percent = from.tree_percent;
+        self.theme = from.theme.clone();
+        self.theme_setting = from.theme_setting;
+        self.depth = from.depth;
+        self.theme_names = from.theme_names.clone();
+        self.config_path = from.config_path.clone();
+        self.settings = from.settings.clone();
+        self.mcp_access = from.mcp_access;
+    }
+
+    /// Open `path`, or an unsaved outline without one, as another outline
+    /// beside this one, with this one's session and language servers of its
+    /// own. The MCP server stays with this outline.
+    pub fn open_beside(
+        &self,
+        path: Option<&str>,
+        wake: leolsp::server::Wake,
+    ) -> leolib::Result<App> {
+        let (doc, new) = match path {
+            Some(path) => open_or_new(path, true)?,
+            None => (Document::new_empty(""), false),
+        };
+        let mut app = App::new(doc);
+        app.carry_session(self);
+        app.set_lsp(&self.settings, wake);
+        for line in read_report_lines(&app.doc.read_report) {
+            app.log(line);
+        }
+        let name = app.outline().file_name.clone();
+        app.message = match (path, new) {
+            (None, _) => String::new(),
+            (Some(_), true) => format!("new outline: {name}"),
+            (Some(path), false) => read_report_message(&app.doc.read_report)
+                .unwrap_or_else(|| format!("opened: {path}")),
+        };
+        app.log_message();
+        if let Some(root) = app.outline().root_position() {
+            for p in root.self_and_siblings(app.outline()) {
+                app.doc.outline_mut_untracked().expand(&p);
+            }
+        }
+        Ok(app)
     }
 
     /// `:import-at-file path` -- import a file as an `@file` tree, then ask

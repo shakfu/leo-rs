@@ -292,7 +292,7 @@ impl App {
     }
 
     /// Go to a match: a headline in the outline, body text in the body.
-    fn land(&mut self, hit: search::Hit) {
+    pub(super) fn land(&mut self, hit: search::Hit) {
         if self.current != hit.node {
             self.select(hit.node.clone());
         }

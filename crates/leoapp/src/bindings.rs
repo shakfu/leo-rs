@@ -298,6 +298,7 @@ mod tests {
     /// are not worth a key.
     const COMMAND_LINE_ONLY: &[&str] = &[
         "lsp-rename",
+        "lsp-code-action",
         "lsp-diagnostics",
         "goto-visible-row",
         "theme",

@@ -210,6 +210,7 @@ fn nearest(r: u8, g: u8, b: u8, palette: &[(f32, f32, f32)], offset: u8) -> u8 {
 }
 
 /// A theme: what to draw each scope as.
+#[derive(Clone)]
 pub struct Theme {
     name: String,
     scopes: HashMap<String, Face>,

@@ -20,6 +20,8 @@ leolsp.workspace = true
 leomcp.workspace = true
 eframe = "0.36"
 clap = { version = "4", features = ["derive"] }
+# Native Open and Save dialogs: the portal on Linux, the system's elsewhere.
+rfd = "0.17"
 
 # Already in the build through eframe; turns off winit's default macOS menu,
 # whose Quit item ends the process without asking about unsaved work.

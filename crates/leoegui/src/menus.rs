@@ -12,6 +12,17 @@ use leoapp::config::Appearance;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Palette,
+    GoToNode,
+    CodeActions,
+    Find,
+    New,
+    Open,
+    OpenRecent(usize),
+    SaveAs,
+    SaveCopy,
+    Import,
+    CloseOutline,
+    Quit,
     Problems,
     Log,
     About,
@@ -37,19 +48,25 @@ pub enum Item {
     Toggle(&'static str, Opt),
     /// Dark, light, or as the system is.
     Looks,
+    /// The recent outlines, as a submenu.
+    Recent,
     Sep,
 }
 
-use Item::{Ask, Gui, Looks, Run, Sep, Toggle};
+use Item::{Gui, Looks, Recent, Run, Sep, Toggle};
 
 pub const MENUS: &[(&str, &[Item])] = &[
     (
         "File",
         &[
-            Ask("Open...", "open "),
+            Gui("New Outline", Action::New, ""),
+            Gui("Open...", Action::Open, ""),
+            Recent,
+            Gui("Close Outline", Action::CloseOutline, ""),
+            Sep,
             Run("Save", "save"),
-            Ask("Save As...", "save-as "),
-            Ask("Save a Copy...", "save-to "),
+            Gui("Save As...", Action::SaveAs, ""),
+            Gui("Save a Copy...", Action::SaveCopy, ""),
             Sep,
             Run("Write Changed Files", "write-dirty-at-file-nodes"),
             Run("Write All Files Here", "write-at-file-nodes"),
@@ -57,12 +74,12 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Sep,
             Run("Refresh From Disk", "refresh-from-disk"),
             Run("Read Files Here", "read-at-file-nodes"),
-            Ask("Import File...", "import-at-file "),
+            Gui("Import File...", Action::Import, ""),
             Run("Revert", "revert"),
             Sep,
             Gui("Settings...", Action::Settings, "Cmd-,"),
             Sep,
-            Run("Quit", "quit"),
+            Gui("Quit", Action::Quit, "Ctrl-q"),
         ],
     ),
     (
@@ -76,12 +93,13 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Run("Paste Node", "paste-node"),
             Run("Delete Node", "delete-node"),
             Sep,
+            Gui("Find Panel...", Action::Find, "Ctrl-Shift-f"),
             Run("Find...", "search-forward"),
             Run("Find Backwards...", "search-backward"),
             Run("Find Next", "find-next"),
             Run("Find Previous", "find-prev"),
-            Ask("Replace...", "s/"),
-            Ask("Clone Find All...", "clone-find-all "),
+            Item::Ask("Replace...", "s/"),
+            Item::Ask("Clone Find All...", "clone-find-all "),
             Run("Clear Highlight", "nohlsearch"),
         ],
     ),
@@ -125,6 +143,7 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Run("Hover", "lsp-hover"),
             Run("Go to Definition", "lsp-definition"),
             Run("Rename Symbol...", "lsp-rename"),
+            Gui("Code Actions...", Action::CodeActions, "Ctrl-."),
             Run("Next Problem", "lsp-next-diagnostic"),
             Run("Previous Problem", "lsp-prev-diagnostic"),
         ],
@@ -133,6 +152,7 @@ pub const MENUS: &[(&str, &[Item])] = &[
         "View",
         &[
             Gui("Command Palette...", Action::Palette, "Ctrl-Shift-p"),
+            Gui("Go to Node...", Action::GoToNode, "Ctrl-p"),
             Gui("Problems", Action::Problems, ""),
             Gui("Log", Action::Log, ""),
             Sep,
@@ -187,7 +207,12 @@ fn checked(app: &App, opt: Opt) -> (bool, &'static str, &'static str) {
 }
 
 /// The menu bar. Returns an action only the window can take.
-pub fn bar(ui: &mut egui::Ui, app: &mut App, appearance: Appearance) -> Option<Action> {
+pub fn bar(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    appearance: Appearance,
+    recent: &[String],
+) -> Option<Action> {
     let mut action = None;
     egui::MenuBar::new().ui(ui, |ui| {
         for (title, items) in MENUS {
@@ -205,7 +230,7 @@ pub fn bar(ui: &mut egui::Ui, app: &mut App, appearance: Appearance) -> Option<A
                                 ui.close();
                             }
                         }
-                        Ask(label, line) => {
+                        Item::Ask(label, line) => {
                             if ui.button(*label).clicked() {
                                 ask(app, line);
                                 ui.close();
@@ -217,6 +242,27 @@ pub fn bar(ui: &mut egui::Ui, app: &mut App, appearance: Appearance) -> Option<A
                                 action = Some(*a);
                                 ui.close();
                             }
+                        }
+                        Recent => {
+                            ui.menu_button("Open Recent", |ui| {
+                                let existing = recent
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, f)| std::path::Path::new(f).exists());
+                                let mut none = true;
+                                for (i, file) in existing {
+                                    none = false;
+                                    let name = leolib::util::short_file_name(file);
+                                    let b = ui.button(name).on_hover_text(file.as_str());
+                                    if b.clicked() {
+                                        action = Some(Action::OpenRecent(i));
+                                        ui.close();
+                                    }
+                                }
+                                if none {
+                                    ui.label("No recent outlines");
+                                }
+                            });
                         }
                         Looks => {
                             for (a, label) in [

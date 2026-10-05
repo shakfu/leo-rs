@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 
 use leolib::{goto, Outline, Position};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DocumentChanges, GotoDefinitionResponse, Hover, HoverContents,
-    MarkedString, OneOf, PublishDiagnosticsParams, WorkspaceEdit,
+    CodeActionOrCommand, Diagnostic, DiagnosticSeverity, DocumentChanges, GotoDefinitionResponse,
+    Hover, HoverContents, MarkedString, OneOf, PublishDiagnosticsParams, WorkspaceEdit,
 };
 use serde_json::{json, Value};
 
@@ -44,6 +44,23 @@ pub enum Request {
     Hover,
     Definition,
     Rename(String),
+    /// The fixes and refactorings on offer at the position, with the
+    /// diagnostics on its line.
+    CodeActions,
+}
+
+/// A fix or refactoring a server offers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodeAction {
+    pub title: String,
+    /// `quickfix`, `refactor.extract` and so on, when the server says.
+    pub kind: Option<String>,
+    /// The server's pick when several fix the same thing.
+    pub preferred: bool,
+    /// Its edit in body rows, or why it cannot be mapped.
+    pub edit: Option<Result<Vec<BodyEdit>, String>>,
+    /// A command to run on the server after the edit: `execute` sends it.
+    pub command: Option<lsp_types::Command>,
 }
 
 /// Where a definition is.
@@ -85,12 +102,15 @@ pub struct BodyDiagnostic {
     pub message: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Event {
     /// The hover text, by line; empty when the server has none.
     Hover(Vec<String>),
     Definition(Vec<Target>),
     Rename(Result<Vec<BodyEdit>, String>),
+    CodeActions(Vec<CodeAction>),
+    /// An edit a server asks to make, as a command it ran asks; its label.
+    Edit(String, Result<Vec<BodyEdit>, String>),
     /// A server's message, or why one could not start or answer.
     Message(String),
     /// Some document's diagnostics changed.
@@ -110,6 +130,20 @@ struct Open {
     language: String,
     version: i32,
     doc: Doc,
+    /// The node it is rendered from, as of the last sync, and a fingerprint
+    /// of what rendering reads: unchanged, it need not be rendered again.
+    root: Position,
+    fingerprint: u64,
+}
+
+/// A document as rendered from the outline, to open or update.
+struct Rendered {
+    source: Source,
+    root: Position,
+    fingerprint: u64,
+    uri: String,
+    language: String,
+    doc: Doc,
 }
 
 struct Pending {
@@ -118,7 +152,8 @@ struct Pending {
     version: i32,
 }
 
-type Connect = Box<dyn FnMut(&ServerConfig, &Path, Wake) -> io::Result<Server>>;
+/// Makes the server for a language: `Lsp::new` spawns its command.
+pub type Connect = Box<dyn FnMut(&ServerConfig, &Path, Wake) -> io::Result<Server>>;
 
 pub struct Lsp {
     configs: Vec<ServerConfig>,
@@ -135,6 +170,10 @@ pub struct Lsp {
     node_docs: HashMap<String, String>,
     diagnostics: HashMap<String, Vec<Diagnostic>>,
     pending: HashMap<(String, i64), Pending>,
+    /// Commands sent with `execute`, so a failure is said.
+    executing: HashSet<(String, i64)>,
+    /// The outline generation the open documents were last brought up to.
+    synced: Option<u64>,
 }
 
 /// The key a URI is filed under. A server may spell a path's URI otherwise
@@ -156,33 +195,72 @@ pub fn language_id(language: &str) -> &str {
     }
 }
 
-/// The document node p is in, if it maps.
-fn document_for(o: &Outline, p: &Position) -> Option<(Source, String, String, Doc)> {
+/// Which document node p is in, and the node it is rendered from, without
+/// rendering it.
+fn source_of(o: &Outline, p: &Position) -> Option<(Source, Position)> {
     match goto::find_root(o, p) {
         Some(root) => {
-            let map = goto::line_map_of(o, &root)?;
             let path = std::path::absolute(o.full_path(&root)).ok()?;
+            Some((Source::File(path), root))
+        }
+        None => Some((Source::Node(p.gnx(o).to_string()), p.clone())),
+    }
+}
+
+/// Whether `root` is still the node document `source` is rendered from.
+fn is_root(o: &Outline, root: &Position, source: &Source) -> bool {
+    o.position_exists(root)
+        && match source {
+            Source::Node(gnx) => root.gnx(o) == gnx,
+            Source::File(path) => {
+                root.is_any_at_file_node(o)
+                    && std::path::absolute(o.full_path(root)).is_ok_and(|q| q == *path)
+            }
+        }
+}
+
+/// A hash of everything rendering `root`'s document reads: the root's
+/// ancestors, whose directives it inherits, and its tree, shape and text.
+fn fingerprint(o: &Outline, root: &Position) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    o.file_name.hash(&mut h);
+    for p in root.parents(o) {
+        (p.h(o), p.b(o)).hash(&mut h);
+    }
+    for p in root.self_and_subtree(o) {
+        (p.level(), p.gnx(o), p.h(o), p.b(o)).hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Render the document `source`, from `root`, in `language`.
+fn render(o: &Outline, source: Source, root: Position, language: String) -> Option<Rendered> {
+    let (uri, doc) = match &source {
+        Source::File(path) => {
+            let map = goto::line_map_of(o, &root)?;
             let doc = Doc {
                 text: map.text.clone(),
                 mapping: Mapping::File(map),
             };
-            Some((
-                Source::File(path.clone()),
-                uri::from_path(&path),
-                o.get_language(&root),
-                doc,
-            ))
+            (uri::from_path(path), doc)
         }
-        None => {
-            let gnx = p.gnx(o).to_string();
+        Source::Node(gnx) => {
             let doc = Doc {
-                text: goto::body_as_code(o, p),
+                text: goto::body_as_code(o, &root),
                 mapping: Mapping::Node(gnx.clone()),
             };
-            let uri = format!("untitled:leo/{gnx}");
-            Some((Source::Node(gnx), uri, o.get_language(p), doc))
+            (format!("untitled:leo/{gnx}"), doc)
         }
-    }
+    };
+    Some(Rendered {
+        fingerprint: fingerprint(o, &root),
+        source,
+        root,
+        uri,
+        language,
+        doc,
+    })
 }
 
 /// The node whose document `source` is, now.
@@ -205,7 +283,9 @@ impl Lsp {
         Lsp::with_connect(configs, root, wake, connect)
     }
 
-    fn with_connect(
+    /// As `new`, with servers made by `connect`: a test's or a benchmark's
+    /// stand-in, connected with `Server::connect`.
+    pub fn with_connect(
         configs: Vec<ServerConfig>,
         root: PathBuf,
         wake: Wake,
@@ -222,12 +302,19 @@ impl Lsp {
             node_docs: HashMap::new(),
             diagnostics: HashMap::new(),
             pending: HashMap::new(),
+            executing: HashSet::new(),
+            synced: None,
         }
     }
 
     /// Call `wake` when a server spawned from now on sends a message.
     pub fn set_wake(&mut self, wake: Wake) {
         self.wake = wake;
+    }
+
+    /// What is called when a server sends a message.
+    pub fn wake(&self) -> Wake {
+        self.wake.clone()
     }
 
     fn config_for(&self, language: &str) -> Option<ServerConfig> {
@@ -259,35 +346,61 @@ impl Lsp {
         self.servers.get_mut(language)
     }
 
-    /// Open or update the document p is in, and every open document the
+    /// Open the document p is in, and update every open document the
     /// outline changed. Returns messages for servers that would not start.
+    ///
+    /// A document is rendered only when it opens or its fingerprint changes:
+    /// rendering a 6,000-line file takes 4.5 ms, and this runs each time the
+    /// selection moves.
     pub fn sync(&mut self, o: &Outline, p: &Position) -> Vec<Event> {
         let mut events = Vec::new();
-        if let Some((source, uri, language, doc)) = document_for(o, p) {
-            if self.config_for(&language).is_some() {
-                self.update(source, uri, language, doc, &mut events);
+        if let Some((source, root)) = source_of(o, p) {
+            let language = o.get_language(&root);
+            let open = self.docs.values().any(|d| d.source == source);
+            let served = self.config_for(&language).is_some() && !self.failed.contains(&language);
+            if !open && served {
+                if let Some(r) = render(o, source, root, language) {
+                    self.update(r, &mut events);
+                }
             }
         }
-        let open: Vec<Source> = self.docs.values().map(|d| d.source.clone()).collect();
-        for source in open {
-            let Some(q) = locate(o, &source) else {
-                continue;
+        if self.synced == Some(o.generation) {
+            return events;
+        }
+        self.synced = Some(o.generation);
+        let open: Vec<(Source, Position, u64)> = self
+            .docs
+            .values()
+            .map(|d| (d.source.clone(), d.root.clone(), d.fingerprint))
+            .collect();
+        for (source, root, seen) in open {
+            let root = match is_root(o, &root, &source) {
+                true => root,
+                false => match locate(o, &source) {
+                    Some(root) => root,
+                    None => continue,
+                },
             };
-            if let Some((source, uri, language, doc)) = document_for(o, &q) {
-                self.update(source, uri, language, doc, &mut events);
+            if fingerprint(o, &root) == seen {
+                continue;
+            }
+            let language = o.get_language(&root);
+            if let Some(r) = render(o, source, root, language) {
+                self.update(r, &mut events);
             }
         }
         events
     }
 
-    fn update(
-        &mut self,
-        source: Source,
-        uri: String,
-        language: String,
-        doc: Doc,
-        events: &mut Vec<Event>,
-    ) {
+    fn update(&mut self, r: Rendered, events: &mut Vec<Event>) {
+        let Rendered {
+            source,
+            root,
+            fingerprint,
+            uri,
+            language,
+            doc,
+        } = r;
         let key = key_of(&uri);
         match &doc.mapping {
             Mapping::File(map) => {
@@ -303,6 +416,10 @@ impl Lsp {
             return;
         }
         let server = self.servers.get_mut(&language).expect("started");
+        if let Some(open) = self.docs.get_mut(&key) {
+            open.root = root.clone();
+            open.fingerprint = fingerprint;
+        }
         match self.docs.get_mut(&key) {
             Some(open) if open.doc.text == doc.text => open.doc = doc,
             Some(open) => {
@@ -330,6 +447,8 @@ impl Lsp {
                     language,
                     version: 1,
                     doc,
+                    root,
+                    fingerprint,
                 };
                 self.docs.insert(key, open);
             }
@@ -386,6 +505,22 @@ impl Lsp {
                 params["newName"] = json!(name);
                 "textDocument/rename"
             }
+            Request::CodeActions => {
+                let here = params["position"].clone();
+                let on_line: Vec<&Diagnostic> = self
+                    .diagnostics
+                    .get(&key)
+                    .into_iter()
+                    .flatten()
+                    .filter(|d| d.range.start.line <= line && line <= d.range.end.line)
+                    .collect();
+                params = json!({
+                    "textDocument": {"uri": open.uri},
+                    "range": {"start": here, "end": here},
+                    "context": {"diagnostics": on_line, "triggerKind": 1},
+                });
+                "textDocument/codeAction"
+            }
         };
         let id = server.request(method, params);
         let pending = Pending {
@@ -394,6 +529,25 @@ impl Lsp {
             version: open.version,
         };
         self.pending.insert((open.language.clone(), id), pending);
+        Ok(())
+    }
+
+    /// Run a code action's command on the server of node `gnx`'s document.
+    /// An edit it makes arrives from `poll` as `Event::Edit`.
+    pub fn execute(&mut self, gnx: &str, command: &lsp_types::Command) -> Result<(), String> {
+        let language = self
+            .node_docs
+            .get(gnx)
+            .and_then(|k| self.docs.get(k))
+            .map(|d| d.language.clone())
+            .ok_or("no language server for this node")?;
+        let server = self
+            .servers
+            .get_mut(&language)
+            .ok_or("no language server for this node")?;
+        let params = json!({"command": command.command, "arguments": command.arguments});
+        let id = server.request("workspace/executeCommand", params);
+        self.executing.insert((language, id));
         Ok(())
     }
 
@@ -417,7 +571,19 @@ impl Lsp {
                             events.push(event);
                         }
                     }
+                    Incoming::Request { id, method, params } => {
+                        let (event, result) = self.server_request(&method, params, encoding);
+                        let server = self.servers.get_mut(&language).expect("listed");
+                        server.respond(id, result);
+                        events.extend(event);
+                    }
                     Incoming::Response { id, result } => {
+                        if self.executing.remove(&(language.clone(), id)) {
+                            if let Err(e) = result {
+                                events.push(Event::Message(format!("language server: {e}")));
+                            }
+                            continue;
+                        }
                         let Some(pending) = self.pending.remove(&(language.clone(), id)) else {
                             continue;
                         };
@@ -430,6 +596,28 @@ impl Lsp {
             }
         }
         events
+    }
+
+    /// A request a server makes that the front end acts on, and the answer.
+    ///
+    /// `workspace/applyEdit` is answered applied when its edit maps to
+    /// bodies: the front end applies it on the next poll unless the user is
+    /// typing, and the next sync sends the server the text either way.
+    fn server_request(&self, method: &str, params: Value, enc: Encoding) -> (Option<Event>, Value) {
+        match method {
+            "workspace/applyEdit" => {
+                let label = params["label"].as_str().unwrap_or("edit").to_string();
+                let edits = serde_json::from_value::<WorkspaceEdit>(params["edit"].clone())
+                    .map_err(|e| format!("a malformed edit: {e}"))
+                    .and_then(|edit| self.body_edits(edit, enc));
+                let answer = match &edits {
+                    Ok(_) => json!({"applied": true}),
+                    Err(e) => json!({"applied": false, "failureReason": e}),
+                };
+                (Some(Event::Edit(label, edits)), answer)
+            }
+            _ => (None, Value::Null),
+        }
     }
 
     fn notification(&mut self, method: &str, params: Value) -> Option<Event> {
@@ -478,6 +666,39 @@ impl Lsp {
                     .filter_map(|(uri, at)| self.target(o, &uri, at, enc))
                     .collect();
                 Event::Definition(targets)
+            }
+            Request::CodeActions => {
+                if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
+                    return Event::Message(
+                        "the text changed while the server worked; ask again".into(),
+                    );
+                }
+                let list: Option<Vec<CodeActionOrCommand>> =
+                    serde_json::from_value(value).unwrap_or(None);
+                let actions = list
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|a| match a {
+                        CodeActionOrCommand::Command(c) => Some(CodeAction {
+                            title: c.title.clone(),
+                            kind: None,
+                            preferred: false,
+                            edit: None,
+                            command: Some(c),
+                        }),
+                        CodeActionOrCommand::CodeAction(a) if a.disabled.is_none() => {
+                            Some(CodeAction {
+                                title: a.title,
+                                kind: a.kind.map(|k| k.as_str().to_string()),
+                                preferred: a.is_preferred.unwrap_or(false),
+                                edit: a.edit.map(|e| self.body_edits(e, enc)),
+                                command: a.command,
+                            })
+                        }
+                        CodeActionOrCommand::CodeAction(_) => None,
+                    })
+                    .collect();
+                Event::CodeActions(actions)
             }
             Request::Rename(_) => {
                 if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
@@ -563,15 +784,20 @@ impl Lsp {
             })?;
             for e in edits {
                 let (r, s) = (e.range.start, e.range.end);
-                let (start, end) = open
+                let pieces = open
                     .doc
-                    .range_to_body((r.line, r.character), (s.line, s.character), enc)
+                    .edit_to_body(
+                        (r.line, r.character),
+                        (s.line, s.character),
+                        &e.new_text,
+                        enc,
+                    )
                     .ok_or("the edit crosses lines no single body writes")?;
-                out.push(BodyEdit {
+                out.extend(pieces.into_iter().map(|(start, end, text)| BodyEdit {
                     start,
                     end,
-                    text: e.new_text,
-                });
+                    text,
+                }));
             }
         }
         Ok(out)
