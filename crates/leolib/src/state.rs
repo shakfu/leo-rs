@@ -55,6 +55,7 @@ pub fn load(o: &mut Outline) {
         match kind {
             "expanded" => {
                 o.expanded.insert(value.to_string());
+                o.expansion += 1;
             }
             "marked" => {
                 if let Some(v) = o.find_gnx(value) {

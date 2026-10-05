@@ -56,10 +56,15 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, TREE, "Alt-n", "goto-next-clone"),
     // Leo's own binding.
     b(Mode::Normal, BOTH, "Alt-a", "sort-siblings"),
+    // Leo's Alt-arrows, which reach the outline from either pane.
+    b(Mode::Normal, BOTH, "Alt-Left", "contract-or-go-left"),
+    b(Mode::Normal, BOTH, "Alt-Right", "expand-and-go-right"),
+    b(Mode::Normal, BOTH, "Alt-Down", "goto-next-visible"),
+    b(Mode::Normal, BOTH, "Alt-Up", "goto-prev-visible"),
     // Leo leaves these unbound, and gives Ctrl-o, vim's jump back, to
-    // open-outline. Alt-arrows are a browser's back and forward.
-    b(Mode::Normal, BOTH, "Alt-Left", "go-back"),
-    b(Mode::Normal, BOTH, "Alt-Right", "go-forward"),
+    // open-outline. H and L are back and forward in vim-keyed browsers.
+    b(Mode::Normal, TREE, "H", "go-back"),
+    b(Mode::Normal, TREE, "L", "go-forward"),
     // --- Tree: structure --------------------------------------------------
     b(Mode::Normal, TREE, "o", "insert-node"),
     b(Mode::Normal, TREE, "Insert", "insert-node"),
@@ -84,6 +89,21 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, TREE, "Shift-Left", "move-outline-left"),
     b(Mode::Normal, TREE, ">>", "move-outline-right"),
     b(Mode::Normal, TREE, "Shift-Right", "move-outline-right"),
+    // Leo's Ctrl moves. In the outline they outrank vim's Ctrl-r, Ctrl-d and
+    // Ctrl-u, which keep their meaning in the body.
+    b(Mode::Normal, TREE, "Ctrl-u", "move-outline-up"),
+    b(Mode::Normal, TREE, "Ctrl-d", "move-outline-down"),
+    b(Mode::Normal, TREE, "Ctrl-l", "move-outline-left"),
+    b(Mode::Normal, TREE, "Ctrl-r", "move-outline-right"),
+    b(Mode::Normal, BOTH, "Alt-Shift-Up", "move-outline-up"),
+    b(Mode::Normal, BOTH, "Alt-Shift-Down", "move-outline-down"),
+    b(Mode::Normal, BOTH, "Alt-Shift-Left", "move-outline-left"),
+    b(Mode::Normal, BOTH, "Alt-Shift-Right", "move-outline-right"),
+    b(Mode::Normal, BOTH, "Ctrl-Shift-c", "copy-node"),
+    b(Mode::Normal, BOTH, "Ctrl-Shift-x", "cut-node"),
+    b(Mode::Normal, BOTH, "Ctrl-Shift-v", "paste-node"),
+    b(Mode::Normal, BOTH, "Ctrl-Shift-d", "extract"),
+    b(Mode::Normal, TREE, "Shift-Insert", "insert-node"),
     b(Mode::Normal, TREE, "g<", "promote"),
     b(Mode::Normal, TREE, "g>", "demote"),
     b(Mode::Normal, TREE, "e", "edit-headline"),
@@ -94,7 +114,9 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, TREE, "Ctrl-i", "insert-node"),
     b(Mode::Normal, TREE, "Ctrl-m", "mark"),
     b(Mode::Normal, TREE, "Ctrl-[", "promote"),
+    b(Mode::Normal, TREE, "Ctrl-{", "promote"),
     b(Mode::Normal, TREE, "Ctrl-]", "demote"),
+    b(Mode::Normal, TREE, "Ctrl-}", "demote"),
     b(Mode::Normal, TREE, "Ctrl-`", "clone-node"),
     // `i` from the tree goes straight into the body, as the old TUI did.
     b(Mode::Normal, TREE, "i", "edit-body"),
@@ -148,6 +170,11 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BODY, "p P", "body-put"),
     b(Mode::Normal, BODY, ".", "body-repeat"),
     b(Mode::Normal, BODY, "gd", "open-url-under-cursor"),
+    // Language servers, on neovim's keys: `K`, the tag jump, `]d` `[d`.
+    b(Mode::Normal, BODY, "K", "lsp-hover"),
+    b(Mode::Normal, BODY, "Ctrl-]", "lsp-definition"),
+    b(Mode::Normal, BODY, "]d", "lsp-next-diagnostic"),
+    b(Mode::Normal, BODY, "[d", "lsp-prev-diagnostic"),
     b(Mode::Normal, BODY, "Escape", "focus-to-tree"),
     // Leo's own rule: Tab leaves the pane it is pressed in. Shift-Tab cycles
     // the other way, which with two panes lands in the same place.
@@ -155,16 +182,24 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BODY, "Shift-Tab", "focus-to-tree"),
     b(Mode::Normal, TREE, "Tab", "focus-to-body"),
     b(Mode::Normal, TREE, "Shift-Tab", "focus-to-body"),
+    // Leo's pane keys.
+    b(Mode::Normal, BOTH, "Alt-d", "focus-to-body"),
+    b(Mode::Normal, BOTH, "Alt-t", "focus-to-tree"),
+    b(Mode::Normal, BOTH, "Ctrl-t", "toggle-active-pane"),
+    b(Mode::Normal, BOTH, "Ctrl-g", "keyboard-quit"),
     // --- Both panes -------------------------------------------------------
     b(Mode::Normal, BOTH, "Ctrl-f", "page-down"),
     b(Mode::Normal, BOTH, "PageDown", "page-down"),
     b(Mode::Normal, BOTH, "Ctrl-b", "page-up"),
     b(Mode::Normal, BOTH, "PageUp", "page-up"),
-    b(Mode::Normal, BOTH, "Ctrl-d", "half-page-down"),
-    b(Mode::Normal, BOTH, "Ctrl-u", "half-page-up"),
+    b(Mode::Normal, BODY, "Ctrl-d", "half-page-down"),
+    b(Mode::Normal, BODY, "Ctrl-u", "half-page-up"),
+    // Leo's half pages in the outline, whose Ctrl-d and Ctrl-u move nodes.
+    b(Mode::Normal, TREE, "Shift-PageDown", "half-page-down"),
+    b(Mode::Normal, TREE, "Shift-PageUp", "half-page-up"),
     b(Mode::Normal, BOTH, "u", "undo"),
     b(Mode::Normal, BOTH, "Ctrl-z", "undo"),
-    b(Mode::Normal, BOTH, "Ctrl-r", "redo"),
+    b(Mode::Normal, BODY, "Ctrl-r", "redo"),
     b(Mode::Normal, BOTH, "Ctrl-Shift-z", "redo"),
     b(Mode::Normal, BOTH, "Ctrl-s", "save"),
     b(Mode::Normal, BOTH, "Ctrl-Left", "shrink-outline-pane"),
@@ -262,6 +297,8 @@ mod tests {
     /// Commands reached only through `:`, because they take an argument or
     /// are not worth a key.
     const COMMAND_LINE_ONLY: &[&str] = &[
+        "lsp-rename",
+        "lsp-diagnostics",
         "goto-visible-row",
         "theme",
         "import-at-file",

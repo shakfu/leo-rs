@@ -2,17 +2,14 @@
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use std::rc::Rc;
-
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Focus, Mode};
-use crate::bindings::{self, BINDINGS};
-use crate::commands;
-use crate::highlight::{self, Class};
-use crate::theme::{Colour, Depth, Theme};
+use leoapp::app::{App, Focus, Mode};
+use leoapp::highlight::Class;
+use leoapp::theme::{Colour, Depth, Theme};
+use leoapp::view::{self, Viewport, SCOPES};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -95,21 +92,23 @@ fn pane_block(app: &App, title: String, focused: bool) -> Block<'static> {
     }
 }
 
-fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
-    let inner_height = area.height.saturating_sub(2) as usize;
-    app.tree_height = inner_height.max(1);
-    let (rows, current) = app.rows_and_current();
-    // Keep the selected row on screen without recentring on every keypress.
-    if current < app.top {
-        app.top = current;
-    } else if inner_height > 0 && current >= app.top + inner_height {
-        app.top = current + 1 - inner_height;
+/// The cells inside a bordered pane.
+fn inner(area: Rect) -> Viewport {
+    Viewport {
+        rows: area.height.saturating_sub(2) as usize,
+        cols: area.width.saturating_sub(2) as usize,
     }
-    let width = area.width.saturating_sub(2) as usize;
+}
+
+fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
+    let tree = app.tree_view(inner(area));
+    let width = inner(area).cols;
     let focused = app.focus == Focus::Tree;
 
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in rows.iter().enumerate().skip(app.top).take(inner_height) {
+    let current = tree.current;
+    for (k, view::TreeRow { row, hits }) in tree.rows.iter().enumerate() {
+        let i = tree.top + k;
         // A fold marker Leo users know, and a cursor column so the view is
         // still readable where reverse video is not, as in --dump.
         let marker = if !row.has_children {
@@ -140,14 +139,11 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Style::default()
         };
-        let matches: Vec<std::ops::Range<usize>> =
-            app.hlsearch.as_ref().map_or_else(Vec::new, |re| {
-                crate::search::ranges(re, &row.headline)
-                    .into_iter()
-                    .map(|r| r.start + prefix.len()..r.end + prefix.len())
-                    .collect()
-            });
-        let cells: Vec<Span> = cut(&text, &matches)
+        let matches: Vec<std::ops::Range<usize>> = hits
+            .iter()
+            .map(|r| r.start + prefix.len()..r.end + prefix.len())
+            .collect();
+        let cells: Vec<Span> = view::cut(&text, &matches)
             .into_iter()
             .map(|(piece, hit)| {
                 let style = if hit {
@@ -161,7 +157,7 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(cells));
     }
 
-    let title = format!(" outline {}/{} ", current + 1, rows.len());
+    let title = format!(" outline {}/{} ", tree.current + 1, tree.total);
     f.render_widget(
         Paragraph::new(lines).block(pane_block(app, title, focused)),
         area,
@@ -169,138 +165,58 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
-    // The body is the model's text, unless a change is being typed.
-    let lines = app.body_buffer();
-    let editing = app.focus == Focus::Body;
-    let cursor = editing.then_some(app.editor.cursor);
-    let selection = app.editor.visual_range(&lines);
-    let inner_height = area.height.saturating_sub(2) as usize;
-    let inner_width = area.width.saturating_sub(2) as usize;
-    app.body_height = inner_height.max(1);
-
-    let number_width = if app.options.number {
-        format!("{} ", lines.len()).len()
-    } else {
-        0
-    };
-    let text_width = inner_width.saturating_sub(number_width).max(1);
-    let tab = tab_stop(app);
-    let wrap = app.options.wrap;
-    // Screen rows each line takes: one, or as many as wrapping needs.
-    let rows_of = |i: usize| -> usize {
-        if !wrap {
-            return 1;
-        }
-        let line = lines.get(i).map_or("", |l| l.as_str());
-        let mut width = display_col(line, line.chars().count(), tab);
-        if let Some((_, col)) = cursor.filter(|c| c.0 == i) {
-            width = width.max(display_col(line, col, tab) + 1);
-        }
-        width.div_ceil(text_width).max(1)
-    };
-    // The cursor's column on screen, and the row of its line it falls in.
-    let cursor_col = cursor.map(|(row, col)| {
-        let line = lines.get(row).map_or("", |l| l.as_str());
-        display_col(line, col, tab)
-    });
-
-    // Scroll to the cursor while editing, and by hand otherwise.
-    let max_top = lines.len().saturating_sub(1);
-    let mut top = match cursor {
-        Some((row, _)) if row < app.body_scroll => row,
-        Some(_) => app.body_scroll,
-        None => app.body_scroll.min(max_top),
-    };
-    if let (Some((row, _)), Some(col)) = (cursor, cursor_col) {
-        let below = |top: usize| {
-            (top..row).map(rows_of).sum::<usize>() + if wrap { col / text_width } else { 0 }
-        };
-        while top < row && below(top) >= inner_height {
-            top += 1;
-        }
-    }
-    app.body_scroll = top;
-    // Without wrapping, the view slides sideways to keep the cursor on it.
-    if wrap || cursor.is_none() {
-        app.body_hscroll = 0;
-    } else if let Some(col) = cursor_col {
-        if col < app.body_hscroll {
-            app.body_hscroll = col;
-        } else if col >= app.body_hscroll + text_width {
-            app.body_hscroll = col + 1 - text_width;
-        }
-    }
-    let hscroll = app.body_hscroll;
-
-    // The language comes from the model, and the body may change it partway
-    // through: see `highlight`. A node nothing declares a language for is left
-    // plain rather than coloured as whatever the outline's default is.
-    let language = match app.options.syntax {
-        true => highlight::language_of(app.outline(), &app.current),
-        false => None,
-    };
-    let spans = match language {
-        Some(language) => app.colouring.of(&lines, &language),
-        None => Rc::default(),
-    };
+    let body = app.body_view(inner(area));
     let palette = palette(&app.theme, app.depth);
-    let hlsearch = app.hlsearch.clone();
     let selected_style = ui_style(app, "ui.selection");
     let linenr = ui_style(app, "ui.linenr");
+    let mut cells: Vec<Vec<(char, Style, usize)>> = Vec::new();
     let mut shown: Vec<Line> = Vec::new();
-    let mut last = top;
-    for (i, l) in lines.iter().enumerate().skip(top) {
-        if shown.len() >= inner_height {
-            break;
-        }
-        last = i;
-        // A selected line is shown reversed. The exact columns matter less
-        // than seeing what an operator would take.
-        let selected = matches!(selection, Some((a, b, _)) if i >= a.0 && i <= b.0);
-        let base = if selected {
-            selected_style
-        } else {
-            Style::default()
-        };
-        let matches = hlsearch
-            .as_ref()
-            .map_or_else(Vec::new, |re| crate::search::ranges(re, l));
-        // The runs are consecutive slices of the line; `offset` is where
-        // each starts, so a match can be cut out of whichever it crosses.
-        let mut pieces: Vec<(&str, Style)> = Vec::new();
-        let mut offset = 0;
-        for (text, class) in split_line(l, spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])) {
-            let local: Vec<std::ops::Range<usize>> = matches
-                .iter()
-                .map(|r| r.start.saturating_sub(offset)..r.end.saturating_sub(offset))
+    for screen in body.screen_lines() {
+        let i = screen.line;
+        if screen.first {
+            let l = &body.lines[i];
+            // A selected line is shown reversed. The exact columns matter less
+            // than seeing what an operator would take.
+            let selected = matches!(body.selection, Some((a, b, _)) if i >= a.0 && i <= b.0);
+            let base = if selected {
+                selected_style
+            } else {
+                Style::default()
+            };
+            let spans = body.spans.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
+            let (hits, marks) = (body.hits(i), body.marks(i));
+            let pieces: Vec<(&str, Style)> = view::decorate(l, spans, &hits, &marks)
+                .into_iter()
+                .map(|seg| {
+                    let mut style = style_for(seg.class, base, &palette);
+                    if let Some(severity) = seg.severity {
+                        style = style.patch(severity_style(severity));
+                    }
+                    if seg.hit {
+                        style = style.patch(match_style());
+                    }
+                    (seg.text, style)
+                })
                 .collect();
-            offset += text.len();
-            for (piece, hit) in cut(text, &local) {
-                let style = style_for(class, base, &palette);
-                let style = if hit {
-                    style.patch(match_style())
-                } else {
-                    style
-                };
-                pieces.push((piece, style));
-            }
+            cells.push(view::expand(&pieces, body.tab));
         }
-        let cells = expand(&pieces, tab);
-        let (from, count) = if wrap { (0, rows_of(i)) } else { (hscroll, 1) };
-        for k in 0..count.min(inner_height - shown.len()) {
-            let mut row: Vec<Span> = Vec::new();
-            if number_width > 0 {
-                let number = match k {
-                    0 => format!("{:>w$} ", i + 1, w = number_width.saturating_sub(1)),
-                    _ => " ".repeat(number_width),
-                };
-                row.push(Span::styled(number, linenr));
-            }
-            row.extend(columns(&cells, from + k * text_width, text_width));
-            shown.push(Line::from(row));
+        let mut row: Vec<Span> = Vec::new();
+        if body.number_width > 0 {
+            let number = match screen.first {
+                true => format!("{:>w$} ", i + 1, w = body.number_width.saturating_sub(1)),
+                false => " ".repeat(body.number_width),
+            };
+            row.push(Span::styled(number, linenr));
         }
+        let line_cells = cells.last().map(|c| c.as_slice()).unwrap_or(&[]);
+        row.extend(
+            view::columns(line_cells, screen.from, body.text_width)
+                .into_iter()
+                .map(|(text, style)| Span::styled(text, style)),
+        );
+        shown.push(Line::from(row));
     }
-    let more = lines.len().saturating_sub(last + 1);
+    let more = body.more();
     let title = match app.mode {
         Mode::Insert => " body -- INSERT ".to_string(),
         Mode::Visual => " body -- VISUAL ".to_string(),
@@ -313,84 +229,9 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         area,
     );
 
-    if let (Some((row, _)), Some(col)) = (cursor, cursor_col) {
-        let (dy, dx) = match wrap {
-            true => (col / text_width, col % text_width),
-            false => (0, col - hscroll),
-        };
-        let y = (top..row).map(rows_of).sum::<usize>() + dy;
-        let x = area.x as usize + 1 + number_width + dx.min(text_width - 1);
-        f.set_cursor_position((
-            x as u16,
-            area.y + 1 + y.min(inner_height.saturating_sub(1)) as u16,
-        ));
+    if let Some((y, x)) = body.cursor_screen() {
+        f.set_cursor_position((area.x + 1 + x as u16, area.y + 1 + y as u16));
     }
-}
-
-/// The columns a tab advances to: the node's `@tabwidth`, as a width.
-fn tab_stop(app: &App) -> usize {
-    app.outline()
-        .get_tab_width(&app.current)
-        .unsigned_abs()
-        .clamp(1, 16) as usize
-}
-
-/// The cells a character takes. A control character takes none.
-fn char_width(ch: char) -> usize {
-    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
-}
-
-/// The screen column at which character `col` of `line` starts.
-pub fn display_col(line: &str, col: usize, tab: usize) -> usize {
-    line.chars().take(col).fold(0, |at, ch| match ch {
-        '\t' => at + tab - at % tab,
-        ch => at + char_width(ch),
-    })
-}
-
-/// A line's characters, each with its style and screen column, tabs expanded
-/// to blanks at stops of `tab` columns.
-fn expand(pieces: &[(&str, Style)], tab: usize) -> Vec<(char, Style, usize)> {
-    let mut out = Vec::new();
-    let mut at = 0;
-    for (text, style) in pieces {
-        for ch in text.chars() {
-            if ch == '\t' {
-                for _ in 0..tab - at % tab {
-                    out.push((' ', *style, at));
-                    at += 1;
-                }
-            } else if char_width(ch) > 0 {
-                out.push((ch, *style, at));
-                at += char_width(ch);
-            }
-        }
-    }
-    out
-}
-
-/// The spans covering `width` screen columns from column `from`. A wide
-/// character cut by either edge is drawn as a blank.
-fn columns(cells: &[(char, Style, usize)], from: usize, width: usize) -> Vec<Span<'static>> {
-    let end = from + width;
-    let mut spans: Vec<Span> = Vec::new();
-    let mut push = |text: String, style: Style| match spans.last_mut() {
-        Some(last) if last.style == style => last.content.to_mut().push_str(&text),
-        _ => spans.push(Span::styled(text, style)),
-    };
-    for &(ch, style, at) in cells {
-        let w = char_width(ch);
-        if at + w <= from || at >= end {
-            continue;
-        }
-        if at < from || at + w > end {
-            let blanks = (at + w).min(end) - at.max(from);
-            push(" ".repeat(blanks), style);
-        } else {
-            push(ch.to_string(), style);
-        }
-    }
-    spans
 }
 
 fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
@@ -423,19 +264,7 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let right = if !app.message.is_empty() {
-        app.message.clone()
-    } else {
-        let pending = app.pending_keys();
-        let hint = match (pending.is_empty(), app.mode) {
-            (false, _) => pending,
-            (true, Mode::Help) => "q closes".to_string(),
-            (true, Mode::Insert) => "Esc commits".to_string(),
-            (true, Mode::Visual) => "d c y > < to operate, Esc cancels".to_string(),
-            _ => "F1 help".to_string(),
-        };
-        format!("{}  {hint}", app.status())
-    };
+    let right = app.status_text();
     let mode_text = format!(" {mode} ");
     let width = area.width as usize;
     let rest = truncate(&format!(" {right}"), width.saturating_sub(mode_text.len()));
@@ -453,17 +282,6 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// The help overlay, generated from the binding table.
 fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
-    let (name, lines) = match &app.overlay {
-        Some((name, lines)) => (name.clone(), lines.clone()),
-        None => {
-            let pane = if app.focus == Focus::Tree {
-                "outline"
-            } else {
-                "body"
-            };
-            (format!("keys: {pane} pane"), help_lines(app.focus))
-        }
-    };
     // Never wider than 80, never narrower than the terminal allows.
     let w = area.width.saturating_sub(8).clamp(20, 80);
     let h = area.height.saturating_sub(4).max(6);
@@ -473,19 +291,18 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Clear, popup);
 
     let inner = h.saturating_sub(2) as usize;
-    let max_top = lines.len().saturating_sub(inner);
-    app.help_scroll = app.help_scroll.min(max_top);
-    let shown: Vec<Line> = lines
+    let help = app.help_view(inner);
+    let shown: Vec<Line> = help
+        .lines
         .iter()
-        .skip(app.help_scroll)
-        .take(inner)
         .map(|l| Line::from(truncate(l, w.saturating_sub(2) as usize)))
         .collect();
     let title = format!(
-        " {name}  {}-{}/{}  q closes ",
-        app.help_scroll + 1,
-        (app.help_scroll + inner).min(lines.len()),
-        lines.len()
+        " {}  {}-{}/{}  q closes ",
+        help.name,
+        help.first + 1,
+        (help.first + inner).min(help.total),
+        help.total
     );
     f.render_widget(
         Paragraph::new(shown).block(
@@ -499,86 +316,22 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
-/// One line per command, with every key bound to it. The single source is the
-/// binding table, so the help cannot drift from what the keys do.
-pub fn help_lines(focus: Focus) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut seen: Vec<&str> = Vec::new();
-    for binding in bindings::for_context(Mode::Normal, focus) {
-        if seen.contains(&binding.command) {
-            continue;
-        }
-        seen.push(binding.command);
-        let keys = bindings::keys_for(binding.command);
-        let keys: Vec<&&str> = keys
-            .iter()
-            .filter(|k| {
-                BINDINGS.iter().any(|x| {
-                    x.keys == **k
-                        && x.command == binding.command
-                        && x.mode == Mode::Normal
-                        && (x.focus.is_none() || x.focus == Some(focus))
-                })
-            })
-            .collect();
-        let keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
-        let summary = commands::find(binding.command)
-            .map(|x| x.summary)
-            .unwrap_or("");
-        out.push(format!(
-            "{:22} {:24} {}",
-            keys.join(" "),
-            binding.command,
-            summary
-        ));
-    }
-    out
+/// A diagnostic: underlined, in vim's colours for its severity.
+fn severity_style(severity: view::Severity) -> Style {
+    let colour = match severity {
+        view::Severity::Error => Color::Red,
+        view::Severity::Warning => Color::Yellow,
+        view::Severity::Information => Color::Blue,
+        view::Severity::Hint => Color::DarkGray,
+    };
+    Style::default()
+        .fg(colour)
+        .add_modifier(Modifier::UNDERLINED)
 }
 
 /// A search match: vim's default `Search` colours.
 fn match_style() -> Style {
     Style::default().bg(Color::Yellow).fg(Color::Black)
-}
-
-/// `text` cut at the edges of `ranges`, each piece marked if it lies in one.
-/// Ranges are byte offsets, sorted and apart, as `Regex::find_iter` gives
-/// them; any part past the end of `text` is dropped.
-fn cut<'a>(text: &'a str, ranges: &[std::ops::Range<usize>]) -> Vec<(&'a str, bool)> {
-    let mut out = Vec::new();
-    let mut at = 0;
-    for r in ranges {
-        let (start, end) = (r.start.min(text.len()), r.end.min(text.len()));
-        if start < at || start >= end {
-            continue;
-        }
-        if start > at {
-            out.push((&text[at..start], false));
-        }
-        out.push((&text[start..end], true));
-        at = end;
-    }
-    if at < text.len() {
-        out.push((&text[at..], false));
-    }
-    out
-}
-
-/// A line split into its classified runs, plain text included.
-fn split_line<'a>(line: &'a str, spans: &[highlight::Span]) -> Vec<(&'a str, Class)> {
-    let end = line.trim_end_matches('\n').len();
-    let mut out = Vec::new();
-    let mut at = 0usize;
-    for span in spans {
-        if span.start > at {
-            out.push((&line[at..span.start.min(end)], Class::Plain));
-        }
-        out.push((&line[span.start.min(end)..span.end.min(end)], span.class));
-        at = span.end.min(end);
-    }
-    if at < end {
-        out.push((&line[at..end], Class::Plain));
-    }
-    out
 }
 
 /// The completion drop-down, above the `:` line.
@@ -650,27 +403,6 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
         popup,
     );
 }
-
-/// The Helix scope each class is drawn as.
-///
-/// A theme names scopes, not classes, and resolves `type.builtin` to `type`
-/// when it defines only the second. `Plain` is absent, and keeps the
-/// terminal's own foreground.
-const SCOPES: &[(Class, &str)] = &[
-    (Class::Directive, "keyword.directive"),
-    (Class::Section, "markup.link.text"),
-    (Class::Comment, "comment"),
-    (Class::Str, "string"),
-    (Class::Number, "constant.numeric"),
-    (Class::Keyword, "keyword"),
-    (Class::BuiltinFunction, "function.builtin"),
-    (Class::BuiltinType, "type.builtin"),
-    (Class::BuiltinConstant, "constant.builtin"),
-    (Class::Function, "function"),
-    (Class::Type, "type"),
-    (Class::Property, "variable.other.member"),
-    (Class::Attribute, "attribute"),
-];
 
 /// Every class's style, resolved once for the frame.
 ///
@@ -757,33 +489,6 @@ mod tests {
         assert_eq!(terminal_colour(Colour::Ansi(8)), Color::DarkGray);
         assert_eq!(terminal_colour(Colour::Ansi(200)), Color::Indexed(200));
         assert_eq!(terminal_colour(Colour::Rgb(1, 2, 3)), Color::Rgb(1, 2, 3));
-    }
-
-    #[test]
-    fn every_class_but_plain_has_a_scope() {
-        // A class with no entry is drawn plain, which for anything but
-        // `Plain` would be a colour silently lost.
-        for class in [
-            Class::Directive,
-            Class::Section,
-            Class::Comment,
-            Class::Str,
-            Class::Number,
-            Class::Keyword,
-            Class::BuiltinFunction,
-            Class::BuiltinType,
-            Class::BuiltinConstant,
-            Class::Function,
-            Class::Type,
-            Class::Property,
-            Class::Attribute,
-        ] {
-            assert!(
-                SCOPES.iter().any(|(c, _)| *c == class),
-                "{class:?} has no scope"
-            );
-        }
-        assert!(!SCOPES.iter().any(|(c, _)| *c == Class::Plain));
     }
 
     #[test]

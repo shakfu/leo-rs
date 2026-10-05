@@ -25,10 +25,13 @@ Those figures come from runs against a leo-editor checkout. What `cargo test` ch
 
 ```text
 crates/leolib     the model. No view, ever.
-crates/leotui     the terminal front end.
+crates/leolsp     language servers, with their positions mapped to nodes.
+crates/leoapp     a front end's state and commands, with no renderer.
+crates/leotui     the terminal front end: leoapp drawn with ratatui.
+crates/leoegui    the desktop front end: leoapp drawn with egui.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leotui` adds `ratatui`, `crossterm` and `clap`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leoegui` adds `eframe` and `clap`.
 
 ## Installing
 
@@ -106,7 +109,15 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 
 `Ctrl-c` in any mode keeps what you typed, closes what is open, and asks to quit if anything is unsaved. In a yes/no prompt it answers no.
 
-In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor and `Ctrl-u` the text before it. Other Ctrl and Alt chords type nothing.
+In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor and `Ctrl-u` the text before it. Other Ctrl and Alt chords type nothing. While a headline is edited, a chord the outline binds keeps the headline as typed and acts on the node, as in Leo: `Ctrl-r` indents a new node before it has a name, `Ctrl-i` starts the next, and `Ctrl-u` moves the node up.
+
+leoegui is the same editor in a window: the same keys, commands, settings and themes, drawn in a monospace grid. On macOS, Cmd is Leo's Ctrl, as in Leo: a Cmd chord the outline binds runs from either pane, so Cmd-R indents the node even in the body, and any other Cmd chord is Ctrl. Control keeps leotui's keys, vim's in the body. Leo's `qt-mac-dont-swap-ctrl-and-meta = true` in the settings leaves Cmd unbound. The outline and body take clicks and the wheel in NORMAL. View > Appearance picks dark, light, or the system's choice, saved as `appearance = "dark" | "light" | "system"`; the dark theme is `theme` and the light one `theme-light` (default `onelight`), and `:theme` sets whichever is showing. View > Theme... lists your Helix themes as dark or light and previews each under the pointer; the window's parts take the Helix scopes for them, such as `ui.statusline.insert` for the INSERT badge and `diagnostic.warning` for a warning's underline. A yes/no dialog answers to `y` or `n` alone.
+
+```sh
+make gui FILE=FILE.leo                                   # a release build
+cargo run -p leoegui -- FILE.leo
+cargo run -p leoegui -- FILE.leo --press F1 --screenshot out.ppm   # one frame, then exit
+```
 
 ### Cheatsheet
 
@@ -116,16 +127,16 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 
 | | |
 |---|---|
-| `j` `k` `Down` `Up` | next, previous visible node |
-| `h` `Left` | fold this node, or step out to the parent |
-| `l` `Right` `Enter` | unfold this node, or step in to the first child |
+| `j` `k` `Down` `Up` `Alt-Down` `Alt-Up` | next, previous visible node |
+| `h` `Left` `Alt-Left` | fold this node, or step out to the parent |
+| `l` `Right` `Enter` `Alt-Right` | unfold this node, or step in to the first child |
 | `gg` `Alt-Home` | first node |
 | `G` `Alt-End` | last visible node |
 | `gp` | parent |
 | `{` `}` | previous, next sibling |
 | `[m` `]m` | previous, next marked node |
 | `]c` `Alt-n` | next clone of this node |
-| `Alt-Left` `Alt-Right` | back, forward through the nodes selected |
+| `H` `L` | back, forward through the nodes selected |
 
 **Outline: folding**
 
@@ -149,16 +160,18 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 | `<<` `Shift-Left` | **deindent**: move this node out one level |
 | `J` `Shift-Down` | move this node down |
 | `K` `Shift-Up` | move this node up |
+| `Ctrl-r` `Ctrl-l` `Ctrl-u` `Ctrl-d` | Leo's indent, deindent, up, down |
+| `Alt-Shift-Right` `Alt-Shift-Left` `Alt-Shift-Up` `Alt-Shift-Down` | the same, from either pane |
 | `g>` | demote: make the *following siblings* children of this node |
 | `g<` | promote: make this node's *children* its siblings |
 
-`>>` moves the node you are on. `g>` and `g<` move other nodes around it.
+`>>` moves the node you are on. `g>` and `g<` move other nodes around it. Leo's `Ctrl-r`, `Ctrl-u` and `Ctrl-d` move nodes in the outline only: the body keeps vim's redo and half pages.
 
 **Outline: creating and removing**
 
 | | |
 |---|---|
-| `o` `Insert` | insert a node after this one |
+| `o` `Insert` `Shift-Insert` | insert a node after this one |
 | `O` | insert a node before this one |
 | `a` `Ctrl-Insert` | insert a node as the first child |
 | `e` | edit the headline |
@@ -166,6 +179,8 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 | `dd` | cut this node to the clipboard |
 | `Delete` `Backspace` | delete this node |
 | `yy` `p` | copy, paste after this node |
+| `Ctrl-Shift-c` `Ctrl-Shift-x` `Ctrl-Shift-v` | Leo's copy, cut, paste a node, from either pane |
+| `Ctrl-Shift-d` | extract the selected lines into a child |
 | `` ` `` | clone this node |
 | `m` `M` | mark or unmark this node, clear every mark |
 | `Alt-a` | sort this node and its siblings (`:sort-children` sorts its children) |
@@ -193,6 +208,9 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 | `p P` | put the text register after, before |
 | `.` | repeat the last change |
 | `gd` | go to the node defining the `<< section >>` on this line |
+| `K` | what the language server says of the symbol under the cursor |
+| `Ctrl-]` | go to its definition |
+| `]d` `[d` | next, previous diagnostic |
 
 `:reformat-paragraph` wraps the paragraph at the cursor to `@pagewidth`, as Leo's command of that name, and moves to the next paragraph.
 
@@ -208,11 +226,14 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 | `/` `?` | search headlines and bodies, forwards, backwards |
 | `n` `N` | next match, previous match |
 | `u` `Ctrl-z` | undo |
-| `Ctrl-r` | redo |
+| `Ctrl-r` | redo, in the body; in the outline, Leo's indent |
 | `Ctrl-s` | write the `.leo` file, then the changed external files |
 | `w` | write the changed external files |
 | `Ctrl-f` `Ctrl-b` `PageDown` `PageUp` | a screen down, up |
-| `Ctrl-d` `Ctrl-u` | half a screen down, up |
+| `Ctrl-d` `Ctrl-u` | half a screen down, up, in the body |
+| `Shift-PageDown` `Shift-PageUp` | half a screen down, up, in the outline, as Leo's |
+| `Alt-d` `Alt-t` `Ctrl-t` | Leo's: focus the body, the outline, the other pane |
+| `Ctrl-g` | Leo's keyboard-quit: Escape for whatever is being typed |
 | `Ctrl-w <` `Ctrl-w >` | narrow, widen the pane that has focus |
 | `Ctrl-Left` `Ctrl-Right` | give the body, the outline more room |
 | `:set syntax` `:set nosyntax` | colour the body, or leave it plain |
@@ -234,7 +255,7 @@ Every Leo command name, with Tab completion and Up/Down history, plus the vim sp
 
 `:refresh-from-disk` reads the `@<file>` node at or above the selection from disk again; `:read-at-file-nodes` reads every one at or under it. `:read-at-file-nodes` skips an `@clean` file unchanged since it was last read or written; `:refresh-from-disk` reads it anyway. Both ask before discarding unwritten edits, and both clear the undo history, as in Leo. When the terminal regains focus, the status line names any external file changed on disk, and a write asks before overwriting it.
 
-`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/config.toml`.
+`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/settings.toml`.
 
 `/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
 
@@ -254,7 +275,7 @@ These need a terminal speaking the kitty keyboard protocol (kitty, foot, wezterm
 |---|---|
 | `Ctrl-i` | insert a node |
 | `Ctrl-m` | mark |
-| `Ctrl-[` `Ctrl-]` | promote, demote |
+| `Ctrl-[` `Ctrl-]` `Ctrl-{` `Ctrl-}` | promote, demote |
 | ``Ctrl-` `` | clone |
 | `Ctrl-Shift-z` | redo |
 | `Ctrl-h` | edit the headline |
@@ -267,13 +288,52 @@ Twelve languages -- C, C++, CSS, Go, HTML, Java, JavaScript, JSON, Python, Rust,
 
 Colours come from a Helix theme, read from `~/.config/leotui/themes` or `~/.config/helix/themes`. Nothing is vendored, so the themes are whichever ones you already have. The default is `sonokai`, and without a file of that name leotui uses the terminal's sixteen colours.
 
-`:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. Enter saves the choice to `~/.config/leotui/config.toml`, rewriting only its `theme` line, and the next launch starts there. `--theme NAME` picks a theme for one launch without saving it.
+`:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. Enter saves the choice to `~/.config/leotui/settings.toml`, rewriting only its `theme` line, and the next launch starts there. `--theme NAME` picks a theme for one launch without saving it.
 
 Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess. A non-empty `NO_COLOR` turns colour off, as `:set colors=none` does; the selected row and the status line are then shown reversed.
 
 The outline's selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window` scopes, so a light theme draws them for a light background.
 
 Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
+
+### Settings
+
+Both front ends read `~/.config/leotui/settings.toml` (an older `config.toml` there is renamed to it). leoegui edits it in File > Settings... (Cmd-,), which writes only the keys that changed and keeps comments and keys it does not know. The keys:
+
+| key | what it does |
+|-|-|
+| `theme` `theme-light` `appearance` | the dark and light themes, and which is shown: `dark`, `light` or `system` |
+| `number` `wrap` `syntax` | what `:set number`, `wrap` and `syntax` start as |
+| `split-ratio` | the outline's share of the width, in percent |
+| `lsp` | `false` to start no language server |
+| `lsp-LANGUAGE` | the command of the server for Leo's language `LANGUAGE` |
+| `mcp` `mcp-edit` `mcp-save` | the MCP server, and whether its clients may edit and save |
+| `mcp-port` `mcp-token` | where it listens on 127.0.0.1, and the token a client sends |
+| `qt-mac-dont-swap-ctrl-and-meta` | Leo's: on macOS, Cmd is Meta rather than Leo's Ctrl |
+
+### MCP
+
+With `mcp = true`, the running leotui or leoegui serves its open outline to MCP clients at `http://127.0.0.1:PORT/mcp` (port 7341 by default), over MCP's streamable HTTP transport. A client must send `Authorization: Bearer TOKEN`; the token is made the first time MCP is turned on, and the Settings dialog shows the command that connects Claude Code:
+
+```sh
+claude mcp add --transport http leo http://127.0.0.1:7341/mcp --header "Authorization: Bearer TOKEN"
+```
+
+A client can read until the settings say more: `outline`, `read_node`, `search` and `selection` always; `set_headline`, `set_body`, `insert_node`, `delete_node`, `move_node` and `select_node` with `mcp-edit = true`; `save` with `mcp-save = true` as well. Nodes are named by gnx. Each edit is one undo step the user can take back with `u`, and the status line says what the client did; an edit waits while the user is typing. Only 127.0.0.1 is listened on, and a request whose `Host` or `Origin` is not local is refused, so a web page cannot reach the outline.
+
+### Language servers
+
+A server starts only for a language the settings name, one line each, and `lsp = false` turns them all off:
+
+```toml
+lsp-python = "pylsp"
+lsp-c = "clangd"
+lsp-rust = "rust-analyzer"
+```
+
+None is started otherwise: a server runs code from the project around the outline, and opening a `.leo` file should not choose that code.
+
+A server sees each external file as leolib writes it, so diagnostics, hover, definitions and renames work across the nodes of an `@file`, `@clean`, `@nosent` or code `@auto` tree. A node in no file is a document of its own. Diagnostics are underlined in the body, and the one on the cursor's line is on the status line; the servers hear an edit when INSERT commits it. `:lsp-diagnostics` lists the body's, and `:lsp-rename NAME` renames the symbol under the cursor in every node at once, as one undo. A rename that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
 
 ## `@auto`
 

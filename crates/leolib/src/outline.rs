@@ -91,6 +91,9 @@ pub struct Outline {
     pub config: Config,
     /// Bumped on every structural change, so a view can tell whether to redraw.
     pub generation: u64,
+    /// Bumped whenever a node is folded or unfolded, so a view can cache the
+    /// rows it shows between changes.
+    pub expansion: u64,
     /// Which nodes are unfolded, by gnx. Per document here; Leo keeps a copy per view.
     pub(crate) expanded: HashSet<String>,
     /// The window geometry the `.leo` file records.
@@ -127,6 +130,7 @@ impl Outline {
             changed: false,
             config: Config::default(),
             generation: 0,
+            expansion: 0,
             expanded: HashSet::new(),
             window_geometry: WindowGeometry::default(),
             mod_time_cache: HashMap::new(),
@@ -152,6 +156,23 @@ impl Outline {
     }
 
     // --- The arena --------------------------------------------------------
+
+    /// Whether v is a descendant of `ancestor` by any path, clones included.
+    pub fn is_below(&self, v: VnodeId, ancestor: VnodeId) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![ancestor];
+        while let Some(u) = stack.pop() {
+            for &c in &self.node(u).children {
+                if c == v {
+                    return true;
+                }
+                if seen.insert(c) {
+                    stack.push(c);
+                }
+            }
+        }
+        false
+    }
 
     /// The vnode `v`. Panics if `v` is outside the arena.
     pub fn node(&self, v: VnodeId) -> &Vnode {
@@ -227,6 +248,7 @@ impl Outline {
                 self.gnx_dict.remove(&gnx);
             }
             self.expanded.remove(&gnx);
+            self.expansion += 1;
             self.mod_time_cache.remove(&gnx);
             self.import_warnings.remove(&gnx);
             self.free.push(v);
@@ -792,6 +814,7 @@ impl Outline {
     /// Unfold exactly the nodes `expanded` names, as a view restoring its folds.
     pub fn set_expanded(&mut self, expanded: HashSet<String>) {
         self.expanded = expanded;
+        self.expansion += 1;
     }
 
     /// Every file this outline read or wrote that has changed on disk since.
@@ -815,12 +838,14 @@ impl Outline {
     pub fn expand(&mut self, p: &Position) {
         let gnx = self.gnx(p.v).to_string();
         self.expanded.insert(gnx);
+        self.expansion += 1;
     }
 
     /// Fold p.
     pub fn contract(&mut self, p: &Position) {
         let gnx = self.gnx(p.v).to_string();
         self.expanded.remove(&gnx);
+        self.expansion += 1;
     }
 
     // --- Folds, in bulk ---------------------------------------------------
@@ -835,6 +860,7 @@ impl Outline {
     /// Every node in the outline, contracted.
     pub fn contract_all(&mut self) {
         self.expanded.clear();
+        self.expansion += 1;
     }
 
     /// Unfold p and all its descendants.
@@ -889,6 +915,7 @@ impl Outline {
             .map(|p2| self.gnx(p2.v).to_string())
             .collect();
         self.expanded.retain(|gnx| keep.contains(gnx));
+        self.expansion += 1;
         // p keeps whatever fold state it had: contracting it would hide its
         // children without making anything else visible.
         let gnx = self.gnx(p.v).to_string();

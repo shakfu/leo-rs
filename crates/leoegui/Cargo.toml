@@ -1,0 +1,27 @@
+[package]
+name = "leoegui"
+description = "A desktop front end for leolib, drawn with egui."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+# eframe 0.36 sets its own floor above the workspace's.
+rust-version = "1.95"
+
+[[bin]]
+name = "leoegui"
+path = "src/main.rs"
+
+[dependencies]
+leolib.workspace = true
+leoapp.workspace = true
+leolsp.workspace = true
+leomcp.workspace = true
+eframe = "0.36"
+clap = { version = "4", features = ["derive"] }
+
+# Already in the build through eframe; turns off winit's default macOS menu,
+# whose Quit item ends the process without asking about unsaved work.
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = "0.30"

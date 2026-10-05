@@ -1,0 +1,14 @@
+[package]
+name = "leolsp"
+description = "Language servers over a leolib outline: documents, positions and edits mapped to nodes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+leolib.workspace = true
+lsp-types = "0.97"
+serde_json = "1"

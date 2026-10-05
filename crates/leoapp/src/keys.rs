@@ -5,7 +5,83 @@
 //! table readable, which matters because the same table is the help screen.
 
 use crate::editor::parse::{push_digit, MAX_COUNT};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// A key, named as crossterm names it, so a front end converts variant for
+/// variant. `Null` stands for any key with no binding, such as a media key.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum KeyCode {
+    Char(char),
+    F(u8),
+    Enter,
+    Esc,
+    Tab,
+    BackTab,
+    Backspace,
+    Delete,
+    Insert,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Null,
+}
+
+/// The modifiers held with a key. SUPER, HYPER and META bind nothing, but are
+/// kept so a chord using them is not taken for a bare key.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct KeyModifiers(u8);
+
+impl KeyModifiers {
+    pub const NONE: Self = Self(0);
+    pub const SHIFT: Self = Self(1);
+    pub const CONTROL: Self = Self(1 << 1);
+    pub const ALT: Self = Self(1 << 2);
+    pub const SUPER: Self = Self(1 << 3);
+    pub const HYPER: Self = Self(1 << 4);
+    pub const META: Self = Self(1 << 5);
+
+    pub fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::ops::BitOr for KeyModifiers {
+    type Output = Self;
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl std::ops::BitOrAssign for KeyModifiers {
+    fn bitor_assign(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+}
+
+/// One key as a front end reports it, before `Key::new` normalizes it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct KeyEvent {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+}
+
+impl KeyEvent {
+    pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
+        Self { code, modifiers }
+    }
+}
 
 /// Whether a Ctrl or Alt chord is held, which types no text. Ctrl and Alt
 /// together are AltGr on Windows, which types `@` or `{` on many layouts.
@@ -57,8 +133,13 @@ fn normalize(code: KeyCode, mods: KeyModifiers) -> (KeyCode, KeyModifiers) {
         mods.remove(KeyModifiers::SHIFT);
     }
     if let KeyCode::Char(c) = code {
+        // A shifted symbol already says Shift: Ctrl-} is Ctrl-Shift-],
+        // and the table spells it Ctrl-}.
         if mods.contains(KeyModifiers::CONTROL) {
             code = KeyCode::Char(c.to_ascii_lowercase());
+            if !c.is_alphabetic() && !c.is_whitespace() {
+                mods.remove(KeyModifiers::SHIFT);
+            }
         } else if c.is_uppercase() || !c.is_alphabetic() {
             mods.remove(KeyModifiers::SHIFT);
         }

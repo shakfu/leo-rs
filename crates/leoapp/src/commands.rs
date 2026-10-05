@@ -70,8 +70,8 @@ pub static COMMANDS: &[Command] = &[
         "goto-first-visible-node",
         "select the first node",
         |app, _| {
-            if let Some(row) = app.rows().first() {
-                app.select(row.position.clone());
+            if let Some(p) = app.row_position(0) {
+                app.select(p);
             }
         },
     ),
@@ -79,8 +79,12 @@ pub static COMMANDS: &[Command] = &[
         "goto-last-visible-node",
         "select the last visible node",
         |app, _| {
-            if let Some(row) = app.rows().last() {
-                app.select(row.position.clone());
+            if let Some(p) = app
+                .row_count()
+                .checked_sub(1)
+                .and_then(|i| app.row_position(i))
+            {
+                app.select(p);
             }
         },
     ),
@@ -533,6 +537,17 @@ pub static COMMANDS: &[Command] = &[
     c("focus-to-body", "focus the body", |app, _| {
         app.focus = Focus::Body
     }),
+    c("toggle-active-pane", "focus the other pane", |app, _| {
+        app.focus = match app.focus {
+            Focus::Tree => Focus::Body,
+            Focus::Body => Focus::Tree,
+        }
+    }),
+    c(
+        "keyboard-quit",
+        "cancel what is being typed or pending, as Escape does",
+        |app, _| app.message.clear(),
+    ),
     c("page-down", "a screen down", |app, n| {
         repeat(app, n, |app| app.page(1.0))
     }),
@@ -648,6 +663,36 @@ pub static COMMANDS: &[Command] = &[
     c("theme", "change the theme, or name the current one", noop),
     // The command line runs these too: they take arguments.
     c("import-at-file", "import a file as an @file tree", noop),
+    c(
+        "lsp-hover",
+        "what the language server says of the symbol under the cursor",
+        |app, _| app.lsp_request(leolsp::Request::Hover),
+    ),
+    c(
+        "lsp-definition",
+        "go to the definition of the symbol under the cursor",
+        |app, _| app.lsp_request(leolsp::Request::Definition),
+    ),
+    c(
+        "lsp-next-diagnostic",
+        "the next diagnostic in this body",
+        |app, n| app.next_diagnostic(true, n),
+    ),
+    c(
+        "lsp-prev-diagnostic",
+        "the previous diagnostic in this body",
+        |app, n| app.next_diagnostic(false, n),
+    ),
+    c(
+        "lsp-diagnostics",
+        "list this body's diagnostics",
+        |app, _| app.show_diagnostics(),
+    ),
+    c(
+        "lsp-rename",
+        "rename the symbol under the cursor everywhere (:lsp-rename NAME)",
+        |app, _| app.open_mini(MiniKind::Command, "lsp-rename ".to_string()),
+    ),
     c(
         "goto-global-line",
         "go to line N of this node's external file (:goto-global-line N)",

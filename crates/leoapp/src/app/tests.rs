@@ -1441,16 +1441,94 @@ fn go_back_and_go_forward_walk_the_selected_nodes() {
     press(&mut app, "j");
     press(&mut app, "j");
     assert_eq!(app.current.h(app.outline()), "c");
-    press(&mut app, "Alt-Left");
+    press(&mut app, "H");
     assert_eq!(app.current.h(app.outline()), "b");
-    // From the body too, with a count.
+    // From the body too, by name: H there is vim's top of the screen.
     press(&mut app, "Tab");
-    press(&mut app, "Alt-Left");
+    app.run_command_line("go-back");
     assert_eq!(app.current.h(app.outline()), "a");
-    press(&mut app, "Alt-Left");
+    press(&mut app, "Escape");
+    press(&mut app, "H");
     assert_eq!(app.message, "no more history");
-    press(&mut app, "2 Alt-Right");
+    press(&mut app, "2 L");
     assert_eq!(app.current.h(app.outline()), "c");
+}
+
+#[test]
+fn leos_outline_keys_move_and_navigate_as_leo_binds_them() {
+    // a / a1 / a2, b, c, with a1 folded: Ctrl-r in the outline moves b under
+    // a, as Leo's move-outline-right; Ctrl-l moves it back.
+    let mut app = app();
+    press(&mut app, "j");
+    press(&mut app, "Ctrl-r");
+    assert_eq!(heads(&app), ["a", "  a1", "  b", "c"]);
+    press(&mut app, "Ctrl-l");
+    assert_eq!(heads(&app), ["a", "  a1", "b", "c"]);
+    press(&mut app, "Ctrl-d");
+    assert_eq!(heads(&app)[2..], ["c", "b"]);
+    press(&mut app, "Ctrl-u");
+    assert_eq!(heads(&app)[2..], ["b", "c"]);
+    // Leo's Alt-arrows navigate; Alt-Shift-arrows move.
+    press(&mut app, "Alt-Up");
+    assert_eq!(app.current.h(app.outline()), "a1");
+    press(&mut app, "Alt-Shift-Left");
+    assert_eq!(heads(&app), ["a", "a1", "b", "c"]);
+    // Ctrl-} is Leo's other demote, and arrives as a shifted ].
+    let mut app = self::app();
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('}'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(heads(&app), ["a", "  a1", "  b", "  c"]);
+}
+
+#[test]
+fn vims_ctrl_keys_keep_their_meaning_in_the_body() {
+    let mut app = body_app("one\ntwo\n");
+    press(&mut app, "dd");
+    press(&mut app, "u");
+    assert_eq!(body(&app), "one\ntwo\n");
+    press(&mut app, "Ctrl-r");
+    assert_eq!(body(&app), "two\n", "Ctrl-r is redo in the body");
+}
+
+#[test]
+fn cmd_is_leos_ctrl_from_either_pane() {
+    let mut app = app();
+    press(&mut app, "j");
+    press(&mut app, "Tab");
+    // Cmd-r, as leoegui sends it on macOS, from the body: Leo's
+    // move-outline-right, not vim's redo.
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::SUPER));
+    assert_eq!(heads(&app), ["a", "  a1", "  b", "c"]);
+    // Cmd-z is Leo's undo, as Ctrl-z is.
+    app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::SUPER));
+    assert_eq!(heads(&app), ["a", "  a1", "b", "c"]);
+}
+
+#[test]
+fn ctrl_g_cancels_and_ctrl_shift_c_copies_rather_than_interrupts() {
+    let mut app = app();
+    press(&mut app, ":");
+    assert_eq!(app.mode, Mode::Command);
+    press(&mut app, "Ctrl-g");
+    assert_eq!(app.mode, Mode::Normal);
+    let before = app.row_count();
+    press(&mut app, "Ctrl-Shift-c");
+    press(&mut app, "Ctrl-Shift-v");
+    assert_eq!(app.row_count(), before + 1);
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn x_then_undo_then_redo_on_a_one_character_line() {
+    let mut app = body_app("x\n");
+    press(&mut app, "x");
+    let after = body(&app);
+    press(&mut app, "u");
+    assert_eq!(body(&app), "x\n");
+    press(&mut app, "Ctrl-r");
+    assert_eq!(body(&app), after);
 }
 
 #[test]
@@ -1791,4 +1869,40 @@ fn renaming_a_node_to_at_file_keeps_its_shebang_first() {
     press(&mut app, "u");
     assert_eq!(app.current.h(app.outline()), "@auto x.sh");
     assert_eq!(body(&app), "#!/bin/sh\necho hi\n");
+}
+
+#[test]
+fn a_new_node_is_indented_before_it_has_a_headline() {
+    // Leo's flow: insert a node, Ctrl-r while its headline is still being
+    // typed, and the node moves, headline kept.
+    let mut app = app();
+    press(&mut app, "j");
+    press(&mut app, "o");
+    assert_eq!(app.mode, Mode::Headline);
+    press(&mut app, "Ctrl-r");
+    assert_eq!(app.mode, Mode::Normal);
+    let new = app.current.clone();
+    assert_eq!(new.level(), 1, "the new node is now a child of b");
+    // Cmd-r does the same, as leoegui sends it on macOS.
+    let mut app = self::app();
+    press(&mut app, "j");
+    press(&mut app, "o");
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::SUPER));
+    assert_eq!(app.current.level(), 1);
+}
+
+#[test]
+fn ctrl_i_after_a_headline_keeps_it_and_starts_the_next() {
+    let mut app = app();
+    press(&mut app, "o");
+    for _ in 0..app.mini.as_ref().unwrap().buffer.chars().count() {
+        press(&mut app, "Backspace");
+    }
+    press(&mut app, "first");
+    app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL));
+    assert_eq!(app.mode, Mode::Headline);
+    assert!(heads(&app).iter().any(|h| h.trim() == "first"));
+    // Ctrl-g still abandons the line being typed.
+    press(&mut app, "Ctrl-g");
+    assert_eq!(app.mode, Mode::Normal);
 }

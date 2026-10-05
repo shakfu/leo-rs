@@ -91,6 +91,7 @@ impl App {
             Action::Pending => {}
             Action::Unknown => self.message = "no such command".to_string(),
             Action::GotoDefinition => self.run("open-url-under-cursor", 1),
+            Action::Run(command, count) => self.run(command, count),
             Action::Unbound(count) => match self.body_binding(key) {
                 Some(command) => self.run(command, count),
                 None => self.message = "no such command".to_string(),

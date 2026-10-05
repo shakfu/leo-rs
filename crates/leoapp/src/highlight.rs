@@ -18,6 +18,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use leolib::outline::set_delims_from_language;
 use leolib::Outline;
@@ -204,27 +205,122 @@ struct Region {
 ///
 /// `highlight` parses the whole body, and the body pane redraws on every key.
 /// A node holding a function costs microseconds; an `@edit` node holds a whole
-/// file in one body, where the parse costs tens of milliseconds. The key is a
-/// hash of the input, so any edit invalidates it.
+/// file in one body, where the parse costs tens of milliseconds: 35 ms a key
+/// at 5,000 lines. So past `WHOLE_UNDER` lines an edit recolours only the
+/// lines it changed, with `CONTEXT` lines either side, and keeps the rest;
+/// the whole body is coloured again once typing has paused for `SETTLE`.
 #[derive(Default)]
 pub struct Colouring {
     key: Option<u64>,
     spans: Rc<Vec<Vec<Span>>>,
+    /// The text and language `spans` colour, to find what an edit changed.
+    lines: Vec<String>,
+    language: String,
+    /// When `spans` became partial: the whole body is due `SETTLE` later.
+    partial_since: Option<Instant>,
 }
 
+/// A body this short is coloured whole on every change.
+const WHOLE_UNDER: usize = 500;
+/// Lines either side of an edit coloured with it, for a construct that spans
+/// lines, such as a string, to come out right near the edit.
+const CONTEXT: usize = 20;
+/// How long typing must pause before a partial colouring is made whole.
+pub const SETTLE: Duration = Duration::from_millis(300);
+
 impl Colouring {
-    /// The colouring of `lines`, recomputed only when they have changed.
+    /// The colouring of `lines`, recomputed only when they have changed, and
+    /// only near the change in a long body until typing pauses.
     pub fn of(&mut self, lines: &[String], language: &str) -> Rc<Vec<Vec<Span>>> {
         let mut hasher = DefaultHasher::new();
         language.hash(&mut hasher);
         lines.hash(&mut hasher);
         let key = Some(hasher.finish());
-        if key != self.key {
-            self.key = key;
-            self.spans = Rc::new(highlight(lines, language));
+        let settled = self.partial_since.is_some_and(|t| t.elapsed() >= SETTLE);
+        if key == self.key && !settled {
+            return Rc::clone(&self.spans);
         }
+        let partial = key != self.key
+            && lines.len() > WHOLE_UNDER
+            && self.language == language
+            && !self.lines.is_empty();
+        let spans = match partial {
+            true => {
+                self.partial_since = Some(Instant::now());
+                patch(&self.lines, &self.spans, lines, language)
+            }
+            false => {
+                self.partial_since = None;
+                highlight(lines, language)
+            }
+        };
+        self.key = key;
+        self.spans = Rc::new(spans);
+        self.lines = lines.to_vec();
+        self.language = language.to_string();
         Rc::clone(&self.spans)
     }
+
+    /// How long until a partial colouring is due to be made whole, if one is.
+    pub fn due_in(&self) -> Option<Duration> {
+        self.partial_since
+            .map(|t| SETTLE.saturating_sub(t.elapsed()))
+    }
+}
+
+/// `new`'s colouring from `old`'s: the lines both share at the start and the
+/// end keep their spans, and the lines between are coloured afresh with
+/// `CONTEXT` lines either side.
+fn patch(
+    old: &[String],
+    old_spans: &[Vec<Span>],
+    new: &[String],
+    language: &str,
+) -> Vec<Vec<Span>> {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let room = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (a, b) = (prefix, new.len() - suffix);
+    let mut out: Vec<Vec<Span>> = old_spans[..prefix].to_vec();
+    out.extend(highlight_window(new, language, a, b));
+    out.extend_from_slice(&old_spans[old.len() - suffix..]);
+    out
+}
+
+/// The colouring of lines `a..b` of `lines`, parsing only those and
+/// `CONTEXT` lines either side. Leo's directives and the regions they cut
+/// are found in the whole body, which is a scan and cheap.
+fn highlight_window(lines: &[String], language: &str, a: usize, b: usize) -> Vec<Vec<Span>> {
+    let mut out: Vec<Vec<Span>> = vec![Vec::new(); lines.len()];
+    let (masked, regions) = plan(lines, language, &mut out);
+    let (w0, w1) = (a.saturating_sub(CONTEXT), (b + CONTEXT).min(lines.len()));
+    for region in regions {
+        let (from, to) = (region.start.max(w0), region.end.min(w1));
+        if from >= to {
+            continue;
+        }
+        let slice = &masked[from..to];
+        let spans = treesit::highlight(slice, &region.language).unwrap_or_else(|| {
+            let rules = Rules::for_language(&region.language);
+            let mut state = State::default();
+            slice
+                .iter()
+                .map(|line| scan(line, &rules, &mut state))
+                .collect()
+        });
+        for (k, line_spans) in spans.into_iter().enumerate() {
+            if out[from + k].is_empty() {
+                out[from + k] = line_spans;
+            }
+        }
+    }
+    out.drain(a..b).collect()
 }
 
 /// Colour a body.
@@ -628,6 +724,56 @@ mod tests {
 
     fn lines(text: &str) -> Vec<String> {
         text.split('\n').map(|s| s.to_string()).collect()
+    }
+
+    /// A Python body too long to colour whole on every key.
+    fn long_body() -> Vec<String> {
+        (0..800)
+            .map(|i| format!("def f{i}(x):  return x + {i}  # note\n"))
+            .collect()
+    }
+
+    #[test]
+    fn an_edit_to_a_long_body_recolours_near_it_as_the_whole_would() {
+        let mut c = Colouring::default();
+        let mut body = long_body();
+        c.of(&body, "python");
+        assert!(c.due_in().is_none());
+        body[400] = "def changed(y):  return 'text'\n".to_string();
+        body.insert(401, "x = 1\n".to_string());
+        let partial = c.of(&body, "python");
+        assert!(
+            c.due_in().is_some(),
+            "a long body is coloured near the edit first"
+        );
+        assert_eq!(*partial, highlight(&body, "python"));
+    }
+
+    #[test]
+    fn a_partial_colouring_is_made_whole_after_the_pause() {
+        let mut c = Colouring::default();
+        let mut body = long_body();
+        c.of(&body, "python");
+        // A string opened and never closed turns every later line into
+        // string, far past the window: only the whole colouring can know.
+        body[100] = "s = \"\"\"\n".to_string();
+        let partial = c.of(&body, "python");
+        let whole = highlight(&body, "python");
+        assert_ne!(*partial, whole);
+        c.partial_since = Some(Instant::now() - SETTLE);
+        assert_eq!(c.due_in(), Some(Duration::ZERO));
+        assert_eq!(*c.of(&body, "python"), whole);
+        assert!(c.due_in().is_none());
+    }
+
+    #[test]
+    fn a_short_body_is_always_coloured_whole() {
+        let mut c = Colouring::default();
+        let mut body = lines("x = 1\ny = 2");
+        c.of(&body, "python");
+        body[1] = "y = 'two'".to_string();
+        assert_eq!(*c.of(&body, "python"), highlight(&body, "python"));
+        assert!(c.due_in().is_none());
     }
 
     /// The classified runs of one line, as (text, class).

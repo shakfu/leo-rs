@@ -1,0 +1,249 @@
+//! What leoapp asks for or shows in a mode of its own: the `:` and `/`
+//! lines, a yes/no question, the key bindings, and overlays such as a hover.
+//! The keys still go to the app; these only draw what it holds.
+
+use eframe::egui::{self, Align2, FontId, Pos2, RichText, Stroke};
+use leoapp::app::{App, Focus, Mode};
+
+use crate::style::Palette;
+
+#[derive(Default)]
+pub struct Prompts {
+    help_pane: Option<Focus>,
+}
+
+impl Prompts {
+    /// Draw whichever the app's mode needs. `hover_at` is the body cursor,
+    /// where a hover opens.
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        app: &mut App,
+        colours: &Palette,
+        hover_at: Option<Pos2>,
+    ) {
+        match app.mode {
+            Mode::Command | Mode::Search => quick_input(ctx, app, colours),
+            Mode::Confirm => confirm(ctx, app),
+            Mode::Help => self.help(ctx, app, colours, hover_at),
+            _ => self.help_pane = None,
+        }
+    }
+
+    fn help(
+        &mut self,
+        ctx: &egui::Context,
+        app: &mut App,
+        colours: &Palette,
+        hover_at: Option<Pos2>,
+    ) {
+        let mut open = true;
+        match app.overlay.clone() {
+            Some((name, lines)) if name == "hover" => {
+                let at = hover_at.unwrap_or(ctx.content_rect().center());
+                egui::Area::new(egui::Id::new("hover"))
+                    .fixed_pos(at + egui::vec2(0.0, 22.0))
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style())
+                            .fill(colours.popup)
+                            .show(ui, |ui| {
+                                ui.set_max_width(560.0);
+                                egui::ScrollArea::vertical()
+                                    .max_height(320.0)
+                                    .show(ui, |ui| {
+                                        for line in &lines {
+                                            ui.label(RichText::new(line).monospace());
+                                        }
+                                    });
+                                ui.label(
+                                    RichText::new("q or Escape closes")
+                                        .size(11.5)
+                                        .color(colours.dim),
+                                );
+                            });
+                    });
+            }
+            Some((name, lines)) => {
+                egui::Window::new(name)
+                    .open(&mut open)
+                    .collapsible(false)
+                    .default_size([620.0, 420.0])
+                    .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for line in &lines {
+                                    ui.label(RichText::new(line).monospace());
+                                }
+                            });
+                    });
+            }
+            None => {
+                let pane = self.help_pane.get_or_insert(app.focus);
+                egui::Window::new("Key Bindings")
+                    .frame(egui::Frame::window(&ctx.global_style()).fill(colours.help))
+                    .open(&mut open)
+                    .collapsible(false)
+                    .default_size([760.0, 520.0])
+                    .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(pane, Focus::Tree, "Outline");
+                            ui.selectable_value(pane, Focus::Body, "Body");
+                        });
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui::Grid::new("bindings")
+                                    .striped(true)
+                                    .spacing([18.0, 6.0])
+                                    .show(ui, |ui| {
+                                        for (keys, command, summary) in
+                                            leoapp::view::help_entries(*pane)
+                                        {
+                                            ui.label(
+                                                RichText::new(keys.join("  "))
+                                                    .monospace()
+                                                    .color(colours.accent),
+                                            );
+                                            ui.label(RichText::new(command).monospace());
+                                            ui.label(RichText::new(summary).color(colours.dim));
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
+                    });
+            }
+        }
+        if !open {
+            app.run("close-help", 1);
+        }
+    }
+}
+
+/// The `:` or `/` line: a box at the top, its text the app's.
+fn quick_input(ctx: &egui::Context, app: &App, colours: &Palette) {
+    let Some(mini) = &app.mini else { return };
+    let label = app.mini_label();
+    let width = (ctx.content_rect().width() * 0.5).clamp(420.0, 720.0);
+    egui::Area::new(egui::Id::new("quick-input"))
+        .anchor(Align2::CENTER_TOP, [0.0, 60.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_width(width);
+                let font = FontId::monospace(14.0);
+                let text = format!("{label}{}", mini.buffer);
+                let galley = ui.painter().layout_no_wrap(text, font.clone(), colours.fg);
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(width, 26.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 3.0, colours.bg);
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    Stroke::new(1.0, colours.accent),
+                    egui::StrokeKind::Inside,
+                );
+                let at = rect.left_center() + egui::vec2(8.0, -galley.size().y / 2.0);
+                let before: String = label
+                    .chars()
+                    .chain(mini.buffer.chars().take(mini.cursor))
+                    .collect();
+                let x = ui
+                    .painter()
+                    .layout_no_wrap(before, font, colours.fg)
+                    .size()
+                    .x;
+                ui.painter().galley(at, galley, colours.fg);
+                ui.painter().vline(
+                    at.x + x,
+                    rect.shrink(5.0).y_range(),
+                    Stroke::new(1.5, colours.fg),
+                );
+
+                let menu = mini.menu(&app.theme_names);
+                if menu.is_open() {
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            for (i, item) in menu.items.iter().enumerate() {
+                                let r =
+                                    ui.selectable_label(menu.selected == Some(i), item.as_str());
+                                if menu.selected == Some(i) {
+                                    r.scroll_to_me(None);
+                                }
+                            }
+                        });
+                } else if app.mode == Mode::Command {
+                    let word = mini.buffer.split_whitespace().next().unwrap_or("");
+                    if !word.is_empty() && !mini.buffer.contains(' ') {
+                        let hints: Vec<_> = leoapp::commands::COMMANDS
+                            .iter()
+                            .filter(|c| c.name.starts_with(word))
+                            .take(8)
+                            .collect();
+                        if !hints.is_empty() {
+                            ui.separator();
+                            for c in hints {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(c.name).monospace());
+                                    ui.label(RichText::new(c.summary).color(colours.dim));
+                                });
+                            }
+                            ui.label(RichText::new("Tab completes").size(11.5).color(colours.dim));
+                        }
+                    }
+                }
+            });
+        });
+}
+
+/// A yes/no question as a dialog. Its buttons press the keys it waits for.
+fn confirm(ctx: &egui::Context, app: &mut App) {
+    let question = app.mini_label();
+    // The app asks as a terminal would, "... (y/n)"; a dialog has buttons.
+    let question = question.trim().trim_end_matches("(y/n)").trim_end();
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        ui.label(RichText::new(question).size(14.5));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui.button("Yes (y)").clicked() {
+                answer = Some(true);
+            }
+            if ui.button("No (n)").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if let Some(yes) = answer {
+        app.answer(yes);
+        app.log_message();
+    }
+}
+
+/// The About box.
+pub fn about(ctx: &egui::Context, open: &mut bool) {
+    if !*open {
+        return;
+    }
+    let response = egui::Modal::new(egui::Id::new("about")).show(ctx, |ui| {
+        ui.set_max_width(420.0);
+        ui.heading("leoegui");
+        ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
+        ui.add_space(6.0);
+        ui.label("A desktop front end for leolib, a Rust port of Leo's outline model.");
+        ui.add_space(10.0);
+        if ui.button("Close").clicked() {
+            ui.close();
+        }
+    });
+    if response.should_close() {
+        *open = false;
+    }
+}

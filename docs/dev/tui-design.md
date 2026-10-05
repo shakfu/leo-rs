@@ -452,6 +452,8 @@ Focus resolves most of them: the same key can be Leo's in the tree and vim's in 
 
 One rule decides the last two rows and is worth stating on its own: **a Ctrl- key means the same thing in both panes.** Undo, redo and paging are operations on the editor, not on the tree or the buffer, and a user who has to remember that `Ctrl-r` redoes here but moves a node there has been given a puzzle.
 
+Superseded on 2026-10-05, for compliance with Leo's outline keys: the outline takes Leo's `Ctrl-r` `Ctrl-l` `Ctrl-u` `Ctrl-d` moves and the body keeps vim's redo and half pages. See the CHANGELOG.
+
 The cost is Leo's `Ctrl-D`/`Ctrl-L`/`Ctrl-R`/`Ctrl-U` set for moving nodes. That set was always Leo's keyboard alternative to Shift-arrows, and both of its replacements -- `J K << >>` and Leo's own Shift-arrows -- are kept. Leo's `redo = Shift-Ctrl-Z` is unreachable in a legacy terminal anyway: shift does not change the control code for Z.
 
 ## 10. Configuration

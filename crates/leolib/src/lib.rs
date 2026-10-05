@@ -37,7 +37,7 @@ pub mod state;
 pub mod undo;
 pub mod util;
 
-pub use document::Document;
+pub use document::{Document, Place};
 pub use error::{Error, Result};
 pub use node::{Vnode, VnodeId};
 pub use outline::{Config, Outline};

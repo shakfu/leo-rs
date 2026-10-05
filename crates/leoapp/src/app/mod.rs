@@ -4,7 +4,6 @@
 //! edit lands in the model and its undo history, never in a widget the model
 //! then has to be told about. This file holds no copy of the outline.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use leolib::{Document, Outline, Position};
 
 use crate::bindings;
@@ -14,7 +13,7 @@ use crate::editor::motion::{Kind, Motion};
 use crate::editor::parse::{Action, Parser};
 use crate::editor::{self, Editor};
 use crate::history::NodeHistory;
-use crate::keys::{self, Key, Pending};
+use crate::keys::{self, Key, KeyCode, KeyEvent, KeyModifiers, Pending};
 use std::rc::Rc;
 
 use crate::minibuffer::{self, MiniKind, Minibuffer};
@@ -24,6 +23,10 @@ mod body;
 mod ex;
 mod files;
 mod hoist;
+mod lsp;
+mod mcp;
+pub use lsp::diagnostic_line;
+pub use mcp::Access;
 mod prompt;
 #[cfg(test)]
 mod tests;
@@ -186,6 +189,25 @@ pub struct App {
     /// Whether the save waiting on the y/n prompt also writes external files.
     /// False only for `write-outline-only`.
     save_files: bool,
+    /// Language servers, when the settings name any.
+    pub lsp: Option<leolsp::Lsp>,
+    /// The outline generation and node the servers last saw.
+    lsp_synced: Option<(u64, leolib::VnodeId)>,
+    /// When the outline first changed after the last sync.
+    lsp_dirty_since: Option<std::time::Instant>,
+    /// The current node's diagnostics, as of the last poll.
+    pub diagnostics: Vec<leolsp::BodyDiagnostic>,
+    row_cache: std::cell::RefCell<RowCache>,
+    /// The settings key an accepted `:theme` is saved under: `theme`, or
+    /// leoegui's `theme-light` while it is light.
+    pub theme_setting: &'static str,
+    /// The MCP server, when the settings turn it on, and what its clients
+    /// may do.
+    pub mcp: Option<leomcp::Server>,
+    pub mcp_access: Access,
+    /// The settings as read at launch and changed since, for a front end
+    /// that shows them.
+    pub settings: crate::config::Config,
 }
 
 /// The status line's account of external files that could not be read.
@@ -215,6 +237,98 @@ pub fn open_or_new(path: &str, read_external: bool) -> leolib::Result<(Document,
     }
 }
 
+/// The theme loaded when neither `--theme` nor the config file names one.
+///
+/// A Helix theme name: leoapp reads their files and vendors none, so this is
+/// only a default and holds whatever the user has on disk under that name.
+pub const DEFAULT_THEME: &str = "sonokai";
+
+/// Open `path`, or an unsaved outline without one, as a front end starts:
+/// settings and theme applied, the top level unfolded, and the most urgent
+/// message on the status line.
+pub fn launch(
+    path: Option<&str>,
+    read_external: bool,
+    theme: Option<&str>,
+) -> leolib::Result<(App, crate::config::Config)> {
+    let (doc, new) = match path {
+        Some(path) => open_or_new(path, read_external)?,
+        None => (Document::new_empty(""), false),
+    };
+    let mut app = App::new(doc);
+    app.config_path = crate::config::path();
+    // A theme asked for by name, on the command line or in the config file,
+    // reports when it is missing. The default does not: the built-in sixteen
+    // colours stand, and saying so on every start would be noise.
+    let settings = crate::config::load();
+    let (name, asked) = crate::config::chosen_theme(theme, &settings, DEFAULT_THEME);
+    if let Some(percent) = settings.split_ratio {
+        app.tree_percent = percent;
+    }
+    if !app.set_theme(name) && !asked {
+        app.message.clear();
+    }
+    if app.message.is_empty() {
+        if let Some(warning) = settings.warnings.first() {
+            app.message = warning.clone();
+        }
+    }
+    if new {
+        app.message = format!("new outline: {}", app.outline().file_name);
+    }
+    // A file that could not be read outranks a theme or a settings message:
+    // its node is empty, and would otherwise pass for the file's contents.
+    if let Some(report) = read_report_message(&app.doc.read_report) {
+        app.message = report;
+    }
+    for line in read_report_lines(&app.doc.read_report) {
+        app.log(line);
+    }
+    app.log_message();
+
+    if let Some(b) = settings.number {
+        app.options.number = b;
+    }
+    if let Some(b) = settings.wrap {
+        app.options.wrap = b;
+    }
+    if let Some(b) = settings.syntax {
+        app.options.syntax = b;
+    }
+    let mut settings = settings;
+    app.start_mcp(&mut settings);
+    app.set_lsp(&settings, std::sync::Arc::new(|| {}));
+
+    // Unfold the top level, so an outline opens showing something.
+    if let Some(root) = app.outline().root_position() {
+        for p in root.self_and_siblings(app.outline()) {
+            app.doc.outline_mut_untracked().expand(&p);
+        }
+    }
+    app.settings = settings.clone();
+    Ok((app, settings))
+}
+
+impl App {
+    /// Start the MCP server if the settings turn it on, making and saving a
+    /// token the first time. A failure is said on the status line.
+    pub fn start_mcp(&mut self, settings: &mut crate::config::Config) {
+        if settings.mcp.enabled && settings.mcp.token.is_none() {
+            let token = leomcp::new_token();
+            if let Some(path) = &self.config_path {
+                let change = ("mcp-token".to_string(), Some(format!("\"{token}\"")));
+                if let Err(e) = crate::config::update(path, &[change]) {
+                    self.message = format!("MCP token not saved: {e}");
+                }
+            }
+            settings.mcp.token = Some(token);
+        }
+        if let Err(e) = self.set_mcp(&settings.mcp) {
+            self.message = e;
+        }
+    }
+}
+
 /// One line per file a read reported, for the message log.
 pub fn read_report_lines(report: &leolib::external::ReadResult) -> Vec<String> {
     let errors = report
@@ -240,6 +354,15 @@ fn theme_argument(line: &str) -> Option<String> {
     }
 }
 
+/// `App::row_positions`' cache: the rows, the outline state they were
+/// walked for, and where the selection was found in them.
+#[derive(Default)]
+struct RowCache {
+    key: Option<(u64, u64, Option<Position>)>,
+    rows: Rc<Vec<Position>>,
+    current: Option<(Position, usize)>,
+}
+
 /// One row of the outline pane.
 pub struct Row {
     pub position: Position,
@@ -250,6 +373,8 @@ pub struct Row {
     pub dirty: bool,
     pub cloned: bool,
     pub is_file: bool,
+    /// Whether the body holds any text.
+    pub has_body: bool,
     pub headline: String,
 }
 impl App {
@@ -303,6 +428,15 @@ impl App {
             pending_overwrite: Vec::new(),
             pending_read: (Vec::new(), false),
             save_files: true,
+            lsp: None,
+            lsp_synced: None,
+            lsp_dirty_since: None,
+            diagnostics: Vec::new(),
+            row_cache: Default::default(),
+            theme_setting: "theme",
+            mcp: None,
+            mcp_access: Access::default(),
+            settings: crate::config::Config::default(),
         };
         app.expand_ancestors();
         app.history.update(&app.current);
@@ -318,7 +452,18 @@ impl App {
     /// Feed one key to the current mode.
     pub fn handle_key(&mut self, event: KeyEvent) {
         self.message.clear();
-        if event.code == KeyCode::Char('c') && event.modifiers.contains(KeyModifiers::CONTROL) {
+        let Some(mut event) = self.leo_chord(event) else {
+            self.log_message();
+            return;
+        };
+        // Leo's keyboard-quit is Escape for whatever is being typed.
+        let ctrl = |e: &KeyEvent, c: char| {
+            e.code == KeyCode::Char(c) && e.modifiers == KeyModifiers::CONTROL
+        };
+        if ctrl(&event, 'g') && self.mode != Mode::Normal {
+            event = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        }
+        if ctrl(&event, 'c') {
             self.interrupt();
         } else {
             match self.mode {
@@ -332,6 +477,58 @@ impl App {
             }
         }
         self.log_message();
+    }
+
+    /// Leo's outline chords where a mode would otherwise eat them.
+    ///
+    /// A Cmd chord, which leoegui sends on macOS as SUPER, is Leo's Ctrl:
+    /// on a Mac Leo's Ctrl is the Cmd key. A chord the outline binds runs its
+    /// outline command from either pane, after INSERT commits; Cmd-R moves
+    /// the node right even in the body, where Control-r is vim's redo. Any
+    /// other Cmd chord goes on as Ctrl.
+    ///
+    /// While a headline is typed, a Ctrl, Alt or Cmd chord the outline binds
+    /// keeps the headline as typed and then runs, as in Leo's headline
+    /// editor: a new node is indented with Ctrl-R before it has a name, and
+    /// Ctrl-I after a name starts the next. Ctrl-g stays keyboard-quit.
+    ///
+    /// None if the chord was run.
+    fn leo_chord(&mut self, event: KeyEvent) -> Option<KeyEvent> {
+        let cmd = event.modifiers.contains(KeyModifiers::SUPER);
+        let event = match cmd {
+            true => {
+                let mut mods = event.modifiers;
+                mods.remove(KeyModifiers::SUPER);
+                KeyEvent::new(event.code, mods | KeyModifiers::CONTROL)
+            }
+            false => event,
+        };
+        let chord = event.modifiers.contains(KeyModifiers::CONTROL)
+            || event.modifiers.contains(KeyModifiers::ALT);
+        let quit = event.code == KeyCode::Char('g') && event.modifiers == KeyModifiers::CONTROL;
+        let headline = self.mode == Mode::Headline && chord && !quit;
+        if !cmd && !headline {
+            return Some(event);
+        }
+        let key = Key::from_event(event);
+        let command = bindings::for_context(Mode::Normal, Focus::Tree)
+            .find(|b| keys::parse(b.keys) == [key])
+            .map(|b| b.command);
+        match (command, self.mode) {
+            (Some(command), Mode::Headline) if !quit => {
+                self.finish_mini(true);
+                self.run(command, 1);
+                None
+            }
+            (Some(command), Mode::Normal | Mode::Insert | Mode::Visual) if cmd => {
+                if self.mode != Mode::Normal {
+                    self.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                }
+                self.run(command, 1);
+                None
+            }
+            _ => Some(event),
+        }
     }
 
     /// Keep the status line's message for `:messages`, since the next key
@@ -429,44 +626,96 @@ impl App {
 
     /// The rows the outline pane shows: the tree with folded subtrees
     /// skipped, or only the hoisted subtree, with the hoisted node at depth 0.
+    /// Every row is built; `rows_in` builds only the ones drawn.
     pub fn rows(&self) -> Vec<Row> {
+        self.rows_in(0..self.row_count())
+    }
+
+    /// Rows `range` of `rows()`, clamped to what there is.
+    pub fn rows_in(&self, range: std::ops::Range<usize>) -> Vec<Row> {
+        let positions = self.row_positions();
+        let base = self.hoist_limit().map_or(0, |h| h.level());
+        let end = range.end.min(positions.len());
+        positions[range.start.min(end)..end]
+            .iter()
+            .map(|p| self.row(p, base))
+            .collect()
+    }
+
+    fn row(&self, p: &Position, base: usize) -> Row {
         let o = self.outline();
+        Row {
+            depth: p.level() - base,
+            has_children: p.has_children(o),
+            expanded: o.is_expanded(p),
+            marked: p.is_marked(o),
+            dirty: p.is_dirty(o),
+            cloned: p.is_cloned(o),
+            is_file: p.is_any_at_file_node(o),
+            has_body: !p.b(o).is_empty(),
+            headline: p.h(o).to_string(),
+            position: p.clone(),
+        }
+    }
+
+    /// How many rows the outline pane has.
+    pub fn row_count(&self) -> usize {
+        self.row_positions().len()
+    }
+
+    /// The position at row `i`, if there is one.
+    pub fn row_position(&self, i: usize) -> Option<Position> {
+        self.row_positions().get(i).cloned()
+    }
+
+    /// The visible rows' positions, walked again only when the tree's shape,
+    /// its folds or the hoist changed. A frame asks several times, and the
+    /// walk is O(outline): 2.5 ms at 21,000 rows.
+    fn row_positions(&self) -> Rc<Vec<Position>> {
+        let o = self.outline();
+        let key = (o.generation, o.expansion, self.hoist_limit().cloned());
+        let mut cache = self.row_cache.borrow_mut();
+        if cache.key.as_ref() == Some(&key) {
+            return cache.rows.clone();
+        }
         let mut rows = Vec::new();
-        let limit = self.hoist_limit();
-        let base = limit.map_or(0, |h| h.level());
-        let mut p = limit.cloned().or_else(|| o.root_position());
+        let mut p = self.hoist_limit().cloned().or_else(|| o.root_position());
         while let Some(cur) = p.filter(|p| self.in_view(p)) {
-            let has_children = cur.has_children(o);
-            let expanded = o.is_expanded(&cur);
-            rows.push(Row {
-                depth: cur.level() - base,
-                has_children,
-                expanded,
-                marked: cur.is_marked(o),
-                dirty: cur.is_dirty(o),
-                cloned: cur.is_cloned(o),
-                is_file: cur.is_any_at_file_node(o),
-                headline: cur.h(o).to_string(),
-                position: cur.clone(),
-            });
-            p = if has_children && expanded {
+            p = if cur.has_children(o) && o.is_expanded(&cur) {
                 cur.thread_next(o)
             } else {
                 cur.node_after_tree(o)
             };
+            rows.push(cur);
         }
-        rows
+        *cache = RowCache {
+            key: Some(key),
+            rows: Rc::new(rows),
+            current: None,
+        };
+        cache.rows.clone()
     }
 
-    /// The visible rows and the index of the selected one, in one walk.
+    /// The visible rows and the index of the selected one.
     pub fn rows_and_current(&self) -> (Vec<Row>, usize) {
-        let rows = self.rows();
-        let current = row_of(&rows, &self.current);
-        (rows, current)
+        (self.rows(), self.current_row())
     }
 
+    /// The selected row's index, or 0 if it is not shown.
     pub fn current_row(&self) -> usize {
-        row_of(&self.rows(), &self.current)
+        let positions = self.row_positions();
+        let mut cache = self.row_cache.borrow_mut();
+        if let Some((p, i)) = &cache.current {
+            if *p == self.current {
+                return *i;
+            }
+        }
+        let i = positions
+            .iter()
+            .position(|p| *p == self.current)
+            .unwrap_or(0);
+        cache.current = Some((self.current.clone(), i));
+        i
     }
 
     /// The current node's ancestors, outermost first: the breadcrumb.
@@ -575,21 +824,23 @@ impl App {
 
     /// Select the visible row at `index`, clamped to the outline.
     pub fn move_to_row(&mut self, index: usize) {
-        let rows = self.rows();
-        if let Some(row) = rows.get(index.min(rows.len().saturating_sub(1))) {
-            self.select(row.position.clone());
+        let n = self.row_count();
+        if let Some(p) = self.row_position(index.min(n.saturating_sub(1))) {
+            self.select(p);
         }
     }
 
     /// Move `delta` visible rows in the outline.
     pub fn move_rows(&mut self, delta: i32) {
-        let rows = self.rows();
-        if rows.is_empty() {
+        let n = self.row_count();
+        if n == 0 {
             return;
         }
         let i = self.current_row() as i32 + delta;
-        let i = i.clamp(0, rows.len() as i32 - 1) as usize;
-        self.select(rows[i].position.clone());
+        let i = i.clamp(0, n as i32 - 1) as usize;
+        if let Some(p) = self.row_position(i) {
+            self.select(p);
+        }
     }
 
     // --- Folding ---------------------------------------------------------
@@ -661,7 +912,7 @@ impl App {
     /// The status line: what the outline is and what state it is in.
     pub fn status(&mut self) -> String {
         let positions = self.position_count();
-        let (rows, current) = self.rows_and_current();
+        let (rows, current) = (self.row_count(), self.current_row());
         let o = self.outline();
         let name = if o.file_name.is_empty() {
             "<unsaved>".to_string()
@@ -672,16 +923,9 @@ impl App {
         format!(
             "{name}{changed}  {}/{}  {positions} positions",
             current + 1,
-            rows.len()
+            rows
         )
     }
-}
-
-/// The index of `current` among `rows`, or 0 if it is not shown.
-fn row_of(rows: &[Row], current: &Position) -> usize {
-    rows.iter()
-        .position(|r| r.position == *current)
-        .unwrap_or(0)
 }
 
 /// Keep the newest entry once, at the end.

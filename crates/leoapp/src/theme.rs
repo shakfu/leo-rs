@@ -23,12 +23,35 @@ pub enum Colour {
 }
 
 /// How one scope is drawn.
+///
+/// leotui draws the colours, bold and italic. The rest is read for front
+/// ends that can draw it: a cursor that reverses the text under it, and a
+/// diagnostic's coloured, curly underline.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct Face {
     pub fg: Option<Colour>,
     pub bg: Option<Colour>,
     pub bold: bool,
     pub italic: bool,
+    pub dim: bool,
+    pub reversed: bool,
+    pub crossed_out: bool,
+    /// The `underlined` modifier, or an `underline = {..}` table.
+    pub underlined: bool,
+    /// An `underline` table's `color`; else the text's.
+    pub underline_colour: Option<Colour>,
+    pub underline_style: UnderlineStyle,
+}
+
+/// How an underline is drawn, as Helix names the styles.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum UnderlineStyle {
+    #[default]
+    Line,
+    Curl,
+    Dashed,
+    Dotted,
+    Double,
 }
 
 /// How many colours the terminal can show.
@@ -197,6 +220,13 @@ impl Theme {
         &self.name
     }
 
+    /// Whether the theme names `scope` itself, not only a prefix of it. A
+    /// mode's badge is drawn from `ui.statusline.insert` only if the theme
+    /// says so; its prefix is the whole bar's colour.
+    pub fn defines(&self, scope: &str) -> bool {
+        self.scopes.contains_key(scope)
+    }
+
     /// The face for `scope`, or for its longest defined prefix.
     ///
     /// Helix resolves `type.builtin` to `type` when a theme names only the
@@ -264,22 +294,20 @@ impl Theme {
             .collect();
         let mut seen: Vec<String> = Vec::new();
         let mut next = Some(name.to_string());
-        // Parents first, so a child's entries overlay them. Depth is capped
-        // because `inherits` is a user's file and may point at itself.
-        let mut chain: Vec<HashMap<String, Face>> = Vec::new();
+        // Depth is capped because `inherits` is a user's file and may point
+        // at itself.
+        let mut chain: Vec<Raw> = Vec::new();
         while let Some(current) = next.take() {
             if seen.contains(&current) || seen.len() > 8 {
                 break;
             }
             let text = read_theme(&current)?;
             seen.push(current);
-            let (entries, inherits) = parse(&text);
-            chain.push(entries);
-            next = inherits;
+            let raw = parse_raw(&text);
+            next = raw.inherits.clone();
+            chain.push(raw);
         }
-        for entries in chain.into_iter().rev() {
-            scopes.extend(entries);
-        }
+        scopes.extend(resolve(chain));
         Some(Theme {
             name: name.to_string(),
             scopes,
@@ -293,7 +321,7 @@ fn ui_scopes() -> Vec<(&'static str, Face)> {
         fg: Some(Colour::Ansi(fg)),
         bg: bg.map(Colour::Ansi),
         bold,
-        italic: false,
+        ..Face::default()
     };
     vec![
         // The selected row of the focused outline, and of the other.
@@ -365,7 +393,41 @@ fn read_theme(name: &str) -> Option<String> {
 /// `key = "value"`, `key = { fg = "value", modifiers = [..] }` and a
 /// `[palette]` of names to hex -- and anything it does not recognise is
 /// skipped rather than refused.
+/// One theme file, its scopes still text: an inheriting theme's palette
+/// recolours its parent's scopes, so no scope is resolved until the whole
+/// chain's palettes are merged.
+struct Raw {
+    scopes: Vec<(String, String)>,
+    palette: HashMap<String, Colour>,
+    inherits: Option<String>,
+}
+
+/// A chain of theme files, the theme first and its ancestors after, as
+/// Helix merges them: a child's palette names and scopes win over its
+/// parent's, and every scope is resolved with the merged palette. A light
+/// variant that is only `inherits` and a `[palette]`, as `catppuccin_latte`
+/// is, so takes its parent's scopes in its own colours.
+fn resolve(chain: Vec<Raw>) -> HashMap<String, Face> {
+    let mut palette: HashMap<String, Colour> = HashMap::new();
+    let mut raw: HashMap<String, String> = HashMap::new();
+    for file in chain.into_iter().rev() {
+        palette.extend(file.palette);
+        raw.extend(file.scopes);
+    }
+    raw.into_iter()
+        .filter_map(|(key, value)| face(&value, &palette).map(|f| (key, f)))
+        .collect()
+}
+
+/// One file's scopes resolved with its own palette, and what it inherits.
+#[cfg(test)]
 fn parse(text: &str) -> (HashMap<String, Face>, Option<String>) {
+    let raw = parse_raw(text);
+    let inherits = raw.inherits.clone();
+    (resolve(vec![raw]), inherits)
+}
+
+fn parse_raw(text: &str) -> Raw {
     let mut palette: HashMap<String, Colour> = HashMap::new();
     let mut raw: Vec<(String, String)> = Vec::new();
     let mut inherits = None;
@@ -399,11 +461,11 @@ fn parse(text: &str) -> (HashMap<String, Face>, Option<String>) {
         }
     }
 
-    let scopes = raw
-        .into_iter()
-        .filter_map(|(key, value)| face(&value, &palette).map(|f| (key, f)))
-        .collect();
-    (scopes, inherits)
+    Raw {
+        scopes: raw,
+        palette,
+        inherits,
+    }
 }
 
 /// Everything before an unquoted `#`.
@@ -457,6 +519,33 @@ fn face(value: &str, palette: &HashMap<String, Colour>) -> Option<Face> {
             "modifiers" => {
                 out.bold = val.contains("bold");
                 out.italic = val.contains("italic");
+                out.dim = val.contains("dim");
+                out.reversed = val.contains("reversed");
+                out.crossed_out = val.contains("crossed_out");
+                out.underlined |= val.contains("underlined");
+            }
+            "underline" => {
+                out.underlined = true;
+                let inner = val.trim().trim_start_matches('{').trim_end_matches('}');
+                for field in split_fields(inner) {
+                    let Some((k, v)) = field.split_once('=') else {
+                        continue;
+                    };
+                    let v = unquote(v.trim());
+                    match unquote(k.trim()) {
+                        "color" => out.underline_colour = colour(v, palette),
+                        "style" => {
+                            out.underline_style = match v {
+                                "curl" => UnderlineStyle::Curl,
+                                "dashed" => UnderlineStyle::Dashed,
+                                "dotted" => UnderlineStyle::Dotted,
+                                "double_line" => UnderlineStyle::Double,
+                                _ => UnderlineStyle::Line,
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
             _ => {}
         }
@@ -664,6 +753,58 @@ grey0 = "#7f8490"   # a trailing comment
         assert_eq!(Depth::parse("16"), Some(Depth::Ansi16));
         assert_eq!(Depth::parse("none"), Some(Depth::None));
         assert_eq!(Depth::parse("lots"), None);
+    }
+
+    #[test]
+    fn a_childs_palette_recolours_its_parents_scopes() {
+        let parent = parse_raw(concat!(
+            "\"ui.background\" = { bg = \"base\" }\n",
+            "\"keyword\" = \"red\"\n",
+            "\"string\" = \"green\"\n",
+            "[palette]\nbase = \"#1e1e2e\"\nred = \"#f38ba8\"\ngreen = \"#a6e3a1\"\n",
+        ));
+        let child = parse_raw(concat!(
+            "inherits = \"parent\"\n",
+            "\"string\" = \"red\"\n",
+            "[palette]\nbase = \"#eff1f5\"\nred = \"#d20f39\"\n",
+        ));
+        let t = Theme {
+            name: "child".into(),
+            scopes: resolve(vec![child, parent]),
+        };
+        let red = Some(Colour::Rgb(0xd2, 0x0f, 0x39));
+        assert_eq!(
+            t.face("ui.background").bg,
+            Some(Colour::Rgb(0xef, 0xf1, 0xf5))
+        );
+        assert_eq!(t.face("keyword").fg, red);
+        // The child's own scope wins, in the merged palette.
+        assert_eq!(t.face("string").fg, red);
+        assert!(t.defines("keyword") && !t.defines("keyword.control"));
+    }
+
+    #[test]
+    fn an_underline_table_and_every_modifier_are_read() {
+        let t = theme(concat!(
+            "\"diagnostic.warning\" = { underline = { color = \"red\", style = \"curl\" } }\n",
+            "\"diagnostic.error\" = { fg = \"red\", modifiers = [\"underlined\", \"bold\"] }\n",
+            "\"ui.cursor\" = { modifiers = ['reversed'] }\n",
+            "\"comment\" = { fg = \"red\", modifiers = [\"dim\", \"crossed_out\"] }\n",
+            "[palette]\nred = \"#fc5d7c\"\n",
+        ));
+        let red = Some(Colour::Rgb(0xfc, 0x5d, 0x7c));
+        let w = t.face("diagnostic.warning");
+        assert!(w.underlined);
+        assert_eq!(
+            (w.underline_colour, w.underline_style),
+            (red, UnderlineStyle::Curl)
+        );
+        let e = t.face("diagnostic.error");
+        assert!(e.underlined && e.bold && e.underline_colour.is_none());
+        assert_eq!(e.underline_style, UnderlineStyle::Line);
+        assert!(t.face("ui.cursor.primary.insert").reversed);
+        let c = t.face("comment");
+        assert!(c.dim && c.crossed_out && !c.underlined);
     }
 
     #[test]

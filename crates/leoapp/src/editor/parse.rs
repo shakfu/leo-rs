@@ -4,11 +4,9 @@
 //! and handed to the editor. Scattering this across key handlers is how vim
 //! clones end up with a matrix of special cases instead of a grammar.
 
-use crossterm::event::{KeyCode, KeyModifiers};
-
 use super::change::{InsertAt, Operator, Range, Simple};
 use super::motion::{Motion, TextObject};
-use crate::keys::Key;
+use crate::keys::{Key, KeyCode, KeyModifiers};
 
 /// What a complete key sequence asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +52,8 @@ pub enum Action {
     /// A key the grammar does not know, with nothing but a count before it.
     /// The binding table may know it: `Ctrl-d`, `PageDown`, `F1`.
     Unbound(usize),
+    /// A two-key binding the grammar knows only by name: `]d`.
+    Run(&'static str, usize),
     Unknown,
 }
 
@@ -245,7 +245,7 @@ impl Parser {
         }
 
         match c {
-            'g' | 'z' | 'f' | 'F' | 't' | 'T' | 'r' => {
+            'g' | 'z' | 'f' | 'F' | 't' | 'T' | 'r' | '[' | ']' => {
                 self.prefix = Some(c);
                 Action::Pending
             }
@@ -280,6 +280,14 @@ impl Parser {
             ('g', 'd') => {
                 self.reset();
                 Action::GotoDefinition
+            }
+            (']', 'd') | ('[', 'd') => {
+                self.reset();
+                let name = match prefix {
+                    ']' => "lsp-next-diagnostic",
+                    _ => "lsp-prev-diagnostic",
+                };
+                Action::Run(name, count)
             }
             ('g', 'e') => {
                 self.reset();
@@ -402,6 +410,10 @@ impl Parser {
                 count,
             },
             ':' => Action::Command,
+            'K' if self.operator.is_none() => {
+                self.reset();
+                Action::Run("lsp-hover", count)
+            }
             _ => Action::Unknown,
         }
     }
@@ -527,6 +539,10 @@ mod tests {
 
     #[test]
     fn a_key_outside_the_grammar_is_left_to_the_binding_table() {
+        assert_eq!(parse_keys("K"), Action::Run("lsp-hover", 1));
+        assert_eq!(parse_keys("2 ] d"), Action::Run("lsp-next-diagnostic", 2));
+        assert_eq!(parse_keys("[ d"), Action::Run("lsp-prev-diagnostic", 1));
+        assert_eq!(parse_keys("] x"), Action::Unknown);
         assert_eq!(parse_keys("Ctrl-d"), Action::Unbound(1));
         assert_eq!(parse_keys("3 Ctrl-d"), Action::Unbound(3));
         assert_eq!(parse_keys("PageDown"), Action::Unbound(1));

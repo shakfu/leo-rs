@@ -39,11 +39,22 @@ fn is_mappable(o: &Outline, root: &Position) -> bool {
 /// take a line.
 fn line_map(o: &Outline, root: &Position) -> Option<Vec<(String, usize)>> {
     let text = crate::atfile_write::at_file_to_string(o, root, true).ok()?;
-    let lines = util::split_lines(&text);
+    let rows = row_map(&text, root.gnx(o), root.is_at_file_node(o));
+    Some(
+        rows.into_iter()
+            .map(|(gnx, offset, _)| (gnx, offset))
+            .collect(),
+    )
+}
+
+/// `line_map`'s walk over `text`, a file written with sentinels: each line's
+/// gnx, offset, and whether it is a sentinel. `sentinels_count` keeps the
+/// sentinel lines, for a file that holds them.
+fn row_map(text: &str, root_gnx: &str, sentinels_count: bool) -> Vec<(String, usize, bool)> {
+    let lines = util::split_lines(text);
     let marker = Marker::from_file_lines(&lines);
     let delim = marker.delims().0.trim_end().to_string();
-    let sentinels_count = root.is_at_file_node(o);
-    let (mut gnx, mut offset) = (root.gnx(o).to_string(), 0usize);
+    let (mut gnx, mut offset) = (root_gnx.to_string(), 0usize);
     let mut stack: Vec<(String, usize)> = Vec::new();
     let mut map = Vec::new();
     let mut verbatim = false;
@@ -54,7 +65,7 @@ fn line_map(o: &Outline, root: &Position) -> Option<Vec<(String, usize)>> {
         verbatim = sentinel && marker.is_verbatim_sentinel(line);
         if verbatim {
             if sentinels_count {
-                map.push((gnx.clone(), offset));
+                map.push((gnx.clone(), offset, true));
             }
             continue;
         }
@@ -77,10 +88,110 @@ fn line_map(o: &Outline, root: &Position) -> Option<Vec<(String, usize)>> {
             offset += 1;
         }
         if sentinels_count || !sentinel {
-            map.push((gnx.clone(), offset));
+            map.push((gnx.clone(), offset, sentinel));
         }
     }
-    Some(map)
+    map
+}
+
+/// One line of an external file, and the body row that writes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileLine {
+    /// The node whose body writes the line.
+    pub gnx: String,
+    /// 0-based row in that node's body.
+    pub row: usize,
+    /// Bytes the writer put before the row's text, an `@others` indent. None
+    /// when the line is not the row's text: a sentinel, a directive, a doc
+    /// part written as a comment.
+    pub indent: Option<usize>,
+}
+
+/// An external file as written, with the body row behind each line. A
+/// language server reads `text`; a front end maps positions through `lines`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineMap {
+    /// The file's text, with `\n` line ends.
+    pub text: String,
+    /// One per line of `text`.
+    pub lines: Vec<FileLine>,
+}
+
+impl LineMap {
+    /// The 0-based line body row `row` of node `gnx` is written to, the first
+    /// if a clone writes it twice. None if the row writes no line of its own.
+    pub fn line_of(&self, gnx: &str, row: usize) -> Option<usize> {
+        self.lines
+            .iter()
+            .position(|l| l.gnx == gnx && l.row == row && l.indent.is_some())
+    }
+}
+
+/// root's file as it would be written, mapped line by line to body rows.
+///
+/// Every file the sentinel writer writes maps: `@file`, `@clean`, `@nosent`
+/// and an `@auto` file of code. The map is read from the file written with
+/// sentinels, so a file written any other way -- `@edit`, `@asis`, `@auto` of
+/// markdown or org -- is None rather than mapped by guesswork: the check is
+/// that the sentinel writer, with sentinels as the file has them, gives the
+/// same text.
+pub fn line_map_of(o: &Outline, root: &Position) -> Option<LineMap> {
+    let (text, _, _) = crate::external::file_contents(o, root).ok()?;
+    let auto = root.is_at_auto_node(o);
+    let sentinels = !(root.is_at_clean_node(o) || root.is_at_nosent_node(o) || auto);
+    let write = |sentinels| crate::atfile_write::write_to_string(o, root, sentinels, auto).ok();
+    if write(sentinels)? != text {
+        return None;
+    }
+    let rows = row_map(&write(true)?, root.gnx(o), sentinels);
+    let file_lines = util::split_lines(&text);
+    if rows.len() != file_lines.len() {
+        return None;
+    }
+    let mut bodies: std::collections::HashMap<String, Vec<String>> = Default::default();
+    let positions = root.self_and_subtree(o);
+    let lines = rows
+        .into_iter()
+        .zip(&file_lines)
+        .map(|((gnx, offset, sentinel), file_line)| {
+            let body = bodies.entry(gnx.clone()).or_insert_with(|| {
+                positions
+                    .iter()
+                    .find(|p| p.gnx(o) == gnx)
+                    .map_or_else(Vec::new, |p| util::split_lines(p.b(o)))
+            });
+            let row = offset.saturating_sub(1);
+            let indent = match sentinel {
+                true => None,
+                false => body.get(row).and_then(|b| indent_of(file_line, b)),
+            };
+            FileLine { gnx, row, indent }
+        })
+        .collect();
+    Some(LineMap { text, lines })
+}
+
+/// The body of p, a node in no file, as a language server reads it: each
+/// Leo directive line blanked, so its line numbers stay the body's rows.
+pub fn body_as_code(o: &Outline, p: &Position) -> String {
+    let at = crate::atfile_write::AtWrite::new(o, p);
+    util::split_lines(p.b(o))
+        .iter()
+        .map(|line| match at.is_directive_line(line) {
+            true => "\n",
+            false => line.as_str(),
+        })
+        .collect()
+}
+
+/// The blanks before `body` in `file`, if `file` is `body` behind blanks.
+fn indent_of(file: &str, body: &str) -> Option<usize> {
+    let (file, body) = (file.trim_end_matches('\n'), body.trim_end_matches('\n'));
+    let prefix = file.strip_suffix(body)?;
+    prefix
+        .chars()
+        .all(|c| c == ' ' || c == '\t')
+        .then_some(prefix.len())
 }
 
 /// The gnx of an `@+node` sentinel: between its first two colons.
@@ -180,6 +291,77 @@ mod tests {
         assert_eq!(file_line(&o, &root, 2), Some(4));
         // `@others` writes no line of its own.
         assert_eq!(file_line(&o, &root, 1), None);
+    }
+
+    #[test]
+    fn a_file_maps_each_line_to_a_row_and_its_indent() {
+        let (mut o, root, f) = outline("@file");
+        o.set_body(&root, "import os\n    @others\nx = 1\n");
+        let map = line_map_of(&o, &root).unwrap();
+        assert_eq!(
+            map.text,
+            crate::atfile_write::at_file_to_string(&o, &root, true).unwrap()
+        );
+        let at = |needle: &str| map.text.lines().position(|l| l.contains(needle)).unwrap();
+        let line = |n: usize| map.lines[n].clone();
+        assert_eq!(line(at("import os")).row, 0);
+        assert_eq!(line(at("import os")).indent, Some(0));
+        let ret = line(at("return 1"));
+        assert_eq!(
+            (ret.gnx.as_str(), ret.row, ret.indent),
+            (f.gnx(&o), 1, Some(4))
+        );
+        // A sentinel is a line of the file but of no body.
+        assert_eq!(line(at("@+others")).indent, None);
+        assert_eq!(map.line_of(f.gnx(&o), 1), Some(at("return 1")));
+        assert_eq!(map.line_of(root.gnx(&o), 1), None);
+    }
+
+    #[test]
+    fn a_clean_file_and_a_code_auto_file_map_their_own_lines() {
+        for kind in ["@clean", "@auto"] {
+            let (o, root, f) = outline(kind);
+            let map = line_map_of(&o, &root).unwrap();
+            assert_eq!(
+                map.text, "import os\ndef f():\n    return 1\nx = 1\n",
+                "{kind}"
+            );
+            let rows: Vec<(bool, usize, Option<usize>)> = map
+                .lines
+                .iter()
+                .map(|l| (l.gnx == f.gnx(&o), l.row, l.indent))
+                .collect();
+            assert_eq!(
+                rows,
+                [
+                    (false, 0, Some(0)),
+                    (true, 0, Some(0)),
+                    (true, 1, Some(0)),
+                    (false, 2, Some(0))
+                ],
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_the_sentinel_writer_does_not_write_has_no_line_map() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@auto notes.md");
+        o.set_body(&root, "# Title\n");
+        let child = o.insert_as_last_child(&root);
+        o.set_headline(&child, "Section");
+        o.set_body(&child, "text\n");
+        assert_eq!(line_map_of(&o, &root), None);
+    }
+
+    #[test]
+    fn a_body_as_code_blanks_its_directives() {
+        let mut o = Outline::new_empty();
+        let p = o.root_position().unwrap();
+        o.set_body(&p, "@language python\nx = 1\n@tabwidth -4\n");
+        assert_eq!(body_as_code(&o, &p), "\nx = 1\n\n");
     }
 
     #[test]

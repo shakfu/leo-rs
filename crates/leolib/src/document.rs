@@ -50,6 +50,17 @@ fn extract_ref(s: &str) -> bool {
         .any(|(a, b)| matches!((s.find(a), s.find(b)), (Some(i), Some(j)) if i < j))
 }
 
+/// Where `Document::move_node` puts a node, relative to its target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// The target's previous sibling.
+    Before,
+    /// The target's next sibling.
+    After,
+    /// The target's last child.
+    Inside,
+}
+
 /// An outline and its undo history: every edit through a `Document` method
 /// is undoable.
 pub struct Document {
@@ -861,6 +872,20 @@ impl Document {
         Some(self.move_to(p, back.v, n))
     }
 
+    /// Move p before, after or into `target`, as a dropped node lands. None
+    /// if the place is inside p's own tree: the outline would hold itself.
+    pub fn move_node(&mut self, p: &Position, target: &Position, place: Place) -> Option<Position> {
+        let (parent, index) = match place {
+            Place::Before => (target.parent_vnode(&self.outline), target.child_index),
+            Place::After => (target.parent_vnode(&self.outline), target.child_index + 1),
+            Place::Inside => (target.v, target.num_children(&self.outline)),
+        };
+        if parent == p.v || self.outline.is_below(parent, p.v) {
+            return None;
+        }
+        Some(self.move_to(p, parent, index))
+    }
+
     /// Unlink p and relink it as `parent`'s nth child.
     ///
     /// Removing p first shifts every later index under the same parent, so the
@@ -1368,6 +1393,32 @@ mod tests {
         assert!(d
             .clone_find_all("zzz", "Head", false, |_, _| false)
             .is_none());
+    }
+
+    #[test]
+    fn move_node_lands_before_after_or_inside_and_undoes() {
+        let (mut d, all) = abc();
+        let c = d.move_node(&all[2], &all[0], Place::Before).unwrap();
+        assert_eq!(heads(&d), vec!["c", "a", "b"]);
+        let all = d.outline.all_positions();
+        d.move_node(&c, &all[2], Place::After);
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+        let all = d.outline.all_positions();
+        d.move_node(&all[0], &all[1], Place::Inside);
+        assert_eq!(heads(&d), vec!["b", "  a", "c"]);
+        d.undo();
+        assert_eq!(heads(&d), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn move_node_refuses_a_place_inside_the_moved_tree() {
+        let (mut d, all) = abc();
+        let b = d.move_right(&all[1]).unwrap();
+        let a = d.outline.all_positions()[0].clone();
+        assert!(d.move_node(&a, &a, Place::Inside).is_none());
+        assert!(d.move_node(&a, &b, Place::Inside).is_none());
+        assert!(d.move_node(&a, &b, Place::After).is_none());
+        assert_eq!(heads(&d), vec!["a", "  b", "c"]);
     }
 
     #[test]

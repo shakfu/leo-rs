@@ -180,7 +180,7 @@ impl App {
             return;
         };
         let name = self.theme.name().to_string();
-        self.message = match crate::config::save_theme(&path, &name) {
+        self.message = match crate::config::save_theme_as(&path, self.theme_setting, &name) {
             Ok(()) => format!("theme: {name} (saved)"),
             Err(e) => format!("theme: {name} (not saved: {e})"),
         };
@@ -313,6 +313,19 @@ impl App {
     }
 
     /// Close the line at the bottom, acting on it if it was accepted.
+    /// Answer the yes/no question on the line, as typing `y` or `n` and
+    /// Enter would. A dialog's buttons and keys answer with one press.
+    pub fn answer(&mut self, yes: bool) {
+        if self.mode != Mode::Confirm {
+            return;
+        }
+        if let Some(mini) = self.mini.as_mut() {
+            mini.buffer = if yes { "y" } else { "n" }.to_string();
+            mini.cursor = 1;
+        }
+        self.finish_mini(true);
+    }
+
     pub fn finish_mini(&mut self, accepted: bool) {
         // An accepted line keeps whatever the preview applied, so there is
         // nothing left to put back.

@@ -11,20 +11,6 @@
 //! prints the same table the dispatcher and the help overlay read, so both
 //! can be exercised in a test or a pipe with no terminal at all.
 
-mod app;
-mod bindings;
-mod commands;
-mod config;
-mod editor;
-mod highlight;
-mod history;
-mod keys;
-mod keywords;
-mod minibuffer;
-mod search;
-mod substitute;
-mod theme;
-mod treesit;
 mod ui;
 
 use std::io;
@@ -41,9 +27,9 @@ use crossterm::terminal::{
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::Terminal;
 
-use app::App;
 use clap::Parser;
-use leolib::Document;
+use leoapp::app::{self, App};
+use leoapp::{bindings, keys};
 
 /// A terminal front end for leolib.
 #[derive(Parser)]
@@ -81,12 +67,6 @@ struct Args {
     theme: Option<String>,
 }
 
-/// The theme loaded when neither `--theme` nor the config file names one.
-///
-/// A Helix theme name: leotui reads their files and vendors none, so this is
-/// only a default and holds whatever the user has on disk under that name.
-const DEFAULT_THEME: &str = "sonokai";
-
 fn main() {
     let args = Args::parse();
     if args.list_keys {
@@ -99,53 +79,17 @@ fn main() {
         }
         std::process::exit(0);
     }
-    let (doc, new) = match &args.path {
-        Some(path) => match app::open_or_new(path, !args.no_external) {
-            Ok(opened) => opened,
-            Err(e) => {
-                eprintln!("leotui: {e}");
-                std::process::exit(1);
-            }
-        },
-        None => (Document::new_empty(""), false),
+    let mut app = match app::launch(
+        args.path.as_deref(),
+        !args.no_external,
+        args.theme.as_deref(),
+    ) {
+        Ok((app, _)) => app,
+        Err(e) => {
+            eprintln!("leotui: {e}");
+            std::process::exit(1);
+        }
     };
-    let mut app = App::new(doc);
-    app.config_path = config::path();
-    // A theme asked for by name, on the command line or in the config file,
-    // reports when it is missing. The default does not: the built-in sixteen
-    // colours stand, and saying so on every start would be noise.
-    let settings = config::load();
-    let (theme, asked) = config::chosen_theme(args.theme.as_deref(), &settings, DEFAULT_THEME);
-    if let Some(percent) = settings.split_ratio {
-        app.tree_percent = percent;
-    }
-    if !app.set_theme(theme) && !asked {
-        app.message.clear();
-    }
-    if app.message.is_empty() {
-        if let Some(warning) = settings.warnings.first() {
-            app.message = warning.clone();
-        }
-    }
-    if new {
-        app.message = format!("new outline: {}", app.outline().file_name);
-    }
-    // A file that could not be read outranks a theme or a settings message:
-    // its node is empty, and would otherwise pass for the file's contents.
-    if let Some(report) = app::read_report_message(&app.doc.read_report) {
-        app.message = report;
-    }
-    for line in app::read_report_lines(&app.doc.read_report) {
-        app.log(line);
-    }
-    app.log_message();
-
-    // Unfold the top level, so an outline opens showing something.
-    if let Some(root) = app.outline().root_position() {
-        for p in root.self_and_siblings(app.outline()) {
-            app.doc.outline_mut_untracked().expand(&p);
-        }
-    }
 
     // Pressing keys before drawing makes any state reachable headlessly,
     // which is how the help overlay and the modes are checked.
@@ -156,7 +100,7 @@ fn main() {
         .map(str::trim);
     for spec in specs {
         for key in keys::parse(spec) {
-            app.handle_key(crossterm::event::KeyEvent::new(key.code, key.mods));
+            app.handle_key(leoapp::keys::KeyEvent::new(key.code, key.mods));
         }
     }
 
@@ -173,7 +117,7 @@ fn main() {
 fn print_keys() {
     for (name, focus) in [("outline", app::Focus::Tree), ("body", app::Focus::Body)] {
         println!("# {name} pane");
-        for line in ui::help_lines(focus) {
+        for line in leoapp::view::help_lines(focus) {
             println!("{}", line.trim_end());
         }
         println!();
@@ -288,12 +232,28 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
 fn event_loop(app: &mut App) -> io::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
+    let mut redraw = true;
     while !app.quit {
-        terminal.draw(|f| ui::draw(f, app))?;
+        if redraw {
+            terminal.draw(|f| ui::draw(f, app))?;
+        }
+        // Wake to hear from a language server, or when a colouring is due;
+        // otherwise a key is the only thing that changes the screen.
+        let wake = match app.lsp.is_some() || app.mcp.is_some() {
+            true => Some(std::time::Duration::from_millis(50)),
+            false => app.poll_after(),
+        };
+        if let Some(wait) = wake {
+            if !event::poll(wait)? {
+                redraw = app.poll();
+                continue;
+            }
+        }
+        redraw = true;
         // Key *press* only: on Windows crossterm also reports releases, which
         // would run every command twice.
         match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key_event(key)),
             Event::Paste(text) => {
                 app.handle_paste(&text);
                 app.log_message();
@@ -308,12 +268,67 @@ fn event_loop(app: &mut App) -> io::Result<()> {
     Ok(())
 }
 
+/// A crossterm key as leoapp names it. Every modifier is kept; a key leoapp
+/// has no name for becomes `Null`, which nothing binds.
+fn key_event(event: event::KeyEvent) -> leoapp::keys::KeyEvent {
+    use event::{KeyCode as C, KeyModifiers as M};
+    use leoapp::keys::{KeyCode, KeyModifiers};
+    let code = match event.code {
+        C::Char(c) => KeyCode::Char(c),
+        C::F(n) => KeyCode::F(n),
+        C::Enter => KeyCode::Enter,
+        C::Esc => KeyCode::Esc,
+        C::Tab => KeyCode::Tab,
+        C::BackTab => KeyCode::BackTab,
+        C::Backspace => KeyCode::Backspace,
+        C::Delete => KeyCode::Delete,
+        C::Insert => KeyCode::Insert,
+        C::Left => KeyCode::Left,
+        C::Right => KeyCode::Right,
+        C::Up => KeyCode::Up,
+        C::Down => KeyCode::Down,
+        C::Home => KeyCode::Home,
+        C::End => KeyCode::End,
+        C::PageUp => KeyCode::PageUp,
+        C::PageDown => KeyCode::PageDown,
+        _ => KeyCode::Null,
+    };
+    let mut mods = KeyModifiers::NONE;
+    for (from, to) in [
+        (M::SHIFT, KeyModifiers::SHIFT),
+        (M::CONTROL, KeyModifiers::CONTROL),
+        (M::ALT, KeyModifiers::ALT),
+        (M::SUPER, KeyModifiers::SUPER),
+        (M::HYPER, KeyModifiers::HYPER),
+        (M::META, KeyModifiers::META),
+    ] {
+        if event.modifiers.contains(from) {
+            mods |= to;
+        }
+    }
+    leoapp::keys::KeyEvent::new(code, mods)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use leolib::Outline;
+    use leoapp::keys::{KeyCode, KeyEvent, KeyModifiers};
+    use leolib::{Document, Outline};
     use ratatui::style::Color;
+
+    #[test]
+    fn a_crossterm_key_converts_with_every_modifier() {
+        use crossterm::event::{KeyCode as C, KeyEvent as E, KeyModifiers as M};
+        let k = key_event(E::new(C::Char('z'), M::CONTROL | M::SHIFT | M::SUPER));
+        assert_eq!(k.code, KeyCode::Char('z'));
+        assert_eq!(
+            k.modifiers,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT | KeyModifiers::SUPER
+        );
+        // A key with no leoapp name still arrives, so it clears the message.
+        let k = key_event(E::new(C::CapsLock, M::NONE));
+        assert_eq!(k, KeyEvent::new(KeyCode::Null, KeyModifiers::NONE));
+    }
 
     /// Render one frame and return its lines, as `--dump` prints them.
     fn render(app: &mut App, width: u16, height: u16) -> Vec<String> {
@@ -408,12 +423,14 @@ mod tests {
 
     #[test]
     fn the_key_listing_covers_both_panes() {
-        let tree = ui::help_lines(app::Focus::Tree).join("\n");
-        let body = ui::help_lines(app::Focus::Body).join("\n");
+        let tree = leoapp::view::help_lines(app::Focus::Tree).join("\n");
+        let body = leoapp::view::help_lines(app::Focus::Body).join("\n");
         assert!(tree.contains("move-outline-down"), "{tree}");
         assert!(!tree.contains("body-operators"), "{tree}");
         assert!(body.contains("body-operators"), "{body}");
-        assert!(!body.contains("move-outline-down"), "{body}");
+        // An outline-only command is not in the body's listing. Leo's
+        // Alt-Shift arrows move a node from either pane, so this is gp.
+        assert!(!body.contains("goto-parent"), "{body}");
         // Bindings that apply to both panes appear in both listings.
         assert!(tree.contains("undo") && body.contains("undo"));
     }
@@ -424,6 +441,40 @@ mod tests {
         terminal.draw(|f| ui::draw(f, app)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..width).map(|x| buffer[(x, height - 1)].bg).collect()
+    }
+
+    #[test]
+    fn a_diagnostic_is_underlined_in_its_severitys_colour() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_body(&root, "x = nope\n");
+        let mut app = App::new(Document::new(o));
+        app.focus = app::Focus::Body;
+        app.diagnostics = vec![leoapp::view::BodyDiagnostic {
+            row: 0,
+            col: 4,
+            end_row: 0,
+            end_col: 8,
+            severity: leoapp::view::Severity::Error,
+            message: "undefined: nope".into(),
+        }];
+        let (width, height) = (60, 8);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let row: Vec<_> = (0..width).map(|x| buffer[(x, 2)].clone()).collect();
+        let start = row.iter().position(|c| c.symbol() == "x").unwrap();
+        let marked = |i: usize| {
+            let c = &row[start + i];
+            c.fg == Color::Red && c.modifier.contains(ratatui::style::Modifier::UNDERLINED)
+        };
+        assert!((4..8).all(marked), "`nope` is not marked");
+        assert!(!(0..4).any(marked), "`x = ` is marked");
+        // The status line names it while the cursor is on its line.
+        let status: String = (0..width)
+            .map(|x| buffer[(x, height - 1)].symbol().to_string())
+            .collect();
+        assert!(status.contains("E: undefined: nope"), "{status}");
     }
 
     #[test]
@@ -449,10 +500,7 @@ mod tests {
         );
 
         // So are the other lines that take input.
-        app.handle_key(KeyEvent::new(
-            crossterm::event::KeyCode::Esc,
-            crossterm::event::KeyModifiers::NONE,
-        ));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         for spec in ["/", "e"] {
             press(&mut app, &[spec]);
             let line = status_backgrounds(&mut app, 60, 8);
@@ -460,10 +508,7 @@ mod tests {
                 line.iter().all(|c| *c == Color::Reset),
                 "the {spec} line is painted: {line:?}"
             );
-            app.handle_key(KeyEvent::new(
-                crossterm::event::KeyCode::Esc,
-                crossterm::event::KeyModifiers::NONE,
-            ));
+            app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
     }
 
@@ -794,7 +839,7 @@ mod tests {
     #[test]
     fn no_color_draws_no_colour_and_reverses_the_selected_row() {
         let mut app = body_of("text\n");
-        app.depth = theme::Depth::None;
+        app.depth = leoapp::theme::Depth::None;
         let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
         terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
         let buffer = terminal.backend().buffer().clone();

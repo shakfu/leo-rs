@@ -4,6 +4,34 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## Unreleased
 
+### Added
+
+- **MCP access to the open outline.** With `mcp = true` in the settings, the running app serves its outline to MCP clients on 127.0.0.1, over streamable HTTP, behind a bearer token and a check that `Host` and `Origin` are local. Clients read nodes by gnx, search, and see the selection; with `mcp-edit` they change headlines and bodies and insert, move, delete and select nodes, each an undo step, and with `mcp-save` they save. Off by default, and read-only once on. The tools are answered on the app's own thread, so an edit lands in the live outline, not in the file behind it.
+
+- **A settings dialog, and a settings file both front ends share.** `~/.config/leotui/config.toml` is renamed to `settings.toml` on first start. leoegui's File > Settings... edits appearance, themes, editor defaults (`number`, `wrap`, `syntax`), keys, language servers and MCP, and writes only what changed. `lsp = false` starts no language server; the dialog turning it off stops the running ones.
+
+- **leoegui, a desktop front end.** The same keys, commands, settings and themes as leotui, drawn by egui in a monospace grid, with clicks and the wheel in NORMAL. On macOS Cmd and Control both act as Ctrl; Leo's `qt-mac-dont-swap-ctrl-and-meta = true` leaves Cmd unbound. `--press KEYS --screenshot out.ppm` saves one frame. View > Appearance switches between a dark theme (`theme`) and a light one (`theme-light`), or follows the system. Why egui over gpui is in `docs/dev/leogui.md`.
+
+- **Language servers, in both front ends.** A server named in the settings (`lsp-python = "pylsp"`) sees each external file as leolib writes it, and its answers come back in body rows: diagnostics underlined and on the status line, `K` hover, `Ctrl-]` definition, `]d` `[d`, `:lsp-diagnostics`, and `:lsp-rename NAME` across every node of a file as one undo. No server starts unless named, because a server runs code from the project it is pointed at. An edit that would cross a sentinel line, reach a file the outline does not hold, or apply to text changed since the request is refused whole.
+
+- **`leolib::goto::line_map_of`**: an external file's text, each line mapped to its node, body row and `@others` indent. A file the sentinel writer does not write, such as `@edit` or a markdown `@auto`, has no map rather than a guessed one.
+
+### Fixed
+
+- **An inheriting Helix theme now takes its own palette.** A variant that is `inherits` plus a `[palette]`, as `catppuccin_latte` and `rose_pine_dawn` are, drew its parent's scopes in the parent's colours: each file's scopes were resolved with that file's palette before the chain was merged. Palettes are merged first now, child over parent, as Helix does, so a light variant is light in leotui too.
+
+### Changed
+
+- **The outline takes Leo's own keys.** `Ctrl-r` `Ctrl-l` `Ctrl-u` `Ctrl-d` move the node right, left, up and down, as Leo's `move-outline-*`, where they were vim's redo and half pages; the body keeps vim's. Leo's Alt-arrows navigate and Alt-Shift-arrows move from either pane, `Ctrl-Shift-c` `-x` `-v` `-d` copy, cut, paste and extract a node, `Ctrl-{` `Ctrl-}` promote and demote, and `Alt-d` `Alt-t` `Ctrl-t` `Ctrl-g` are Leo's pane keys and keyboard-quit. Leo leaves go-back and go-forward unbound, so they move from Alt-arrows to `H` and `L` in the outline. This reverses `tui-design.md`'s rule that a Ctrl key means the same in both panes: Leo's outline keys win in the outline. While a headline is being typed, those chords keep the headline and act on the node, as in Leo's headline editor, where they were swallowed: a new node can be indented before it is named.
+
+- **On macOS, leoegui's Cmd is Leo's Ctrl.** A Cmd chord the outline binds runs from either pane, so `Cmd-R` indents the node from the body too, as in Leo; any other Cmd chord is Ctrl. Control keeps leotui's meaning. Before, Cmd and Control were both Ctrl, and `Cmd-R` was redo.
+
+- **leoegui reads more of a Helix theme.** The mode badge, cursor, selection, gutter, tabs, menus, popups, help, separators and indent guides take Helix's scopes for them (`ui.statusline.insert`, `ui.cursor.primary`, `ui.bufferline.active`, ...), and diagnostics take `diagnostic.*`'s underline colour and style, wavy for `curl`. View > Theme... lists the themes on disk as dark or light, previews the one under the pointer, and saves the one clicked for the current appearance. leotui still draws colours, bold and italic only.
+
+- **A large outline or body no longer slows every redraw.** The outline's rows are walked again only when its shape, its folds or the hoist change (`Outline::expansion` counts folds), and only the rows on screen are built: a frame of a 21,000-node outline went from 6.2 ms to 0.2 ms. A body over 500 lines recolours only near an edit while you type, and whole once typing pauses for 300 ms: a key in a 5,000-line body went from 35 ms to 1.8 ms.
+
+- **New crate `leoapp`: leotui without its renderer.** The app state, vim editor, commands, bindings, search, colouring and theme moved out of leotui, which keeps only the ratatui drawing and the terminal loop. A GUI front end can reuse them; see `docs/dev/leogui.md`. `leoapp::keys` defines its own `KeyCode`, `KeyModifiers` and `KeyEvent`, so crossterm is a leotui dependency only. No behaviour changes.
+
 ## [0.6.0]
 
 ### Added

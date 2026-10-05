@@ -83,6 +83,10 @@ impl App {
                 Ok(n) => self.goto_global_line(n),
                 Err(_) => self.message = "usage: :goto-global-line N".to_string(),
             },
+            "lsp-rename" => match parsed.arg.trim() {
+                "" => self.message = "usage: :lsp-rename NAME".to_string(),
+                name => self.lsp_request(leolsp::Request::Rename(name.to_string())),
+            },
             "set" => self.set_options(&parsed.arg),
             "nohlsearch" | "noh" => self.hlsearch = None,
             "clone-find-all" => self.clone_find_all(&parsed.arg, false),

@@ -6,7 +6,7 @@
 #
 #     make corpus LEO_EDITOR=~/projects/leo-editor
 
-.PHONY: test corpus bench build release fmt lint audit check run dump clean
+.PHONY: test corpus bench build release fmt lint audit check run gui dump clean
 
 test:
 	cargo test --workspace
@@ -41,6 +41,10 @@ check: lint test
 
 run:
 	cargo run -p leotui -- $(FILE)
+
+# Release: egui's debug build is slow to draw.
+gui:
+	cargo run --release -p leoegui -- $(FILE)
 
 dump:
 	cargo run -q -p leotui -- $(FILE) --dump
