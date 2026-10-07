@@ -301,7 +301,9 @@ impl App {
             false => None,
         };
         if let Some(language) = language {
-            view.spans = self.colouring.of(&view.lines, &language);
+            let node = self.current.gnx(self.doc.outline());
+            let visible = top..top + v.rows;
+            view.spans = self.colouring.of(node, &view.lines, &language, visible);
         }
         view
     }

@@ -18,9 +18,8 @@ impl App {
     /// Sync the servers and act on what they sent. True if anything changed
     /// that a front end draws. Call it often: every frame, or every tick.
     pub fn poll(&mut self) -> bool {
-        // A partial colouring whose pause is over: the next draw makes it
-        // whole, so ask for one.
-        let recolour = self.colouring.due_in().is_some_and(|d| d.is_zero());
+        // A whole colouring made on a thread, ready to draw.
+        let recolour = self.colouring.poll();
         let called = self.poll_mcp();
         let Some(lsp) = self.lsp.as_mut() else {
             return recolour || called;
@@ -73,7 +72,8 @@ impl App {
     }
 
     /// When `poll` next has work it cannot do yet: the end of a debounce,
-    /// or of the pause before a partial colouring is made whole.
+    /// or of the pause before a partial colouring is made whole, or a look at
+    /// the thread making it.
     pub fn poll_after(&self) -> Option<Duration> {
         let sync = self
             .lsp_dirty_since

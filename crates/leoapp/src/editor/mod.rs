@@ -686,6 +686,15 @@ pub fn split(body: &str) -> Vec<String> {
     lines
 }
 
+/// `split(body).len()`, without allocating.
+pub fn line_count(body: &str) -> usize {
+    let n = body.bytes().filter(|&b| b == b'\n').count() + 1;
+    match n > 1 && body.ends_with('\n') {
+        true => n - 1,
+        false => n,
+    }
+}
+
 pub fn join(lines: &[String]) -> String {
     if lines.len() == 1 && lines[0].is_empty() {
         return String::new();
@@ -705,5 +714,12 @@ mod tests {
         assert_eq!(word_start_before("foo..", 5), 3);
         assert_eq!(word_start_before("   ", 3), 0);
         assert_eq!(word_start_before("", 0), 0);
+    }
+
+    #[test]
+    fn line_count_agrees_with_split() {
+        for body in ["", "\n", "a", "a\n", "a\nb", "a\nb\n", "\n\n", "a\n\n"] {
+            assert_eq!(line_count(body), split(body).len(), "{body:?}");
+        }
     }
 }

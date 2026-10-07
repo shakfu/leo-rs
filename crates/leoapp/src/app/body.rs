@@ -65,6 +65,14 @@ impl App {
         }
     }
 
+    /// `body_buffer().len()`, without splitting the body.
+    pub fn body_line_count(&self) -> usize {
+        match &self.buffer {
+            Some(lines) => lines.len(),
+            None => editor::line_count(self.current.b(self.outline())),
+        }
+    }
+
     /// Write the body back as one change, which is one undo bead.
     pub(super) fn commit_body(&mut self, lines: &[String]) {
         let p = self.current.clone();

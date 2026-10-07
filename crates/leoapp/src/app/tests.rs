@@ -2092,3 +2092,25 @@ fn a_file_imports_as_an_auto_tree_from_the_command_line() {
     // The importer split it: the def is a child.
     assert!(app.current.has_children(app.outline()));
 }
+
+#[test]
+fn a_long_body_is_coloured_whole_by_a_later_poll() {
+    let mut app = app();
+    let root = app.outline().root_position().unwrap();
+    let body: String = (0..800)
+        .map(|i| format!("x{i} = 'text'  # note\n"))
+        .collect();
+    app.doc
+        .set_body(&root, &format!("@language python\n{body}"));
+    let screen = crate::view::Viewport { rows: 20, cols: 80 };
+    let first = app.body_view(screen);
+    let whole = crate::highlight::highlight(&first.lines, "python");
+    assert_ne!(*first.spans, whole, "only the screen is coloured at first");
+    let start = std::time::Instant::now();
+    while !app.poll() {
+        assert!(start.elapsed().as_secs() < 10, "never finished");
+        assert!(app.poll_after().is_some(), "a front end would not wake");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(*app.body_view(screen).spans, whole);
+}

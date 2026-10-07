@@ -15,9 +15,13 @@
 //! Both live here rather than in `leolib` for the reason Leo keeps
 //! `leoColorizer` out of its model: colouring is a view's business.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::ops::Range;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU8, Ordering::SeqCst};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use leolib::outline::set_delims_from_language;
@@ -201,23 +205,102 @@ struct Region {
     language: String,
 }
 
-/// A body's colouring, and the text it was made from.
+/// The colourings of the bodies last shown, and the text each was made from.
 ///
 /// `highlight` parses the whole body, and the body pane redraws on every key.
 /// A node holding a function costs microseconds; an `@edit` node holds a whole
 /// file in one body, where the parse costs tens of milliseconds: 35 ms a key
 /// at 5,000 lines. So past `WHOLE_UNDER` lines an edit recolours only the
 /// lines it changed, with `CONTEXT` lines either side, and keeps the rest;
-/// the whole body is coloured again once typing has paused for `SETTLE`.
+/// the whole body is coloured again once typing has paused for `SETTLE`. A
+/// body seen for the first time is coloured on screen first. The whole
+/// colouring is made on the `worker` thread, and `poll` puts it in. `KEEP` bodies are
+/// kept, so switching back to one is free. Only the shown body is coloured
+/// whole: a hidden one keeps what it has, and is asked for again when shown.
 #[derive(Default)]
 pub struct Colouring {
-    key: Option<u64>,
+    /// Most recently used first.
+    entries: Vec<Entry>,
+}
+
+/// One body's colouring.
+struct Entry {
+    /// The node's gnx.
+    node: String,
     spans: Rc<Vec<Vec<Span>>>,
-    /// The text and language `spans` colour, to find what an edit changed.
-    lines: Vec<String>,
+    /// The text and language `spans` colour: the cache key, compared rather
+    /// than hashed, and what an edit is measured against.
+    lines: Arc<Vec<String>>,
     language: String,
-    /// When `spans` became partial: the whole body is due `SETTLE` later.
-    partial_since: Option<Instant>,
+    /// When a partial colouring is due to be made whole.
+    due: Option<Instant>,
+    /// The whole colouring of `lines`, asked of the worker.
+    job: Option<Pending>,
+}
+
+/// A whole colouring asked of the worker. Hiding the body marks it
+/// `UNWANTED`, so the worker skips it if it has not begun; one begun is
+/// finished and kept for when the body is shown again.
+struct Pending {
+    receive: Receiver<Vec<Vec<Span>>>,
+    state: Arc<AtomicU8>,
+}
+
+/// A job's state, shared by the entry and the worker.
+const WANTED: u8 = 0;
+const UNWANTED: u8 = 1;
+const STARTED: u8 = 2;
+const SKIPPED: u8 = 3;
+
+impl Pending {
+    /// Move the state from `from` to `to`, if it is still `from`.
+    fn set(&self, from: u8, to: u8) {
+        let _ = self.state.compare_exchange(from, to, SeqCst, SeqCst);
+    }
+}
+
+impl Drop for Pending {
+    /// Dropped after an edit or out of the cache: nobody can receive it.
+    fn drop(&mut self) {
+        self.set(WANTED, UNWANTED);
+    }
+}
+
+/// A body for the worker to colour whole.
+struct Job {
+    lines: Arc<Vec<String>>,
+    language: String,
+    state: Arc<AtomicU8>,
+    reply: Sender<Vec<Vec<Span>>>,
+}
+
+/// The one thread that colours bodies whole, for every outline open. Jobs
+/// run in order, and one nobody wants any more is skipped.
+fn worker() -> &'static Sender<Job> {
+    static WORKER: OnceLock<Sender<Job>> = OnceLock::new();
+    WORKER.get_or_init(|| {
+        let (send, receive) = mpsc::channel::<Job>();
+        thread::Builder::new()
+            .name("colouring".into())
+            .spawn(move || {
+                for job in receive {
+                    let start = job.state.compare_exchange(WANTED, STARTED, SeqCst, SeqCst);
+                    if start.is_err() {
+                        job.state.store(SKIPPED, SeqCst);
+                        continue;
+                    }
+                    // A panic drops the reply, and the entry keeps its
+                    // partial colouring; the worker lives on for the rest.
+                    let spans =
+                        catch_unwind(AssertUnwindSafe(|| highlight(&job.lines, &job.language)));
+                    if let Ok(spans) = spans {
+                        let _ = job.reply.send(spans);
+                    }
+                }
+            })
+            .expect("start the colouring thread");
+        send
+    })
 }
 
 /// A body this short is coloured whole on every change.
@@ -227,44 +310,142 @@ const WHOLE_UNDER: usize = 500;
 const CONTEXT: usize = 20;
 /// How long typing must pause before a partial colouring is made whole.
 pub const SETTLE: Duration = Duration::from_millis(300);
+/// How many bodies' colourings are kept.
+const KEEP: usize = 4;
+/// How often to look for a whole colouring being made on a thread.
+const JOB_POLL: Duration = Duration::from_millis(10);
 
 impl Colouring {
-    /// The colouring of `lines`, recomputed only when they have changed, and
-    /// only near the change in a long body until typing pauses.
-    pub fn of(&mut self, lines: &[String], language: &str) -> Rc<Vec<Vec<Span>>> {
-        let mut hasher = DefaultHasher::new();
-        language.hash(&mut hasher);
-        lines.hash(&mut hasher);
-        let key = Some(hasher.finish());
-        let settled = self.partial_since.is_some_and(|t| t.elapsed() >= SETTLE);
-        if key == self.key && !settled {
-            return Rc::clone(&self.spans);
-        }
-        let partial = key != self.key
-            && lines.len() > WHOLE_UNDER
-            && self.language == language
-            && !self.lines.is_empty();
-        let spans = match partial {
-            true => {
-                self.partial_since = Some(Instant::now());
-                patch(&self.lines, &self.spans, lines, language)
-            }
-            false => {
-                self.partial_since = None;
-                highlight(lines, language)
-            }
+    /// The colouring of `lines`, the body of `node`, recomputed only when they
+    /// have changed. In a long body only the lines near a change, or the
+    /// `visible` ones on a first visit, are coloured until the whole is ready.
+    pub fn of(
+        &mut self,
+        node: &str,
+        lines: &[String],
+        language: &str,
+        visible: Range<usize>,
+    ) -> Rc<Vec<Vec<Span>>> {
+        let now = Instant::now();
+        let at = self.entries.iter().position(|e| e.node == node);
+        let mut entry = match at {
+            Some(i) => self.entries.remove(i),
+            None => Entry {
+                node: node.to_string(),
+                spans: Rc::default(),
+                lines: Arc::default(),
+                language: String::new(),
+                due: None,
+                job: None,
+            },
         };
-        self.key = key;
-        self.spans = Rc::new(spans);
-        self.lines = lines.to_vec();
-        self.language = language.to_string();
-        Rc::clone(&self.spans)
+        if let Some(job) = &entry.job {
+            job.set(UNWANTED, WANTED);
+        }
+        entry.collect();
+        if entry.language != language || entry.lines.as_slice() != lines {
+            let long = lines.len() > WHOLE_UNDER;
+            let (spans, due) = if long && entry.language == language && !entry.lines.is_empty() {
+                let spans = patch(&entry.lines, &entry.spans, lines, language);
+                (spans, Some(now + SETTLE))
+            } else if long {
+                let (a, b) = (visible.start.min(lines.len()), visible.end.min(lines.len()));
+                (highlight_window(lines, language, a, b), Some(now))
+            } else {
+                (highlight(lines, language), None)
+            };
+            entry.spans = Rc::new(spans);
+            entry.due = due;
+            entry.job = None;
+            entry.lines = Arc::new(lines.to_vec());
+            entry.language = language.to_string();
+        }
+        entry.start_if_due(now);
+        let spans = Rc::clone(&entry.spans);
+        if let Some(hidden) = self.entries.first_mut() {
+            hidden.collect();
+            if let Some(job) = &hidden.job {
+                job.set(WANTED, UNWANTED);
+            }
+        }
+        self.entries.insert(0, entry);
+        self.entries.truncate(KEEP);
+        spans
     }
 
-    /// How long until a partial colouring is due to be made whole, if one is.
+    /// Put in the shown body's whole colouring if the worker has made it, or
+    /// ask for it if it is due. True if the colouring changed.
+    pub fn poll(&mut self) -> bool {
+        let Some(entry) = self.entries.first_mut() else {
+            return false;
+        };
+        let changed = entry.collect();
+        entry.start_if_due(Instant::now());
+        changed
+    }
+
+    /// How long until `poll` has work for the shown body, if it will have any.
     pub fn due_in(&self) -> Option<Duration> {
-        self.partial_since
-            .map(|t| SETTLE.saturating_sub(t.elapsed()))
+        let entry = self.entries.first()?;
+        match entry.job {
+            Some(_) => Some(JOB_POLL),
+            None => Some(entry.due?.saturating_duration_since(Instant::now())),
+        }
+    }
+
+    /// Wait for the shown body's whole colouring, as a frame later would get it.
+    #[cfg(test)]
+    fn wait(&mut self) {
+        let entry = &mut self.entries[0];
+        entry.start_if_due(Instant::now());
+        let spans = entry.job.take().unwrap().receive.recv().unwrap();
+        entry.spans = Rc::new(spans);
+        entry.due = None;
+    }
+}
+
+impl Entry {
+    /// Ask the worker to colour `lines` whole, if that is due and not asked.
+    fn start_if_due(&mut self, now: Instant) {
+        if self.job.is_some() || !self.due.is_some_and(|t| t <= now) {
+            return;
+        }
+        let (reply, receive) = mpsc::channel();
+        let state = Arc::new(AtomicU8::new(WANTED));
+        // A failed send drops `reply`, which `collect` sees as a failure.
+        let _ = worker().send(Job {
+            lines: Arc::clone(&self.lines),
+            language: self.language.clone(),
+            state: Arc::clone(&state),
+            reply,
+        });
+        self.job = Some(Pending { receive, state });
+    }
+
+    /// Put in the worker's whole colouring, if it is done. True if it was.
+    fn collect(&mut self) -> bool {
+        let Some(job) = &self.job else { return false };
+        match job.receive.try_recv() {
+            Ok(spans) => {
+                self.spans = Rc::new(spans);
+                self.due = None;
+                self.job = None;
+                true
+            }
+            Err(TryRecvError::Empty) => false,
+            // Skipped while hidden: still due, so asked again when shown.
+            Err(TryRecvError::Disconnected) if job.state.load(SeqCst) == SKIPPED => {
+                self.job = None;
+                false
+            }
+            // The colouring panicked, or the worker is gone: keep the
+            // partial colouring rather than ask for another that would fail.
+            Err(TryRecvError::Disconnected) => {
+                self.due = None;
+                self.job = None;
+                false
+            }
+        }
     }
 }
 
@@ -288,14 +469,14 @@ fn patch(
         .count();
     let (a, b) = (prefix, new.len() - suffix);
     let mut out: Vec<Vec<Span>> = old_spans[..prefix].to_vec();
-    out.extend(highlight_window(new, language, a, b));
+    out.extend(highlight_window(new, language, a, b).drain(a..b));
     out.extend_from_slice(&old_spans[old.len() - suffix..]);
     out
 }
 
-/// The colouring of lines `a..b` of `lines`, parsing only those and
-/// `CONTEXT` lines either side. Leo's directives and the regions they cut
-/// are found in the whole body, which is a scan and cheap.
+/// The colouring of `lines` with only lines `a..b` parsed, and `CONTEXT`
+/// lines either side. Leo's directives and the regions they cut are found in
+/// the whole body, which is a scan and cheap.
 fn highlight_window(lines: &[String], language: &str, a: usize, b: usize) -> Vec<Vec<Span>> {
     let mut out: Vec<Vec<Span>> = vec![Vec::new(); lines.len()];
     let (masked, regions) = plan(lines, language, &mut out);
@@ -320,7 +501,7 @@ fn highlight_window(lines: &[String], language: &str, a: usize, b: usize) -> Vec
             }
         }
     }
-    out.drain(a..b).collect()
+    out
 }
 
 /// Colour a body.
@@ -733,15 +914,23 @@ mod tests {
             .collect()
     }
 
+    /// `body` coloured whole as node `n`, as after its first visit settles.
+    fn settled(c: &mut Colouring, body: &[String]) -> Rc<Vec<Vec<Span>>> {
+        c.of("n", body, "python", 0..50);
+        c.wait();
+        let whole = c.of("n", body, "python", 0..50);
+        assert!(c.due_in().is_none());
+        whole
+    }
+
     #[test]
     fn an_edit_to_a_long_body_recolours_near_it_as_the_whole_would() {
         let mut c = Colouring::default();
         let mut body = long_body();
-        c.of(&body, "python");
-        assert!(c.due_in().is_none());
+        settled(&mut c, &body);
         body[400] = "def changed(y):  return 'text'\n".to_string();
         body.insert(401, "x = 1\n".to_string());
-        let partial = c.of(&body, "python");
+        let partial = c.of("n", &body, "python", 0..50);
         assert!(
             c.due_in().is_some(),
             "a long body is coloured near the edit first"
@@ -753,16 +942,17 @@ mod tests {
     fn a_partial_colouring_is_made_whole_after_the_pause() {
         let mut c = Colouring::default();
         let mut body = long_body();
-        c.of(&body, "python");
+        settled(&mut c, &body);
         // A string opened and never closed turns every later line into
         // string, far past the window: only the whole colouring can know.
         body[100] = "s = \"\"\"\n".to_string();
-        let partial = c.of(&body, "python");
+        let partial = c.of("n", &body, "python", 0..50);
         let whole = highlight(&body, "python");
         assert_ne!(*partial, whole);
-        c.partial_since = Some(Instant::now() - SETTLE);
+        c.entries[0].due = Some(Instant::now());
         assert_eq!(c.due_in(), Some(Duration::ZERO));
-        assert_eq!(*c.of(&body, "python"), whole);
+        c.wait();
+        assert_eq!(*c.of("n", &body, "python", 0..50), whole);
         assert!(c.due_in().is_none());
     }
 
@@ -770,10 +960,176 @@ mod tests {
     fn a_short_body_is_always_coloured_whole() {
         let mut c = Colouring::default();
         let mut body = lines("x = 1\ny = 2");
-        c.of(&body, "python");
-        body[1] = "y = 'two'".to_string();
-        assert_eq!(*c.of(&body, "python"), highlight(&body, "python"));
+        c.of("n", &body, "python", 0..50);
         assert!(c.due_in().is_none());
+        body[1] = "y = 'two'".to_string();
+        assert_eq!(
+            *c.of("n", &body, "python", 0..50),
+            highlight(&body, "python")
+        );
+        assert!(c.due_in().is_none());
+    }
+
+    #[test]
+    fn a_long_body_is_coloured_on_screen_first_and_whole_next() {
+        let mut c = Colouring::default();
+        let body = long_body();
+        let whole = highlight(&body, "python");
+        let first = c.of("n", &body, "python", 300..350);
+        assert_eq!(first[300..350], whole[300..350]);
+        assert!(first[..300 - CONTEXT].iter().all(|l| l.is_empty()));
+        assert!(first[350 + CONTEXT..].iter().all(|l| l.is_empty()));
+        assert!(c.entries[0].job.is_some(), "the whole is begun at once");
+        c.wait();
+        assert_eq!(*c.of("n", &body, "python", 300..350), whole);
+        assert!(c.due_in().is_none());
+    }
+
+    #[test]
+    fn switching_back_to_a_kept_body_does_not_recolour_it() {
+        let mut c = Colouring::default();
+        let (a, b) = (long_body(), lines("x = 1"));
+        let first = settled(&mut c, &a);
+        c.of("b", &b, "python", 0..50);
+        assert!(Rc::ptr_eq(&first, &c.of("n", &a, "python", 0..50)));
+        assert!(c.due_in().is_none());
+    }
+
+    #[test]
+    fn a_body_pushed_out_of_the_cache_is_coloured_again() {
+        let mut c = Colouring::default();
+        let a = lines("x = 1");
+        let first = c.of("a", &a, "python", 0..50);
+        for k in 0..KEEP {
+            c.of(&k.to_string(), &a, "python", 0..50);
+        }
+        assert!(!Rc::ptr_eq(&first, &c.of("a", &a, "python", 0..50)));
+    }
+
+    #[test]
+    fn poll_puts_in_the_whole_colouring_when_the_worker_is_done() {
+        let mut c = Colouring::default();
+        let body = long_body();
+        c.of("n", &body, "python", 0..50);
+        let start = Instant::now();
+        while !c.poll() {
+            assert!(start.elapsed() < Duration::from_secs(10), "never finished");
+            assert_eq!(c.due_in(), Some(JOB_POLL));
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(c.due_in().is_none());
+        assert_eq!(
+            *c.of("n", &body, "python", 0..50),
+            highlight(&body, "python")
+        );
+    }
+
+    #[test]
+    fn an_edit_drops_the_whole_colouring_of_the_text_before_it() {
+        let mut c = Colouring::default();
+        let mut body = long_body();
+        c.of("n", &body, "python", 0..50);
+        body[10] = "s = 1\n".to_string();
+        c.of("n", &body, "python", 0..50);
+        assert!(c.entries[0].job.is_none(), "the old text's job is dropped");
+        assert!(c.due_in().is_some_and(|d| d > Duration::ZERO));
+    }
+
+    #[test]
+    fn the_worker_skips_a_job_nobody_wants() {
+        let job = |state: u8| {
+            let (reply, receive) = mpsc::channel();
+            let state = Arc::new(AtomicU8::new(state));
+            let job = Job {
+                lines: Arc::new(lines("x = 1")),
+                language: "python".into(),
+                state: Arc::clone(&state),
+                reply,
+            };
+            worker().send(job).unwrap();
+            (receive, state)
+        };
+        let (unwanted, unwanted_state) = job(UNWANTED);
+        let (wanted, wanted_state) = job(WANTED);
+        assert!(wanted.recv().is_ok());
+        assert_eq!(wanted_state.load(SeqCst), STARTED);
+        // Jobs run in order, so the first is settled by now.
+        assert!(unwanted.recv().is_err(), "skipped, so no reply");
+        assert_eq!(unwanted_state.load(SeqCst), SKIPPED);
+    }
+
+    /// Show the long body `n`, then `b`, with `n`'s job replaced by one the
+    /// test answers in place of the worker.
+    fn hide_with_a_fake_job(c: &mut Colouring) -> (Sender<Vec<Vec<Span>>>, Arc<AtomicU8>) {
+        c.of("n", &long_body(), "python", 0..50);
+        let (reply, receive) = mpsc::channel();
+        let state = Arc::new(AtomicU8::new(WANTED));
+        c.entries[0].job = Some(Pending {
+            receive,
+            state: Arc::clone(&state),
+        });
+        c.of("b", &lines("x = 1"), "python", 0..50);
+        (reply, state)
+    }
+
+    #[test]
+    fn hiding_a_body_unwants_its_job_and_showing_it_wants_it_again() {
+        let mut c = Colouring::default();
+        let (_reply, state) = hide_with_a_fake_job(&mut c);
+        assert_eq!(state.load(SeqCst), UNWANTED);
+        assert!(c.entries[1].job.is_some(), "kept, in case it has begun");
+        c.of("n", &long_body(), "python", 0..50);
+        assert_eq!(state.load(SeqCst), WANTED);
+    }
+
+    #[test]
+    fn a_colouring_finished_while_hidden_is_kept() {
+        let mut c = Colouring::default();
+        let (reply, state) = hide_with_a_fake_job(&mut c);
+        state.store(STARTED, SeqCst);
+        let whole = highlight(&long_body(), "python");
+        reply.send(whole.clone()).unwrap();
+        assert_eq!(*c.of("n", &long_body(), "python", 0..50), whole);
+        assert!(c.due_in().is_none());
+    }
+
+    #[test]
+    fn a_job_skipped_while_hidden_is_asked_again_when_shown() {
+        let mut c = Colouring::default();
+        let (reply, state) = hide_with_a_fake_job(&mut c);
+        state.store(SKIPPED, SeqCst);
+        drop(reply);
+        c.of("n", &long_body(), "python", 0..50);
+        let job = c.entries[0].job.as_ref().expect("asked again");
+        assert!(!Arc::ptr_eq(&job.state, &state));
+        c.wait();
+        assert_eq!(
+            *c.of("n", &long_body(), "python", 0..50),
+            highlight(&long_body(), "python")
+        );
+    }
+
+    #[test]
+    fn a_job_that_failed_is_not_asked_again() {
+        let mut c = Colouring::default();
+        let (reply, state) = hide_with_a_fake_job(&mut c);
+        state.store(STARTED, SeqCst);
+        drop(reply);
+        c.of("n", &long_body(), "python", 0..50);
+        assert!(c.entries[0].job.is_none());
+        assert!(c.due_in().is_none());
+    }
+
+    #[test]
+    fn only_the_shown_body_can_be_due() {
+        let mut c = Colouring::default();
+        c.of("n", &long_body(), "python", 0..50);
+        assert!(c.due_in().is_some());
+        c.of("b", &lines("x = 1"), "python", 0..50);
+        assert!(
+            c.due_in().is_none(),
+            "a hidden partial body would wake for nothing"
+        );
     }
 
     /// The classified runs of one line, as (text, class).
@@ -1224,11 +1580,17 @@ mod tests {
     fn the_kept_colouring_follows_an_edit_and_a_language_change() {
         let mut colouring = Colouring::default();
         let src = lines("def f():");
-        assert_eq!(colouring.of(&src, "python")[0][0].class, Class::Keyword);
+        assert_eq!(
+            colouring.of("n", &src, "python", 0..50)[0][0].class,
+            Class::Keyword
+        );
         let src = lines("# f");
-        assert_eq!(colouring.of(&src, "python")[0][0].class, Class::Comment);
+        assert_eq!(
+            colouring.of("n", &src, "python", 0..50)[0][0].class,
+            Class::Comment
+        );
         // The same text again, in a language that has no comment delimiter.
-        assert!(colouring.of(&src, "not_a_language")[0].is_empty());
+        assert!(colouring.of("n", &src, "not_a_language", 0..50)[0].is_empty());
     }
 
     #[test]

@@ -49,7 +49,7 @@ impl Editor {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, colours.bg);
 
-        let digits = app.body_buffer().len().max(1).to_string().len() + 1;
+        let digits = app.body_line_count().max(1).to_string().len() + 1;
         let gutter = if app.options.number {
             (digits + 2) as f32 * cell.x
         } else {

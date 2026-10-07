@@ -666,9 +666,6 @@ impl eframe::App for Gui {
             }
         }
         self.app.poll();
-        if let Some(after) = self.app.poll_after() {
-            ctx.request_repaint_after(after);
-        }
         // An outline not shown still hears from its servers and clients.
         for parked in self.outlines.iter_mut().flatten() {
             parked.app.poll();
@@ -841,6 +838,10 @@ impl eframe::App for Gui {
                 }
             }
             None => {}
+        }
+        // After drawing: drawing a body can make its colouring due.
+        if let Some(after) = self.app.poll_after() {
+            ctx.request_repaint_after(after);
         }
         drop_hint(&ctx, &colours);
         self.settle_quits(&ctx);
