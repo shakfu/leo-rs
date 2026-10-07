@@ -149,17 +149,19 @@ def test_add():
 ```
 ````
 
-`entangled tangle`, or `:entangled-tangle`, writes `tests/test_readme.py`; pytest runs it. An example that cannot run alone is simply not referenced. To verify: entangled indents an expansion to its reference's column, as Leo's section references do.
+`entangled tangle`, or `:entangled-tangle`, writes `tests/test_readme.py`; pytest runs it. An example that cannot run alone is simply not referenced. entangled indents an expansion to its reference's column, as Leo's section references do: checked 2026-10-07 with entangled 0.2.1, and the example indents its blank lines too, which Python ignores.
+
+`demo/entangled/` is a working copy of this: a README documenting a small library, a `tests.md` harness tangled to `test_readme.py`, and `demo.leo` holding both. `corpus.rs` and `make_corpus.py` skip that directory: every other `.leo` file under `demo/` must match Python Leo, and Leo reads `@entangled` as a plain node.
 
 ## Plan
 
 1. **Clone conflicts, in leolib.** Done 2026-10-07: a clone two files disagree on is reported on read, and both texts kept under `Recovered Nodes` (`docs/dev/porting-notes.md`). Python Leo keeps the last file's text without a word.
 2. **Phase 1: the kind, in leolib.** Done 2026-10-07 (`crates/leolib/src/entangled.rs`, tests in `crates/leolib/tests/entangled.rs`), with leolsp serving each fence node as a document in its language. Recognising `@entangled`, the scanner, the tree above, the exact writer and its read-time check, fence languages. Tests: round trips over entangled-rs's `examples/` and edge cases (underlined headings, `~~~` and four-backtick fences, indented fences, front matter, CRLF). Python Leo knows nothing of the kind, so the Leo corpus cannot check it.
-3. **Phase 1b: renaming, in leolib and leoapp**, as above.
+3. **Phase 1b: renaming, in leolib and leoapp**, as above. Done 2026-10-07: `entangled::plan_rename` works out every edit before any is made, `Document::rename_entangled_block` applies them as one undo step, and the headline edit and MCP's `set_headline` go through it. A block named only by `file=` is refused. Checked on `demo/entangled/`: entangled 0.2.1 tangles and checks the renamed documents, and the tests pass.
 4. **Open a real document.** An entangled document from entangled-rs's `examples/`: does the outline read well?
-5. **Phase 2: `:entangled-tangle` and `:entangled-check`**, through the CLI.
+5. **Phase 2: `:entangled-tangle` and `:entangled-check`**, through the CLI. Done 2026-10-07 (`crates/leoapp/src/app/entangled.rs`): run on a thread, unsaved `@entangled` files written first, output in `:messages`, the program set by `entangled`. Checked against entangled-rs's `literate-crypto` example: an edit in a fence node reached the tangled `ciphers.py`.
 6. **Phase 3: `include=`**, in leolib.
-7. **Phase 4: the Python harness.** The convention above, a demo in `demo/`, and the indentation check.
+7. **Phase 4: the Python harness.** Done 2026-10-07: `demo/entangled/`, its tests passing under entangled 0.2.1, a stale example making its test fail, and the indentation checked.
 
 Linking entangled-rs in-process waits for its 0.3.0, with the reduced dependencies.
 

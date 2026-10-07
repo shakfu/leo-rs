@@ -147,6 +147,9 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Gui("Code Actions...", Action::CodeActions, "Ctrl-."),
             Run("Next Problem", "lsp-next-diagnostic"),
             Run("Previous Problem", "lsp-prev-diagnostic"),
+            Sep,
+            Run("Tangle with entangled", "entangled-tangle"),
+            Run("Check with entangled", "entangled-check"),
         ],
     ),
     (

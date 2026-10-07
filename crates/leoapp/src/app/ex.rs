@@ -90,6 +90,11 @@ impl App {
                     _ => self.message = "usage: :lsp-code-action [N]".to_string(),
                 }
             }
+            // Arguments go to entangled: `:entangled-tangle --force`.
+            "entangled-tangle" if !parsed.arg.is_empty() => {
+                self.run_entangled("tangle", &parsed.arg)
+            }
+            "entangled-check" if !parsed.arg.is_empty() => self.run_entangled("check", &parsed.arg),
             "lsp-rename" => match parsed.arg.trim() {
                 "" => self.message = "usage: :lsp-rename NAME".to_string(),
                 name => self.lsp_request(leolsp::Request::Rename(name.to_string())),

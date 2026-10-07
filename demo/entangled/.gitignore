@@ -1,0 +1,5 @@
+# Written by `entangled tangle`.
+test_readme.py
+.entangled/
+__pycache__/
+.pytest_cache/

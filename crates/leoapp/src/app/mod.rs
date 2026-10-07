@@ -21,6 +21,7 @@ use crate::search::{self, Direction, LastSearch, Scope};
 
 mod body;
 mod complete;
+mod entangled;
 pub use complete::CompletionMenu;
 pub use leolsp::Completion;
 mod ex;
@@ -223,6 +224,8 @@ pub struct App {
     /// waiting on the server was made at.
     pub completion: Option<CompletionMenu>,
     completion_asked: Option<(String, usize)>,
+    /// A run of the entangled command, until its result is collected.
+    entangled_job: Option<entangled::Job>,
     /// External files whose last read failed, by full path, and why.
     pub unread: std::collections::HashMap<String, String>,
     /// External files `check_disk` found changed by another program, by
@@ -497,6 +500,7 @@ impl App {
             code_action_selected: 0,
             completion: None,
             completion_asked: None,
+            entangled_job: None,
             unread: Default::default(),
             changed_on_disk: Vec::new(),
         };

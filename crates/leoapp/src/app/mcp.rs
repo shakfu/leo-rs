@@ -321,7 +321,12 @@ impl App {
     fn mcp_edit(&mut self, name: &str, args: &Value) -> Result<Value, String> {
         let p = self.by_gnx(string(args, "gnx")?)?;
         match name {
-            "set_headline" => self.doc.set_headline(&p, string(args, "headline")?),
+            "set_headline" => {
+                let headline = string(args, "headline")?;
+                if self.doc.rename_entangled_block(&p, headline)?.is_none() {
+                    self.doc.set_headline(&p, headline);
+                }
+            }
             "set_body" => self.doc.set_body(&p, string(args, "body")?),
             "select_node" => {
                 self.select(p);

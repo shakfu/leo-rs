@@ -10,6 +10,7 @@
 //! - `lsp`, off to start no language server, and `lsp-LANGUAGE`, the
 //!   command of the server for Leo's language `LANGUAGE`;
 //! - `mcp`, `mcp-edit`, `mcp-save`, `mcp-port`, `mcp-token`: the MCP server;
+//! - `entangled`, the command `:entangled-tangle` runs;
 //! - leogui's `qt-mac-dont-swap-ctrl-and-meta`.
 //!
 //! A line it does not understand is kept as a warning for the status line
@@ -136,6 +137,9 @@ pub struct Config {
     pub wrap: Option<bool>,
     pub syntax: Option<bool>,
     pub mcp: Mcp,
+    /// `entangled = "/usr/local/bin/entangled"`: the command `:entangled-tangle`
+    /// and `:entangled-check` run, split on blanks. `entangled` when unset.
+    pub entangled: Option<String>,
     /// Lines that were read but meant nothing, first one first.
     pub warnings: Vec<String>,
 }
@@ -154,6 +158,7 @@ impl Default for Config {
             wrap: None,
             syntax: None,
             mcp: Mcp::default(),
+            entangled: None,
             warnings: Vec::new(),
         }
     }
@@ -205,6 +210,10 @@ fn parse(text: &str) -> Config {
                 .warnings
                 .push(format!("config line {n}: theme is empty")),
             ("theme", name) => config.theme = Some(name.to_string()),
+            ("entangled", "") => config
+                .warnings
+                .push(format!("config line {n}: entangled is empty")),
+            ("entangled", command) => config.entangled = Some(command.to_string()),
             ("split-ratio", v) => match v.parse::<u16>() {
                 Ok(pct) => config.split_ratio = Some(pct.clamp(15, 85)),
                 Err(_) => config

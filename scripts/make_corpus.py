@@ -2,12 +2,13 @@
 """
 Build leolib's conformance corpus in demo/, from Python Leo.
 
-Every .leo file under demo/ is a case: an outline, beside the external files
-it names. For each one this writes <name>.expected.json, recording what
-Python leolib reads from it. leo-rs's crates/leolib/tests/corpus.rs checks
-the Rust leolib against those files and leo-editor's test_leolib_corpus.py
-checks the Python one, so each implementation is held to the same answers
-with no checkout of the other in the loop.
+Every .leo file under demo/, except the example in demo/entangled/, is a case:
+an outline, beside the external files it names. For each one this writes
+<name>.expected.json, recording what Python leolib reads from it. leo-rs's
+crates/leolib/tests/corpus.rs checks the Rust leolib against those files and
+leo-editor's test_leolib_corpus.py checks the Python one, so each
+implementation is held to the same answers with no checkout of the other in
+the loop.
 
     python3 scripts/make_corpus.py --leo-editor ~/projects/leo-editor
         Rewrite every expected file.
@@ -37,6 +38,8 @@ import sys
 from pathlib import Path
 
 DEMO = Path(__file__).resolve().parent.parent / 'demo'
+# An example, not a case: Python Leo reads its @entangled nodes as plain ones.
+EXAMPLE = DEMO / 'entangled'
 CASES = DEMO / 'cases'
 
 
@@ -449,6 +452,8 @@ def main():
 
     differ = []
     for leo_path in sorted(DEMO.rglob('*.leo')):
+        if EXAMPLE in leo_path.parents:
+            continue
         expected = leo_path.with_name(leo_path.stem + '.expected.json')
         text = dump(describe(leolib, leo_path))
         name = leo_path.relative_to(DEMO)

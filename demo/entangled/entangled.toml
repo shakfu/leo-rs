@@ -1,0 +1,3 @@
+version = "2.0"
+source_patterns = ["README.md", "tests.md"]
+namespace_default = "file"

@@ -301,6 +301,8 @@ mod tests {
         "lsp-code-action",
         "lsp-status",
         "lsp-diagnostics",
+        "entangled-tangle",
+        "entangled-check",
         "goto-visible-row",
         "theme",
         "import-at-file",

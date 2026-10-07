@@ -94,7 +94,7 @@ Nothing open.
 
 ### leolib
 
-- [ ] **Literate markdown with entangled**: the `@entangled` kind. Phase 1 is done: the kind, its CommonMark scanner, named fences as `<< name >>` nodes, the exact writer and its read-time check, and fence languages for colouring and the language servers. Next: renaming a fence node (1b), `:entangled-tangle` and `:entangled-check` through the CLI (2), `include=` (3), and the Python harness (4). Design and plan in `docs/dev/entangled_leo_backend.md`.
+- [ ] **Literate markdown with entangled**: the `@entangled` kind. Phase 1 is done: the kind, its CommonMark scanner, named fences as `<< name >>` nodes, the exact writer and its read-time check, and fence languages for colouring and the language servers. Phase 2 is done: `:entangled-tangle` and `:entangled-check` through the CLI. Phase 4 is done: `demo/entangled/` tests a README's examples through a `tests.md` harness. Phase 1b is done: editing a fence node's headline renames the block everywhere the outline names it, as one undo step. Left: `include=` (3), only if a need shows. Design and plan in `docs/dev/entangled_leo_backend.md`.
 
 - [ ] Port `@jupytext`. It is refused on read and write now. Leo reads a notebook as `@clean` over the `py:percent` text jupytext makes of it (`at.readOneAtJupytextNode`), and writes that text back through jupytext (`writeOneAtJupytextNode`). A port has to do the conversion both ways and keep the cells' outputs and metadata, which the text does not carry.
 

@@ -420,3 +420,224 @@ fn write_error(o: &Outline, v: VnodeId, detail: &str) -> Error {
         detail: format!("@entangled, under \"{}\": {detail}", o.node(v).h),
     }
 }
+
+/// What renaming a block changes, worked out before anything is changed.
+#[derive(Debug, Clone)]
+pub struct BlockRename {
+    /// The block's name before and after.
+    pub old: String,
+    /// The new name.
+    pub new: String,
+    /// Fences renamed: every part of the block in its document.
+    pub fences: usize,
+    /// entangled references rewritten.
+    pub references: usize,
+    /// Each node's new headline or body, in outline order.
+    pub edits: Vec<(Position, Option<String>, Option<String>)>,
+}
+
+static REF_LINE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^([ \t]*<<)([^<>]+)(>>[ \t]*\n?)$").unwrap());
+
+/// The name in a fence node's headline, `<< name >>`.
+fn headline_name(h: &str) -> Option<&str> {
+    let n = h.trim().strip_prefix("<< ")?.strip_suffix(" >>")?.trim();
+    (!n.is_empty()).then_some(n)
+}
+
+/// The `@entangled` node at or above p.
+fn entangled_root(o: &Outline, p: &Position) -> Option<Position> {
+    p.self_and_parents(o)
+        .into_iter()
+        .find(|a| a.is_at_entangled_node(o))
+}
+
+/// Whether p is a fence node: a `<< name >>` node under `@entangled` that
+/// is not a heading.
+pub fn is_fence_node(o: &Outline, p: &Position) -> bool {
+    headline_name(p.h(o)).is_some()
+        && get(o, p.v, HEADING).is_none()
+        && p.parent(o).is_some_and(|q| entangled_root(o, &q).is_some())
+}
+
+/// Plan renaming the block whose fence node p is to the name in
+/// `new_headline` (`<< name >>`, or the bare name). None if p is not a fence
+/// node or the name is unchanged; an error says why the rename is refused.
+pub fn plan_rename(
+    o: &Outline,
+    p: &Position,
+    new_headline: &str,
+) -> std::result::Result<Option<BlockRename>, String> {
+    if !is_fence_node(o, p) {
+        return Ok(None);
+    }
+    let old = headline_name(p.h(o)).expect("a fence node").to_string();
+    let new = headline_name(new_headline)
+        .unwrap_or(new_headline.trim())
+        .to_string();
+    if new == old {
+        return Ok(None);
+    }
+    if new.is_empty() || new.contains(char::is_whitespace) || new.contains(['<', '>']) {
+        return Err(format!(
+            "an entangled name has no spaces or angle brackets: {new:?}"
+        ));
+    }
+    let root = entangled_root(o, p).expect("a fence node");
+    let mut edits: Vec<(Position, Option<String>, Option<String>)> = Vec::new();
+    let mut fences = 0;
+    // Every part of the block in its document: the name in its fence line,
+    // or in a Quarto `#| label:` line, and the reference to it.
+    for h in root.self_and_subtree(o) {
+        if is_fence_node(o, &h) {
+            continue;
+        }
+        let owned = util::split_lines(h.b(o));
+        let mut body = String::new();
+        let mut changed = false;
+        let mut i = 0;
+        while i < owned.len() {
+            let line = &owned[i];
+            let next = owned.get(i + 1);
+            let named = next
+                .and_then(|n| REFERENCE.captures(n))
+                .map(|m| m[1].to_string());
+            if FENCE_OPEN.is_match(line) && named.as_deref() == Some(&format!("<< {old} >>")) {
+                let child = h
+                    .children(o)
+                    .into_iter()
+                    .filter(|c| is_fence_node(o, c) && c.h(o).trim() == format!("<< {old} >>"))
+                    .nth(
+                        edits
+                            .iter()
+                            .filter(|(q, _, _)| q.parent(o).as_ref() == Some(&h))
+                            .count(),
+                    );
+                let renamed_line = rename_in_info(line, &old, &new);
+                let child_body = child
+                    .as_ref()
+                    .map(|c| rename_quarto_label(c.b(o), &old, &new));
+                let quarto = child_body
+                    .as_ref()
+                    .is_some_and(|b| Some(b.as_str()) != child.as_ref().map(|c| c.b(o)));
+                if renamed_line == *line && !quarto {
+                    return Err(format!(
+                        "<< {old} >> is named by its file= target; change file= in the fence line instead"
+                    ));
+                }
+                body.push_str(&renamed_line);
+                let reference =
+                    next.unwrap()
+                        .replacen(&format!("<< {old} >>"), &format!("<< {new} >>"), 1);
+                body.push_str(&reference);
+                if let Some(c) = child {
+                    let b = child_body.filter(|_| quarto);
+                    edits.push((c, Some(format!("<< {new} >>")), b));
+                }
+                fences += 1;
+                changed = true;
+                i += 2;
+                continue;
+            }
+            body.push_str(line);
+            i += 1;
+        }
+        if changed {
+            edits.push((h, None, Some(body)));
+        }
+    }
+    // entangled's references, in the code of every `@entangled` document.
+    let doc = crate::node::at_entangled_node_name(root.h(o));
+    let mut references = 0;
+    for r in o
+        .all_positions()
+        .into_iter()
+        .filter(|q| q.is_at_entangled_node(o))
+    {
+        let here = r.v == root.v;
+        let has_own = !here
+            && r.self_and_subtree(o)
+                .iter()
+                .any(|q| is_fence_node(o, q) && headline_name(q.h(o)) == Some(old.as_str()));
+        for f in r
+            .self_and_subtree(o)
+            .into_iter()
+            .filter(|q| is_fence_node(o, q))
+        {
+            let start = edits.iter().position(|(q, _, _)| q.v == f.v);
+            let current = start
+                .and_then(|k| edits[k].2.clone())
+                .unwrap_or_else(|| f.b(o).to_string());
+            let mut body = String::new();
+            let mut n = 0;
+            for line in util::split_lines(&current) {
+                match REF_LINE.captures(&line) {
+                    Some(m) => {
+                        let target = m[2].trim();
+                        let qualified = format!("{doc}#{old}");
+                        let renamed = if target == qualified {
+                            Some(format!("{doc}#{new}"))
+                        } else if target == old && (here || !has_own) {
+                            Some(new.clone())
+                        } else {
+                            None
+                        };
+                        match renamed {
+                            Some(t) => {
+                                body.push_str(&format!("{}{t}{}", &m[1], &m[3]));
+                                n += 1;
+                            }
+                            None => body.push_str(&line),
+                        }
+                    }
+                    None => body.push_str(&line),
+                }
+            }
+            if n > 0 {
+                references += n;
+                match start {
+                    Some(k) => edits[k].2 = Some(body),
+                    None => edits.push((f, None, Some(body))),
+                }
+            }
+        }
+    }
+    Ok(Some(BlockRename {
+        old,
+        new,
+        fences,
+        references,
+        edits,
+    }))
+}
+
+/// `line`, a fence's opening line, with `#old` or `label=old` renamed.
+fn rename_in_info(line: &str, old: &str, new: &str) -> String {
+    let pattern = format!(
+        r#"(^|[\s{{,])(#|label=["']?){}(["']?)(\s|[,}}]|$)"#,
+        regex::escape(old)
+    );
+    let re = Regex::new(&pattern).expect("an escaped name");
+    re.replacen(line, 1, |c: &regex::Captures| {
+        format!("{}{}{new}{}{}", &c[1], &c[2], &c[3], &c[4])
+    })
+    .to_string()
+}
+
+/// A fence's code with a leading Quarto `#| label: old` renamed.
+fn rename_quarto_label(code: &str, old: &str, new: &str) -> String {
+    let mut out = String::new();
+    let mut options = true;
+    for line in util::split_lines(code) {
+        let t = line.trim_start();
+        options = options && t.starts_with("#|");
+        let label = t.trim_start_matches("#|").trim_start();
+        match options
+            && label.strip_prefix("label:").map(|n| unquote(n.trim())) == Some(old.to_string())
+        {
+            true => out.push_str(&line.replacen(old, new, 1)),
+            false => out.push_str(&line),
+        }
+    }
+    out
+}

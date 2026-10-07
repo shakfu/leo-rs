@@ -1,10 +1,15 @@
 # demo
 
-The conformance corpus. Every `.leo` file here is a case, beside the external
-files it names, with a `<name>.expected.json` holding what Python Leo reads
-from it. `crates/leolib/tests/corpus.rs` checks this port against those files
-and leo-editor checks Python Leo against its own copy, so neither
-implementation needs a checkout of the other.
+The conformance corpus, and one example. Every `.leo` file here except
+`entangled/demo.leo` is a case, beside the external files it names, with a
+`<name>.expected.json` holding what Python Leo reads from it.
+`crates/leolib/tests/corpus.rs` checks this port against those files and
+leo-editor checks Python Leo against its own copy, so neither implementation
+needs a checkout of the other.
+
+`entangled/` is the `@entangled` example: a README whose code examples are
+tested (`entangled/demo.leo`, and see the main README). The corpus skips it,
+since Python Leo reads `@entangled` as a plain node.
 
 `scripts/make_corpus.py` builds the cases under `cases/` and writes every
 expected file:

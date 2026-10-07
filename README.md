@@ -348,6 +348,7 @@ Both front ends read `~/.config/leo-rs/settings.toml`. leogui keeps its `session
 | `split-ratio` | the outline's share of the width, in percent |
 | `lsp` | `false` to start no language server |
 | `lsp-LANGUAGE` | the command of the server for Leo's language `LANGUAGE` |
+| `entangled` | the command `:entangled-tangle` and `:entangled-check` run; `entangled` on `PATH` when unset |
 | `mcp` `mcp-edit` `mcp-save` | the MCP server, and whether its clients may edit and save |
 | `mcp-port` `mcp-token` | where it listens on 127.0.0.1, and the token a client sends |
 | `qt-mac-dont-swap-ctrl-and-meta` | Leo's: on macOS, Cmd is Meta rather than Leo's Ctrl |
@@ -444,8 +445,11 @@ becomes a heading node `Adding` whose body keeps the fence lines around a `<< ad
 - A fence node is in its fence's language (`python`, `py`, `{.rust}`), for colouring and the language servers, so an example gets completion and diagnostics.
 - Saving writes the file back as it was, with edited code and headings in place. A file that would not read back exactly opens as one node, with an error. A heading or fence node deleted from the tree stops the write rather than drop text.
 - The `.leo` file stores only the `@entangled` node; the tree is read from the markdown on every open.
+- Editing a fence node's headline renames the block, as one undo: every part of it, and entangled's `<<name>>` and `<<doc.md#name>>` references in every `@entangled` document in the outline. Documents outside the outline are not checked: run `:entangled-check`.
 
-Tangling `file=` targets is entangled's job for now: run `entangled tangle`. The design, and what comes next, is in `docs/dev/entangled_leo_backend.md`.
+`:entangled-tangle` writes the unsaved `@entangled` files, then runs `entangled tangle` in the outline's directory, so `file=` targets are written as entangled writes them; `:entangled-check` runs `entangled check`. Arguments pass through (`:entangled-tangle --force`), the output is in `:messages`, and leogui has both in the Body menu. Install entangled from [entangled-rs](https://github.com/shakfu/entangled-rs); set `entangled` in the settings to its full path if leogui, started from the desktop, does not find it on `PATH`. The design, and what comes next, is in `docs/dev/entangled_leo_backend.md`.
+
+`demo/entangled/` shows the point of it: a README whose examples are tested. `tests.md` places each named example in a pytest function by reference (`<<README.md#count>>`); `make test` there tangles it and runs pytest, and an example that no longer holds fails its test. Open `demo.leo` to edit the README, the tests and the library in one outline.
 
 ## `@auto`
 

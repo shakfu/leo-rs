@@ -20,7 +20,7 @@ impl App {
     pub fn poll(&mut self) -> bool {
         // A whole colouring made on a thread, ready to draw.
         let recolour = self.colouring.poll();
-        let called = self.poll_mcp();
+        let called = self.poll_mcp() | self.poll_entangled();
         let Some(lsp) = self.lsp.as_mut() else {
             return recolour || called;
         };
@@ -73,12 +73,15 @@ impl App {
 
     /// When `poll` next has work it cannot do yet: the end of a debounce,
     /// or of the pause before a partial colouring is made whole, or a look at
-    /// the thread making it.
+    /// the thread making it or at a run of entangled.
     pub fn poll_after(&self) -> Option<Duration> {
         let sync = self
             .lsp_dirty_since
             .map(|since| DEBOUNCE.saturating_sub(since.elapsed()));
-        [sync, self.colouring.due_in()].into_iter().flatten().min()
+        [sync, self.colouring.due_in(), self.entangled_poll_after()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn refresh_diagnostics(&mut self) {

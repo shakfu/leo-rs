@@ -365,10 +365,16 @@ fn collect(path: &Path, out: &mut Vec<PathBuf>) {
         let hidden = p
             .file_name()
             .is_some_and(|s| s.to_string_lossy().starts_with('.'));
-        if !hidden {
+        if !hidden && !is_example(&p) {
             collect(&p, out);
         }
     }
+}
+
+/// `demo/entangled/` is an example, not a case: Python Leo reads its
+/// `@entangled` nodes as plain ones, so it has nothing to check them against.
+fn is_example(p: &Path) -> bool {
+    p == demo().join("entangled")
 }
 
 /// The `@ignore` case is the one case whose point is a file that is *not*

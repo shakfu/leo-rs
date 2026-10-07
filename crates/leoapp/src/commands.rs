@@ -694,6 +694,16 @@ pub static COMMANDS: &[Command] = &[
         |app, _| app.show_diagnostics(),
     ),
     c(
+        "entangled-tangle",
+        "write the @entangled files, then run `entangled tangle`",
+        |app, _| app.run_entangled("tangle", ""),
+    ),
+    c(
+        "entangled-check",
+        "write the @entangled files, then run `entangled check`",
+        |app, _| app.run_entangled("check", ""),
+    ),
+    c(
         "lsp-status",
         "each language server's state, and what they logged",
         |app, _| app.show_lsp_status(),

@@ -271,3 +271,143 @@ fn the_dot_leo_file_stores_only_the_entangled_node() {
     assert!(!xml.contains("add"), "{xml}");
     assert!(!xml.contains("leo-rs-"), "{xml}");
 }
+
+// --- Renaming a block ------------------------------------------------------
+
+/// A `.leo` file over two `@entangled` documents, both written beside it.
+fn two_documents(dir: &Path, readme: &str, tests: &str) -> leolib::Document {
+    fs::write(dir.join("README.md"), readme).unwrap();
+    fs::write(dir.join("tests.md"), tests).unwrap();
+    let leo = dir.join("doc.leo");
+    fs::write(
+        &leo,
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<leo_file xmlns:leo="http://leoeditor.com/namespaces/leo-python-editor/1.1" >
+<leo_header file_format="2"/>
+<vnodes>
+<v t="a.1"><vh>@entangled README.md</vh></v>
+<v t="a.2"><vh>@entangled tests.md</vh></v>
+</vnodes>
+<tnodes>
+<t tx="a.1"></t>
+<t tx="a.2"></t>
+</tnodes>
+</leo_file>
+"#,
+    )
+    .unwrap();
+    let doc = leolib::Document::open(&leo.to_string_lossy(), true).unwrap();
+    assert!(
+        doc.read_report.errors.is_empty(),
+        "{:?}",
+        doc.read_report.errors
+    );
+    doc
+}
+
+fn written_files(doc: &mut leolib::Document) -> (String, String) {
+    let o = doc.outline();
+    let roots: Vec<Position> = o
+        .all_positions()
+        .into_iter()
+        .filter(|p| p.is_at_entangled_node(o))
+        .collect();
+    (
+        leolib::entangled::write_string(o, &roots[0]).unwrap(),
+        leolib::entangled::write_string(o, &roots[1]).unwrap(),
+    )
+}
+
+const README: &str =
+    "# Lib\n\n```python #count\nn = 1\n```\n\nMore of it:\n\n```python #count\nn += 1\n```\n\n\
+                      ```python #report file=report.py\n<<count>>\nprint(n)\n```\n";
+const TESTS: &str =
+    "# Tests\n\n```python file=test_readme.py\ndef test_count():\n    <<README.md#count>>\n```\n";
+
+#[test]
+fn renaming_a_fence_node_renames_the_block_everywhere_as_one_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = two_documents(dir.path(), README, TESTS);
+    let count = find(doc.outline(), "<< count >>");
+    let r = doc
+        .rename_entangled_block(&count, "<< tally >>")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (r.old.as_str(), r.new.as_str(), r.fences, r.references),
+        ("count", "tally", 2, 2)
+    );
+    let (readme, tests) = written_files(&mut doc);
+    assert_eq!(
+        readme,
+        "# Lib\n\n```python #tally\nn = 1\n```\n\nMore of it:\n\n```python #tally\nn += 1\n```\n\n\
+         ```python #report file=report.py\n<<tally>>\nprint(n)\n```\n"
+    );
+    assert_eq!(
+        tests,
+        "# Tests\n\n```python file=test_readme.py\ndef test_count():\n    <<README.md#tally>>\n```\n"
+    );
+    doc.undo();
+    assert_eq!(
+        written_files(&mut doc),
+        (README.to_string(), TESTS.to_string())
+    );
+}
+
+#[test]
+fn a_bare_name_is_enough_and_another_documents_own_block_is_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let tests =
+        "# Tests\n\n```python #count\nlocal = 1\n```\n\n```python file=t.py\n<<count>>\n```\n";
+    let mut doc = two_documents(dir.path(), README, tests);
+    let count = find(doc.outline(), "<< count >>");
+    let r = doc
+        .rename_entangled_block(&count, "tally")
+        .unwrap()
+        .unwrap();
+    assert_eq!((r.fences, r.references), (2, 1));
+    let (_, tests_after) = written_files(&mut doc);
+    assert_eq!(
+        tests_after, tests,
+        "tests.md's <<count>> means its own block"
+    );
+}
+
+#[test]
+fn a_rename_is_refused_for_a_block_named_by_its_file_or_a_name_with_a_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = two_documents(dir.path(), README, TESTS);
+    let target = find(doc.outline(), "<< test_readme.py >>");
+    let why = doc
+        .rename_entangled_block(&target, "<< other >>")
+        .unwrap_err();
+    assert!(why.contains("file="), "{why}");
+    let count = find(doc.outline(), "<< count >>");
+    assert!(doc
+        .rename_entangled_block(&count, "<< two words >>")
+        .is_err());
+    assert_eq!(
+        written_files(&mut doc),
+        (README.to_string(), TESTS.to_string())
+    );
+}
+
+#[test]
+fn knitr_and_quarto_labels_are_renamed() {
+    let dir = tempfile::tempdir().unwrap();
+    let readme = "```{python, label=knit}\na\n```\n\n```{python}\n#| label: quart\nb\n```\n";
+    let mut doc = two_documents(dir.path(), readme, "# T\n");
+    let knit = find(doc.outline(), "<< knit >>");
+    doc.rename_entangled_block(&knit, "<< knitted >>")
+        .unwrap()
+        .unwrap();
+    let quart = find(doc.outline(), "<< quart >>");
+    doc.rename_entangled_block(&quart, "<< quarto >>")
+        .unwrap()
+        .unwrap();
+    let (readme_after, _) = written_files(&mut doc);
+    assert_eq!(
+        readme_after,
+        "```{python, label=knitted}\na\n```\n\n```{python}\n#| label: quarto\nb\n```\n"
+    );
+}

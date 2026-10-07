@@ -179,6 +179,31 @@ impl Document {
         self.outline.set_headline(p, &new);
     }
 
+    /// Rename the `@entangled` block whose fence node p is, everywhere the
+    /// outline names it, as one undo step (`entangled::plan_rename`). None if
+    /// p is not a fence node or the name is unchanged; an error if refused,
+    /// with nothing changed.
+    pub fn rename_entangled_block(
+        &mut self,
+        p: &Position,
+        new_headline: &str,
+    ) -> std::result::Result<Option<crate::entangled::BlockRename>, String> {
+        let Some(plan) = crate::entangled::plan_rename(&self.outline, p, new_headline)? else {
+            return Ok(None);
+        };
+        self.begin_group("rename-block");
+        for (q, headline, body) in &plan.edits {
+            if let Some(h) = headline {
+                self.set_headline(q, h);
+            }
+            if let Some(b) = body {
+                self.set_body(q, b);
+            }
+        }
+        self.end_group();
+        Ok(Some(plan))
+    }
+
     /// Set p's body, as one undo step. An unchanged body records nothing.
     pub fn set_body(&mut self, p: &Position, s: &str) {
         let old = p.b(&self.outline).to_string();
