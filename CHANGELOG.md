@@ -88,6 +88,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **Every public leolib item has a doc comment**, and `#![warn(missing_docs)]` keeps it so.
 
+- **Each crate's package includes the MIT `LICENSE` file**, as the licence asks of copies; `license = "MIT"` named it without shipping it. The crates hold copies rather than symlinks, which a Windows checkout without symlink support turns into text files.
+
 - **leolib's `rust-version` is 1.89, leotui's 1.90.** leotui's floor is `tree-sitter-language`'s; the library is not held to it.
 
 ### Fixed

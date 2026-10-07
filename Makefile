@@ -28,7 +28,9 @@ release:
 fmt:
 	cargo fmt --all
 
+# Each crate ships a copy of LICENSE, not a symlink: Windows checkouts break those.
 lint:
+	@for d in crates/*/; do cmp -s LICENSE "$${d}LICENSE" || { echo "$${d}LICENSE differs from LICENSE or is missing: cp LICENSE $$d"; exit 1; }; done
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
 
