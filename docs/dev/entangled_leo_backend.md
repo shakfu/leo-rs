@@ -1,190 +1,111 @@
-# An outline view of an entangled document
+# Literate markdown with entangled
 
-A sketch of 2026-09-12. Nothing here is scheduled. It is judgement unless a line says it was measured.
+Revised 2026-10-07; replaces the sketch of 2026-09-12. Nothing here is scheduled. A line says when something was measured or run; the rest is judgement.
 
-## The Use Case
+## Goal
 
-It is quite common to include code examples in markdown, yet if these code examples are not systematically tested against the application's changing api, the documentation and the examples
-can get stale leading to a poor user experience.
+Code examples in markdown go stale when nothing tests them against the API. Edit such a document in Leo as an outline whose code fences are nodes, and have the examples written to files a test runner runs. [entangled](https://github.com/shakfu/entangled-rs) already defines the fence syntax and the tangling; leo-rs adds the outline.
 
-Leo makes it easy to create markdown documents several ways:
+This is a third way for leo-rs to hold markdown, beside `@auto-md` (structure only) and `@edit` (flat text).
 
-1. as a structure outline: @auto-md or @auto
-2. as a flat file: @edit
+## Decisions
 
-But as of yet, it doesn't provide for a way to `stich` external example files to a markdown file.
+- **The markdown must render on GitHub.** A fence always holds its code. No design may leave fences empty in the file.
+- **Full entangled compatibility.** A document tangles the same under the `entangled` CLI and under leo-rs, including references, continuation blocks, namespaces and annotations.
+- **Python first**, for the test harness.
 
-Engtangled has solved this problem. We could create leo-friendly versions of entangled's `tangle` and `stich` commands. `leo-tangle` or `@auto-md-tangle` takes a markdown document with code examples and parses it into a leo outline.
+## What was checked
 
-leo-stich is essentially an export function which *stiches* the examples into the markdown document. It can do some additional things as well if customized: test the examples would be the
-valuable of course.
+### entangled-rs
 
-So basically, entangled gives leo-rs a third way to handle markdown.
+- Published as `entangled-rs` 0.2.1; the library target is `entangled`. The crate named `entangled` on crates.io is unrelated.
+- `ParsedDocument` (`readers/markdown.rs:18`) holds code blocks, frontmatter and a path: no headings, no prose, no order beyond `IndexMap` insertion. leo-rs must parse the document's structure itself.
+- `stitch_files` (`interface/document.rs:320`) splices line ranges into the markdown it read. It skips any block containing a `<<reference>>`: only leaf blocks are stitched.
+- `ReferenceId{name, count}` counts same-named blocks by position, so it cannot serve as a gnx.
+- An unknown fence attribute is parsed as a generic `key=value` and only looked up by name (`model/properties/mod.rs:231`), so entangled ignores `include=`. Read from the code, not run.
+- References may cross documents: `<<other.md#name>>` (0.2.1).
+- Dependencies: 94 crates as published. `tokio`, `notify` and `serde_yaml` were unused, and weave's HTML backend now sits behind an `html` feature. With those changes and `default-features = false`, 48 crates, 30 of them new to `leoapp`. The changes are in the local checkout, unreleased; removing `EntangledError::YamlParse` makes the release 0.3.0.
 
-## The proposal
+### leo-rs
 
-Show an [entangled](https://github.com/shakfu/entangled-rs) markdown document as a Leo outline in leotui, and write edits back to the markdown. Split the work three ways:
+- The markdown `@auto` writer regenerates the file (`write_markdown`, `importers/lines.rs:347`): `#` headings whatever the source used, `!Declarations` and placeholders dropped. `import_string` skips the round-trip check for line importers (`importers.rs:504`).
+- `@auto` imports match Leo's on 998 of 1,000 files (README, Status). Changing `@auto-md`'s parser would break that, and give a different tree from Python Leo for the same file.
+- `@persistence` is not ported (`delta.md:477`), so a clone inside an `@auto` tree does not survive reopening.
 
-| layer | owner | why |
+### A spike with `@clean` and clones
+
+Run 2026-10-07 with leotui, no code changes. `@clean README.md` held prose and a fence whose body was `<< example add >>`; the same node, cloned, sat inside a test function under `@file tests/test_readme.py`.
+
+- Both files were written correctly, the example indented inside the test function, and the test passed under Python.
+- An external edit to the example in `README.md` reached the node when only `README.md` was present.
+- With both files present, the `@file` read came second and its stale copy overwrote the edit, with no report. leolib has no check for a clone whose body differs between files.
+
+The structure works, but it needs clones and the `.leo` file to carry it. Fence attributes carry it in the markdown itself, which is the design below.
+
+## Design
+
+### A new kind, `@auto-lit`
+
+Name provisional. It shares `@auto-md`'s line scanner and adds fences; `@auto-md` stays as Leo has it.
+
+- A heading is a node, nested by level, as now.
+- Under a heading, its children follow document order: each fenced block, and each prose run between fences.
+- A fence node's body is the code alone. The info string and fence lines are kept verbatim, so the file can be written back exactly.
+- The writer concatenates every node's lines in document order. An unedited node writes the lines it was read from, so a file read and written unedited is byte-identical, and the corpus checks that.
+
+gnx is allocated at parse time and is not durable, as for any `@auto` tree.
+
+### Fence semantics
+
+entangled's, plus one extension that entangled ignores.
+
+| fence | on read | on save |
 |-|-|-|
-| structure: nodes, levels, order, identity | new code in `leolib` | entangled has no document model |
-| semantics: block names, targets, references, cycles | the `entangled` crate | `leolib` would be reimplementing it |
-| writeback: edited node to edited file | the `entangled` crate's span splice | already exact |
+| ```` ```python #add ```` | a node headlined `add` | the markdown |
+| ```` ```python #main file=hello.py ```` | a node; a report if `hello.py` changed on disk since leo-rs last wrote it | the markdown, and `hello.py` as entangled tangles it |
+| ```` ```python #main include=hello.py ```` | a node filled from `hello.py` | the markdown with the code in it; `hello.py` if the node was edited |
+| several ```` #add ```` blocks | sibling nodes with one headline | each in place; entangled concatenates them |
 
-Neither `atfile_write` nor `atfile_read` is used. leolib never writes a tangled file in this mode, so Leo sentinels never meet entangled annotations.
+- `file=` is entangled's tangle: `<<references>>` expanded, the project-wide namespace, annotations and `entangled.toml` all apply. leo-rs calls entangled for it rather than reimplementing it. leolib's write guards still apply: no overwriting a file never read, or one changed on disk.
+- `include=` is the read direction. The fence keeps the code, so GitHub shows it. When both the node and the file changed since the last sync, report a conflict rather than pick one; leolib's file stamps already record the last read or write.
+- An empty fence means nothing special. "Empty reads, filled writes" was rejected: GitHub would show blank examples; clearing a fence to rewrite it would restore the old code from disk on the next open; and entangled reads an empty `file=` fence as an empty file.
 
-## Why the split falls this way
+### Where entangled sits
 
-### The semantics already match
+```text
+crates/leolib         @auto-lit parse and exact writer. No new dependency.
+crates/leo-entangled  tangle, check, include= sync. Depends on leolib and entangled-rs, default-features = false.
+crates/leoapp         optional dependency on leo-entangled, behind a feature
+```
 
-`atfile_write.rs:597`: a node headlined `<<name>>` is skipped by `@others` and written where it is referenced. entangled resolves `<<name>>` through `ReferenceMap.name_index` and expands it at the reference site. Same rule, same default delimiters, same cycle check. There is nothing to port.
+leolib keeps its three runtime dependencies. Commands in leoapp: `:entangled-tangle` and `:entangled-check`, run on the outline's project, with results on the status line and in `:messages`. Tests run outside leo-rs.
 
-### The document model does not exist
+### The Python test harness
 
-`readers/markdown.rs:18`:
+The README holds examples only, with no `file=`, so readers see plain code. A second document, kept out of the docs, holds the harness and refers across documents:
 
-~~~rust
-pub struct ParsedDocument {
-    pub refs: ReferenceMap,
-    pub frontmatter: Option<String>,
-    pub source_path: Option<PathBuf>,
-}
-~~~
+````markdown
+```python file=tests/test_readme.py
+def test_add():
+    <<README.md#add>>
+```
+````
 
-Code blocks, frontmatter, path. No headings, no prose, no order beyond `IndexMap` insertion. `BlockLocation` gives each block's first and last content line; the lines between blocks are prose the model never sees.
-
-An outline of a literate document is mostly prose nodes. So the view cannot be built from `ReferenceMap`, and `leolib` needs its own markdown parse.
-
-### The writeback is already exact
-
-`stitch_files` (`interface/document.rs:320`) does not regenerate markdown. It collects `(content_start, content_end, replacement)` per block and splices those line ranges into the file it read. Everything outside an edited range is untouched by construction. That is the property an importer writer would otherwise have to earn, and it is already shipped.
-
-## The structure parse
-
-A line scanner over one markdown file, in `leolib`. Close to `importers/lines.rs::markdown`, with three additions.
-
-Nodes:
-
-- one per `#` heading and per `===`/`---` underlined heading, nested by level;
-
-- one per fenced code block, as a child of the enclosing heading;
-
-- prose runs stay in the enclosing heading's body.
-
-Each node records the line range it came from. A heading node's body carries `@others` at each point where its child fences sat. `visited` (`atfile_write.rs:92`) already lets several `@others` share one body, each claiming the not-yet-written descendants, so prose/fence/prose/fence is expressible.
-
-Headlines: a fence node's headline is `<<name>>` when the fence names a block, and the target path when it names one. An unnamed fence gets its language and an ordinal.
-
-## Identity
-
-`ReferenceId{name, count}` (`model/reference_id.rs:11`) counts instances among same-named blocks. It is positional: inserting a block named `main` above an existing one renumbers every later `main[n]`. Cursor, marks, expand state, undo and clone identity in leotui are all gnx-keyed, so a positional id is not usable as a gnx.
-
-An unnamed fence has no `ReferenceId` at all, and prose has none either.
-
-Proposal: allocate gnx at parse time and keep it for the session. The outline is authoritative while leotui holds it, and edits go to both the outline and the text, so nothing reparses during normal editing. A reparse happens only when the file changes on disk. Reconcile then by structural match -- same heading chain and ordinal -- and allocate fresh gnx for what does not match.
-
-Consequence: gnx is not durable. Marks and expand state are session state in this mode, which is what a file with no `.leo` can offer.
-
-## Joining the two parses
-
-Parse the file twice: once for structure, once with `entangled::readers::markdown::parse_markdown`. Join on `(source_path, content_start)`, since `BlockLocation` is 1-indexed line numbers and the structure parse is line-based too.
-
-The join is asymmetric, which is what makes it decidable: every entangled block must join to exactly one fence node, and a fence node with no block is a plain fence. A block that does not join is a disagreement between the two parses; reject the document rather than show a view that tangles differently from the CLI.
-
-Parsing twice rather than teaching `leolib` the info-string syntax costs one extra pass over one file. `importers/lines.rs::markdown` already tracks `in_code`, because a `#` inside a fence is not a heading, so the structure parse finds every fence whatever else it does. Only interpreting the info string is avoided, and that is four styles (`style.rs`) that will keep changing. Headlines fill in after the join, so `leolib` never reads one.
-
-## Writeback
-
-A node body edit becomes a splice of that node's line range, by the same route `stitch_files` uses. Nodes are held in document order, so after a splice every later node's range shifts by the line delta.
-
-Prose nodes splice the same way. That is the reason prose gets nodes at all rather than being carried opaquely.
-
-## Where this attaches to Document
-
-Measured on 2026-09-12: leotui reaches `Outline` directly 101 times -- `p.vis_next(app.outline())`, `app.doc.outline.promote(&p)`, expand, contract, navigation, rendering. It calls `Document`'s mutations at 22 sites over 21 methods.
-
-So a backend trait would have to cover 101 accesses, or hand out an `&Outline` and cover only the 22. The second is no abstraction: the markdown backend has to build a real `Outline` either way, which the structure parse does. There is no second model here, only a second origin and a second writeback path.
-
-That makes the change one field:
-
-~~~rust
-pub struct Document {
-    pub outline: Outline,
-    pub undoer: Undoer,
-    pub read_report: ReadResult,
-    clipboard: Option<VnodeId>,
-    origin: Origin,   // Leo { path } | Markdown { path, ranges }
-}
-~~~
-
-`save` (`document.rs:374`) dispatches on `origin`. `write_external_files` does nothing for `Markdown`. The commands below check it. leotui's 101 outline accesses are untouched.
-
-Revisit a trait when a third origin exists. Nothing suggests one.
-
-## What a markdown origin does not support
-
-| command | why |
-|-|-|
-| `clone_node` | entangled has no second position for a block |
-| `move_left`, `move_right` | a markdown heading level change is a different edit from a tree move |
-| save as `.leo` | there is no outline file; the document is the file |
-| `write_external_files` | `entangled tangle` writes them |
-
-`insert_node`, `delete_node`, `move_up` and `move_down` are expressible as text splices, but each needs its markdown meaning defined first. Defer them.
-
-## Continuation blocks
-
-entangled concatenates `name[0..n]`; `ReferenceMap` keeps `Name -> Vec<ReferenceId>` for it. Leo treats a second definition of a section name as an error.
-
-The view can show n sibling nodes headlined `<<name>>`, because the view never tangles -- entangled does, from its own map, where n blocks are correct. The Leo duplicate rule only binds `atfile_write`, which is not in this path.
-
-So this stops being a semantic problem and becomes a display one: n nodes with the same headline. Number them in the view if that reads badly.
+`entangled tangle`, or `:entangled-tangle`, writes `tests/test_readme.py`; pytest runs it. An example that cannot run alone is simply not referenced. To verify: entangled indents an expansion to its reference's column, as Leo's section references do.
 
 ## Plan
 
-Three stages. The first is worth doing whether or not the rest is.
+1. **Clone conflicts, in leolib.** On read, report a clone whose body differs between external files rather than let the last file read win. A correctness fix on its own, found by the spike. Not yet checked: what Python Leo does here.
+2. **`@auto-lit` parse and exact writer, in leolib.** Fences and prose runs as nodes, byte-identical round trip, corpus cases.
+3. **Open a real document.** An entangled document from entangled-rs's `examples/`, with step 2 only: does the outline read well? Cheap, and it gates step 4.
+4. **leo-entangled.** `file=` through entangled's tangle, `:entangled-check`, then `include=`.
+5. **The Python harness.** The convention above, a demo in `demo/`, and the indentation check.
 
-### 1. The structure parse and an exact markdown writer
+Outside leo-rs, before step 4: release entangled-rs 0.3.0 with the reduced dependencies.
 
-In `leolib`. No new dependency, no new crate, no entangled involvement.
+## Open questions
 
-`import_string` sets `round_trips = false` for every `LineImporter`, so the check it performs for other importers is skipped for markdown. `write_markdown` earns that: it emits `#` headings whatever the file used, drops `!Declarations`, and drops placeholder nodes. Import a markdown file and write it back and it is reformatted.
-
-A parse that records each node's line range, and a writer that splices those ranges, makes `round_trips = true` possible for markdown. That is a `leolib` correctness fix on its own terms.
-
-Deliverable: fences are nodes, prose is nodes, the file round-trips, and the corpus checks it.
-
-### 2. Look at a real document
-
-Open an entangled document in leotui with stage 1 and nothing else. The outline will be mostly prose nodes. Whether that reads as a useful view of a literate program is the one question this design cannot answer on paper.
-
-Cost: an afternoon. It gates stage 3 entirely.
-
-### 3. leo-entangled
-
-Only if stage 2 reads well.
-
-~~~text
-crates/leolib           structure parse, from stage 1
-crates/leo-entangled    join, tangle, writeback. Depends on leolib + entangled.
-crates/leotui           optional dependency on leo-entangled
-~~~
-
-`leolib` has three runtime dependencies. Adding `entangled` to it for a feature most callers will not use is the wrong trade, so the join lives outside it.
-
-| piece | where | size |
-|-|-|-|
-| structure parse with line ranges | stage 1, `leolib` | medium |
-| gnx allocation and reparse reconcile | stage 1, `leolib` | medium |
-| exact writer and corpus cases | stage 1, `leolib` | medium |
-| `Origin` field and its guards | stage 3, `leolib` + `leotui` | small |
-| span join and its rejection check | stage 3, `leo-entangled` | small |
-| splice writeback and range shifting | stage 3, `leo-entangled` | small |
-
-Stage 1 is most of the work and none of the speculation.
-
-## The remaining question
-
-Is there a user? Leo has had markdown outlining for years without this, and `comparison.md` puts leo-rs's next work at the `leolib` API rather than more TUI commands. This feature is option 3 there, a different product on Leo's formats.
-
-Stage 1 does not depend on the answer. Stages 2 and 3 do.
+- The kind's name, and a fence node's headline: `add`, `#add`, or the info string.
+- How a heading keeps its source form (`#` or underlined) for the exact writer: in the body's first line, or in a uA.
+- Whether `include=` is wanted at all once `file=` and the harness cover testing.
+- How continuation blocks read as n siblings with one headline; number them if not.
