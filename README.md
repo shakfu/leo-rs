@@ -1,14 +1,16 @@
 # leo-rs
 
-A Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`) and a terminal front end that consumes it (`leotui`).
+A minimal Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`), with two front ends over it: `leotui` in the terminal and `leoegui` on the desktop.
 
-Leo's outline model was separated from its Qt front end in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. `leotui` is one front end over that crate. Nothing in `leolib` depends on it.
+Leo's outline model was re-implemented in rust in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. Nothing in `leolib` depends on a front end. The front ends share `leoapp`, which holds the editor's state, commands and keys, so leotui and leoegui take the same keys, commands, settings and themes.
 
-![Screenshot the tui.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/tui.png)
+![leoegui, the desktop front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/gui.png)
+
+![leotui, the terminal front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/tui.png)
 
 ## Status
 
-Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor `e3b3841f64`. The two `@auto` rows come from an earlier checkout; `TODO.md` records re-measuring them.
+Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor `e3b3841f64`. The two `@auto` rows come from an earlier checkout and have not been re-measured since.
 
 | check | result |
 |---|---|
@@ -29,16 +31,18 @@ crates/leolsp     language servers, with their positions mapped to nodes.
 crates/leoapp     a front end's state and commands, with no renderer.
 crates/leotui     the terminal front end: leoapp drawn with ratatui.
 crates/leoegui    the desktop front end: leoapp drawn with egui.
+crates/leomcp     an MCP server on localhost, serving the open outline.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leoegui` adds `eframe`, `rfd` and `clap`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leoegui` adds `eframe`, `rfd` and `clap`.
 
 ## Installing
 
 ```sh
-cargo install leotui --locked      # from crates.io
-cargo install --path crates/leotui --locked   # from a checkout
-cargo add leolib                   # the library, in your own crate
+cargo install leotui --locked                  # leotui, from crates.io
+cargo install --path crates/leotui --locked    # leotui, from a checkout
+cargo install --path crates/leoegui --locked   # leoegui and leoegui-glow, from a checkout
+cargo add leolib                               # the library, in your own crate
 ```
 
 `--locked` builds with the `Cargo.lock` shipped in the package. A checkout build uses the workspace's `lto = true`; the crates.io build does not, as cargo drops workspace profiles from a published package.
@@ -111,27 +115,9 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 
 In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor and `Ctrl-u` the text before it. Other Ctrl and Alt chords type nothing. While a headline is edited, a chord the outline binds keeps the headline as typed and acts on the node, as in Leo: `Ctrl-r` indents a new node before it has a name, `Ctrl-i` starts the next, and `Ctrl-u` moves the node up.
 
-leoegui is the same editor in a window: the same keys, commands, settings and themes, drawn in a monospace grid. On macOS, Cmd is Leo's Ctrl, as in Leo: a Cmd chord the outline binds runs from either pane, so Cmd-R indents the node even in the body, and any other Cmd chord is Ctrl. Control keeps leotui's keys, vim's in the body. Leo's `qt-mac-dont-swap-ctrl-and-meta = true` in the settings leaves Cmd unbound. The outline and body take clicks and the wheel in NORMAL. View > Appearance picks dark, light, or the system's choice, saved as `appearance = "dark" | "light" | "system"`; the dark theme is `theme` and the light one `theme-light` (default `onelight`), and `:theme` sets whichever is showing. View > Theme... lists your Helix themes as dark or light and previews each under the pointer; the window's parts take the Helix scopes for them, such as `ui.statusline.insert` for the INSERT badge and `diagnostic.warning` for a warning's underline. A yes/no dialog answers to `y` or `n` alone.
-
-What the window adds to leotui:
-
-- Several outlines, a tab each, with the system's Open and Save As dialogs and File > Open Recent. Started with no outline named, leoegui reopens those open at the last quit, with their selections and tabs.
-- Cmd-P goes to a node by its headline; Cmd-Shift-P runs a command by name.
-- Cmd-Shift-F opens the find panel: find, replace, Clone Find All, over the outline, a subtree or the marked nodes.
-- An `@<file>` row shows when its file is unread, changed on disk, never read, or unwritten; a bar offers Reload or Keep for a changed file.
-- Cmd-. lists a language server's code actions at the cursor. The status bar's LSP dot opens each server's state and log.
-- A hoisted node is named above the outline, with a De-hoist button; a cloned row shows its clone count, and its context menu lists the clones.
-- Dropping a `.leo` file opens it; dropping any other file imports it as `@auto`.
-
-```sh
-make gui FILE=FILE.leo                                   # a release build
-make gui-glow FILE=FILE.leo                              # the same, drawn with OpenGL
-cargo run -p leoegui -- FILE.leo [MORE.leo...]
-cargo run -p leoegui -- --no-session                    # neither restore nor save the session
-cargo run -p leoegui -- FILE.leo --press F1 --screenshot out.ppm   # one frame, then exit
-```
-
 ### Cheatsheet
+
+The keys are the same in leoegui.
 
 <!-- keys:begin -->
 
@@ -267,7 +253,7 @@ Every Leo command name, with Tab completion and Up/Down history, plus the vim sp
 
 `:refresh-from-disk` reads the `@<file>` node at or above the selection from disk again; `:read-at-file-nodes` reads every one at or under it. `:read-at-file-nodes` skips an `@clean` file unchanged since it was last read or written; `:refresh-from-disk` reads it anyway. Both ask before discarding unwritten edits, and both clear the undo history, as in Leo. When the terminal regains focus, the status line names any external file changed on disk, and a write asks before overwriting it.
 
-`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leotui/settings.toml`.
+`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leo-rs/settings.toml`.
 
 `/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
 
@@ -294,23 +280,66 @@ These need a terminal speaking the kitty keyboard protocol (kitty, foot, wezterm
 
 <!-- keys:end -->
 
+### Colouring and themes
+
 The body is coloured by the language declared at the node: an `@language` directive in the node or an ancestor, or the nearest `@<file>` node's extension. A node with neither is left plain, so prose is never coloured as code. `@language` lines inside a body move it from that line on, so one node can hold Python and then C; `@nocolor`, `@color` and `@killcolor` work as they do in Leo. `:set nosyntax` turns it off.
 
 Twelve languages -- C, C++, CSS, Go, HTML, Java, JavaScript, JSON, Python, Rust, shell, TypeScript -- are parsed with tree-sitter, which tells a function from a field from a type. Every other language Leo knows a comment delimiter for runs a line scanner instead: comments, strings, numbers, and keywords from Leo's colorizer modes for 33 of them.
 
-Colours come from a Helix theme, read from `~/.config/leotui/themes` or `~/.config/helix/themes`. Nothing is vendored, so the themes are whichever ones you already have. The default is `sonokai`, and without a file of that name leotui uses the terminal's sixteen colours.
+Colours come from a Helix theme, read from `~/.config/leo-rs/themes` or `~/.config/helix/themes`. Nothing is vendored, so the themes are whichever ones you already have. The default is `sonokai`, and without a file of that name leotui uses the terminal's sixteen colours. leoegui adds a light theme and a picker: see [Using leoegui](#using-leoegui).
 
-`:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. Enter saves the choice to `~/.config/leotui/settings.toml`, rewriting only its `theme` line, and the next launch starts there. `--theme NAME` picks a theme for one launch without saving it.
+`:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. Enter saves the choice to `~/.config/leo-rs/settings.toml`, rewriting only its `theme` line, and the next launch starts there. `--theme NAME` picks a theme for one launch without saving it.
 
 Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess. A non-empty `NO_COLOR` turns colour off, as `:set colors=none` does; the selected row and the status line are then shown reversed.
 
 The outline's selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window` scopes, so a light theme draws them for a light background.
 
-Flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
+In leotui, flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
-### Settings
+## Using leoegui
 
-Both front ends read `~/.config/leotui/settings.toml` (an older `config.toml` there is renamed to it). leoegui edits it in File > Settings... (Cmd-,), which writes only the keys that changed and keeps comments and keys it does not know. The keys:
+```sh
+leoegui FILE.leo [MORE.leo...]      # a tab per outline
+leoegui                             # reopen the outlines open at the last quit
+leoegui --no-session                # neither restore nor save the session
+leoegui FILE.leo --press F1 --screenshot out.ppm   # press keys, save one frame, exit
+```
+
+or during development
+
+```sh
+make gui FILE=FILE.leo              # a release build; egui's debug build draws slowly
+make gui-glow FILE=FILE.leo         # the same, drawn with OpenGL instead of wgpu
+cargo run -p leoegui -- FILE.leo
+```
+
+`--no-external` and `--theme NAME` work as in leotui. `leoegui-glow` is the same program drawn with OpenGL. On Linux it reached its first frame in a third of the time, with 80 MB less memory (`docs/dev/gui-roadmap.md`, Performance 7); wgpu stays the default because OpenGL is deprecated on macOS.
+
+leoegui is the same editor in a window: the same keys, modes, commands, settings and themes, drawn in a monospace grid. The outline and body also take clicks and the wheel in NORMAL. A yes/no dialog answers to `y` or `n` alone.
+
+On macOS, Cmd is Leo's Ctrl, as in Leo: a Cmd chord the outline binds runs from either pane, so Cmd-R indents the node even in the body, and any other Cmd chord is Ctrl. Control keeps leotui's keys, vim's in the body. `qt-mac-dont-swap-ctrl-and-meta = true` in the settings leaves Cmd unbound.
+
+What the window adds to leotui:
+
+| | |
+|-|-|
+| Several outlines | A tab each. File > Open..., Save As... (the system's dialogs) and Open Recent (the last ten). Quitting asks about each outline with unsaved work. |
+| Session | Started with no outline named, leoegui reopens the outlines open at the last quit, with their selections, tabs, panel and window size. |
+| Go to node | Cmd-P: every headline, fuzzy-matched. |
+| Command palette | Cmd-Shift-P: every command, by name. |
+| Find panel | Cmd-Shift-F: find and replace, regex, whole word and case, over the outline, a subtree or the marked nodes; Find All, Replace All and Clone Find All. |
+| External files | An `@<file>` row is badged unread, changed on disk, never read, or unwritten. A bar above the body offers Reload or Keep for a file changed on disk. |
+| Clones and hoists | A cloned row shows its clone count, and its context menu lists the clones. A hoisted node is named above the outline, with a De-hoist button. |
+| Drag and drop | Dropping a `.leo` file opens it; dropping any other file imports it as `@auto`. |
+| Language servers | Completion under the cursor, Cmd-. for code actions, and the Body menu for hover, definition, rename and problems. The status bar's LSP dot opens View > Language Servers. See [Language servers](#language-servers). |
+| Bottom panel | View > Problems (the body's diagnostics), Log (the status messages), Find, and Language Servers (each server's state and log). |
+| Settings dialog | File > Settings... (Cmd-,). See [Settings](#settings). |
+
+View > Appearance picks dark, light, or the system's choice, saved as `appearance = "dark" | "light" | "system"`. The dark theme is `theme` (default `sonokai`) and the light one `theme-light` (default `onelight`); `:theme` sets whichever is showing. View > Theme... lists your Helix themes as dark or light, and previews each under the pointer. The window's parts take the Helix scopes for them, such as `ui.statusline.insert` for the INSERT badge, `ui.menu.selected` for a list's selected item, and `diagnostic.warning` for a warning's underline.
+
+## Settings
+
+Both front ends read `~/.config/leo-rs/settings.toml`. leoegui keeps its `session` and `recent-outlines` beside it, and both look for themes in `themes/` there. On first start, an older `~/.config/leotui/` directory is renamed to `leo-rs/`, and an older `config.toml` to `settings.toml`. leoegui edits it in File > Settings... (Cmd-,), which writes only the keys that changed and keeps comments and keys it does not know. The keys:
 
 | key | what it does |
 |-|-|
@@ -323,7 +352,7 @@ Both front ends read `~/.config/leotui/settings.toml` (an older `config.toml` th
 | `mcp-port` `mcp-token` | where it listens on 127.0.0.1, and the token a client sends |
 | `qt-mac-dont-swap-ctrl-and-meta` | Leo's: on macOS, Cmd is Meta rather than Leo's Ctrl |
 
-### MCP
+## MCP
 
 With `mcp = true`, the running leotui or leoegui serves its open outline to MCP clients at `http://127.0.0.1:PORT/mcp` (port 7341 by default), over MCP's streamable HTTP transport. A client must send `Authorization: Bearer TOKEN`; the token is made the first time MCP is turned on, and the Settings dialog shows the command that connects Claude Code:
 
@@ -333,29 +362,69 @@ claude mcp add --transport http leo http://127.0.0.1:7341/mcp --header "Authoriz
 
 A client can read until the settings say more: `outline`, `read_node`, `search` and `selection` always; `set_headline`, `set_body`, `insert_node`, `delete_node`, `move_node` and `select_node` with `mcp-edit = true`; `save` with `mcp-save = true` as well. Nodes are named by gnx. Each edit is one undo step the user can take back with `u`, and the status line says what the client did; an edit waits while the user is typing. Only 127.0.0.1 is listened on, and a request whose `Host` or `Origin` is not local is refused, so a web page cannot reach the outline.
 
-### Language servers
+## Language servers
 
-A server starts only for a language the settings name, one line each, and `lsp = false` turns them all off:
+No server starts unless the settings name one. A server runs code from the project around the outline, and opening a `.leo` file should not choose that code.
+
+### Settings
+
+| key | value |
+|-|-|
+| `lsp` | `false` to start no server, whatever the `lsp-LANGUAGE` keys say. Default `true`. |
+| `lsp-LANGUAGE` | The command that starts the server for Leo's language `LANGUAGE`: a program and its arguments, split on blanks, with no shell quoting. An empty value is ignored, with a warning. |
 
 ```toml
 lsp-python = "pylsp"
 lsp-c = "clangd"
+lsp-cplusplus = "clangd"
 lsp-rust = "rust-analyzer"
 ```
 
-None is started otherwise: a server runs code from the project around the outline, and opening a `.leo` file should not choose that code.
+`LANGUAGE` is Leo's name, as `@language` spells it: `cplusplus` for C++, `shell` for shell scripts. In leoegui, File > Settings... (Cmd-,) > Language servers edits the same keys: a checkbox for `lsp`, and a row per language.
 
-A server does what it offers, no more. `ruff server` (`lsp-python = "ruff server"`) gives diagnostics and fixes but no hover, definitions or completion; `pylsp` gives those. A `rust-analyzer` installed by rustup is a stub until `rustup component add rust-analyzer`. `:lsp-status` (leoegui: the status bar's LSP dot) shows whether each server started, and what it logged if it did not.
+A server's workspace is the outline's directory, or the current directory for an unsaved outline.
+
+### Which server a node gets
+
+A node's language comes from, in order: `@language` in the node, then in its ancestors, then the extension of the nearest `@<file>` headline, then the outline's default (Python unless the outline sets another). The server is the one named for that language.
 
 A server sees each external file as leolib writes it, so it works across the nodes of an `@file`, `@clean`, `@nosent` or code `@auto` tree. A node in no file is a document of its own. The servers hear an edit when INSERT commits it.
 
-- Diagnostics are underlined in the body, and the one on the cursor's line is on the status line. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's.
-- `K` shows the hover, and `Ctrl-]` goes to the definition.
-- `:lsp-rename NAME` renames the symbol under the cursor in every node at once, as one undo.
-- In INSERT, Tab after a word character or a dot lists what the server would complete there, and Ctrl-n anywhere. Typing narrows the list; Tab or Enter takes one.
-- `:lsp-code-action` (leoegui: Cmd-.) lists the server's fixes at the cursor. Up/Down or `j`/`k` and Enter, a digit, or `:lsp-code-action N` applies one, as one undo. A fix that replaces the whole file is applied to just the lines it changes.
+### Choosing a server
 
-An edit that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
+A server does what it offers, no more. `ruff server` gives diagnostics and fixes, but no hover, definitions or completion. For those in Python, use one of:
+
+| server | install | setting |
+|-|-|-|
+| python-lsp-server | `pip install python-lsp-server` | `lsp-python = "pylsp"` |
+| jedi-language-server | `pip install jedi-language-server` | `lsp-python = "jedi-language-server"` |
+| basedpyright | `pip install basedpyright` | `lsp-python = "basedpyright-langserver --stdio"` |
+
+A `rust-analyzer` installed by rustup is a stub until `rustup component add rust-analyzer`. Check a server's own documentation for what it offers.
+
+### What the servers do here
+
+| feature | keys and commands | leoegui |
+|-|-|-|
+| Diagnostics | underlined in the body; the cursor line's on the status line. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's | Body > Next Problem, Previous Problem; View > Problems |
+| Hover | `K` | Body > Hover |
+| Go to definition | `Ctrl-]` | Body > Go to Definition |
+| Rename | `:lsp-rename NAME`: every node at once, as one undo | Body > Rename Symbol... |
+| Completion | in INSERT, Tab after a word character or a dot, or Ctrl-n anywhere | the same |
+| Code actions | `:lsp-code-action`, then Up/Down or `j`/`k` and Enter, or a digit; `:lsp-code-action N` applies the Nth | Cmd-. or Body > Code Actions... |
+| Status and log | `:lsp-status`: each server's state and the last 500 lines it logged | the status bar's LSP dot, or View > Language Servers |
+
+Completion: typing narrows the list, Up/Down or Ctrl-n/Ctrl-p select, Tab or Enter takes one, and Escape closes the list and stays in INSERT. Elsewhere Tab indents. With no server for the body, Tab after a word indents, and Tab after a dot says which setting is missing. At most 200 items are shown. Snippets are not asked for, and an item's additional edits, such as an auto-import, are not applied.
+
+A code action that replaces the whole file is applied to just the lines it changes. An edit that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
+
+### When nothing happens
+
+- Tab indents, or says "no language server for LANGUAGE": add `lsp-LANGUAGE` to the settings.
+
+- "the LANGUAGE server is not serving this body": `:lsp-status` shows whether it started, and what it logged if it did not.
+
+- "language server: ..." on the status line: the server refused the request, often because it does not offer that feature.
 
 ## `@auto`
 
@@ -391,11 +460,17 @@ See `docs/dev/porting-notes.md` for the places this port deliberately differs fr
 
 ```text
 make build      # cargo build --workspace
+make release    # the same, optimised
+make run FILE=FILE.leo    # leotui
+make gui FILE=FILE.leo    # leoegui, release build
 make test       # cargo test --workspace
+make bench      # leolib's load times; LEO_EDITOR=... adds leo-editor's own outline
 make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Python Leo
 make lint       # rustfmt --check and clippy -D warnings
 make check      # lint, then test
 make audit      # Cargo.lock against the RustSec advisories (cargo-audit)
+cargo bench -p leoapp    # drawing and colouring a 5,000-line body
+cargo bench -p leolsp    # keeping language servers in step with the outline
 ```
 
 `.github/workflows/ci.yml` runs `make check` and `make corpus` on every push; the corpus job pins the leo-editor commit its expected files came from. `make audit` is not in CI, as it fetches the RustSec database.

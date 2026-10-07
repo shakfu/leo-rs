@@ -42,6 +42,8 @@ pub struct Palette {
     pub help: Color32,
     pub menu: Color32,
     pub menu_selected: Color32,
+    /// The text on `menu_selected`: the theme's, or black or white.
+    pub menu_selected_text: Color32,
     pub fg: Color32,
     pub dim: Color32,
     pub accent: Color32,
@@ -193,6 +195,7 @@ impl Palette {
         });
         let bufferline = face("ui.bufferline");
         let active = face("ui.bufferline.active");
+        let menu_selected = own("ui.menu.selected").and_then(bg_of).unwrap_or(selection);
         Palette {
             dark,
             bg,
@@ -202,7 +205,10 @@ impl Palette {
             popup,
             help: bg_of(face("ui.help")).unwrap_or(popup),
             menu: bg_of(face("ui.menu")).unwrap_or(popup),
-            menu_selected: own("ui.menu.selected").and_then(bg_of).unwrap_or(selection),
+            menu_selected,
+            menu_selected_text: own("ui.menu.selected")
+                .and_then(fg_of)
+                .unwrap_or_else(|| text_on(menu_selected)),
             fg,
             dim: own("ui.text.inactive")
                 .and_then(fg_of)
@@ -266,12 +272,16 @@ impl Palette {
         v.window_fill = self.menu;
         v.extreme_bg_color = self.bg;
         v.faint_bg_color = self.line;
-        v.override_text_color = Some(self.fg);
+        // Text takes each state's colour rather than one override, which
+        // egui puts before the selection's: a selected item's text is then
+        // the theme's, as sonokai's black on green.
+        v.override_text_color = None;
         v.selection.bg_fill = self.menu_selected;
-        v.selection.stroke = Stroke::new(1.0, self.fg);
+        v.selection.stroke = Stroke::new(1.0, self.menu_selected_text);
         v.window_stroke = Stroke::new(1.0, self.border);
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, self.border);
         v.widgets.noninteractive.bg_fill = self.panel;
+        v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, self.fg);
         // A control's box -- a checkbox, a radio button, a slider's rail, a
         // text field's frame -- must stand off the dialog it sits on, which
         // is the menu colour. So each state is the menu colour lifted toward
@@ -294,6 +304,7 @@ impl Palette {
         // A window's title bar and an open combo box take this: a quiet
         // step, not the menu's selection colour.
         v.widgets.open.weak_bg_fill = lift(0.10);
+        v.widgets.open.fg_stroke = Stroke::new(1.0, self.fg);
         v.widgets.open.bg_stroke = edge;
         // A text field's inside: darker than the dialog in a dark theme,
         // lighter in a light one, as the editor's own background is.
@@ -367,6 +378,23 @@ mod tests {
         assert_eq!(ansi(196), Color32::from_rgb(255, 0, 0));
         assert_eq!(ansi(232), Color32::from_rgb(8, 8, 8));
         assert_eq!(ansi(255), Color32::from_rgb(238, 238, 238));
+    }
+
+    #[test]
+    fn a_selected_item_takes_the_themes_menu_selected_text() {
+        let mut app = App::new(Document::new_empty(""));
+        app.depth = Depth::True;
+        let p = Palette::of(&app, false);
+        // The builtin theme: white on blue.
+        assert_eq!(p.menu_selected_text, ansi(15));
+        assert_ne!(p.menu_selected_text, p.fg);
+        let v = p.visuals();
+        assert_eq!(
+            v.override_text_color, None,
+            "it would win over the selection's"
+        );
+        assert_eq!(v.selection.stroke.color, p.menu_selected_text);
+        assert_eq!(v.text_color(), p.fg);
     }
 
     #[test]

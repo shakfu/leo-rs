@@ -5,10 +5,15 @@ What leo-editor has that leotui does not, and the other way round. This is a rec
 ## Method
 
 - Measured 2026-09-28, against leo-editor `e3b3841f64` (2026-09-15) and leo-rs `dcf413a` with that day's uncommitted work.
+
 - A Leo command is a function decorated with `@g.command`, `@g.commander_command` or `@cmd` in `leo/core` or `leo/commands`. Names stacked on one function are one command with aliases: 653 commands, 721 names.
+
 - Not counted: the 11 camelCase compatibility names from `g.command_alias`, names registered at run time (`@command` and `@button` nodes, chapters), and plugins, which have their own section.
+
 - leotui's commands are `COMMANDS` in `commands.rs`, the names `app/ex.rs` handles, and `ALIASES` in `minibuffer.rs`.
+
 - "Same name" is a Leo name leotui defines. "Equivalent" is leotui doing the job under another name or key, judged by hand. A same name can still behave differently; see the section of that name.
+
 - To regenerate: walk `leo/core` and `leo/commands` with Python's `ast`, collect each function's decorator names and the first sentence of its docstring, and set them against the names above.
 
 ## Summary
@@ -479,30 +484,48 @@ Headlines Leo acts on that name no file. None is ported; each depends on a featu
 ## Same name, different behaviour
 
 - `search-forward` and `search-backward` open `/` and `?`, which take a regex. Leo's search plain text, with the Find tab's options.
+
 - `find-next` and `find-prev` repeat the last `/` or `?`. Leo's use the Find tab's pattern and options.
+
 - `help` opens the key bindings. Leo's opens a help text.
+
 - `open-url-under-cursor` follows a section reference only. Leo's also opens urls, unls and gnxs.
+
 - `clone-find-all` and `clone-find-all-flattened` take a regex with smartcase, as `/` does.
+
 - `delete-marked-nodes` keeps the last top-level node, and keeps the selection if it survives.
+
 - `extract` reads no `@data extract-patterns` node.
 
 ## Other features
 
 - **Scripting.** `execute-script`, the `@button`, `@command`, `@rclick` and `@test` node kinds, and the `c`, `g` and `p` API. None ported. `leocub-vs-leotui.md` names Rhai as the path if it is ever wanted.
+
 - **Plugins.** 211 commands (215 names) in 46 of the 143 files in `leo/plugins`. The largest: `qt_frame.py` 28, `viewrendered3.py` 22, `leoscreen.py` 17, `active_path.py` 14, `viewrendered.py` 13, `bookmarks.py` 12. The plugin system itself is not ported.
-- **Settings.** Leo reads `@settings` trees in `leoSettings.leo`, `myLeoSettings.leo` and the outline itself: `@bool`, `@int`, `@string`, `@data`, `@shortcuts` and others. leotui reads `~/.config/leotui/config.toml`, and no settings node.
+
+- **Settings.** Leo reads `@settings` trees in `leoSettings.leo`, `myLeoSettings.leo` and the outline itself: `@bool`, `@int`, `@string`, `@data`, `@shortcuts` and others. leotui and leoegui read `~/.config/leo-rs/settings.toml`, and no settings node.
+
 - **Chapters.** The `@chapter` node kind and the `chapter-*` commands. Not ported.
+
 - **Outline formats.** `.leojs` (JSON) and `.db` (SQLite) outlines. Neither is read or written.
+
 - **The GUI.** Qt: menus, the log pane, the Find and Spell tabs, node icons, drag and drop, several outlines in tabs or windows, a second view of one outline, recent-files menus, and rendered views (`viewrendered*` plugins). leotui shows one outline per process, with a status line.
+
 - **Servers.** `leoserver.py` serves LeoJS and leoInteg; `leoBridge` embeds Leo in a Python program. Not ported; `ideas.md` lists an MCP server over `leolib`.
+
 - **Sessions and caches.** `session-*`, the persistence cache, and the `@persistence` node kind. Between runs leotui remembers which nodes are unfolded and marked, in `~/.leo/leo-rs/` (`state.rs`), and nothing else.
 
 ## leotui features with no Leo counterpart
 
 - The body is a vim buffer: operators, motions, text objects, counts, `.`, registers and VISUAL. Leo's own vim mode (`leoVim.py`, 17 commands) covers a subset.
+
 - `:[range]s` in a body, and `:bufdo %s` over every body, each one undo step.
+
 - `gd`, the section jump on a key.
+
 - tree-sitter highlighting, and themes.
+
 - `Ctrl-c` never discards typed text.
+
 - `:set` options, read as vim reads them.
 

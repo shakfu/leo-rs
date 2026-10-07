@@ -1,6 +1,6 @@
-//! The user's settings file, `~/.config/leotui/settings.toml`, read by
+//! The user's settings file, `~/.config/leo-rs/settings.toml`, read by
 //! leotui and leoegui both. An older `config.toml` beside it is renamed to it
-//! once.
+//! once, and an older `~/.config/leotui/` directory to `leo-rs/`.
 //!
 //! TOML, in the subset `theme` already reads: `key = "value"` lines and `#`
 //! comments. The keys:
@@ -28,9 +28,35 @@ pub fn config_home() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
 }
 
+/// The directory both front ends keep their files in: the settings, the
+/// session, the recent outlines and themes.
+pub fn dir() -> Option<PathBuf> {
+    config_home().map(|c| dir_in(&c))
+}
+
+/// `home/leo-rs`, or `home/leotui`, its earlier name, while only that
+/// exists: `migrate_dir` could not rename it.
+fn dir_in(home: &Path) -> PathBuf {
+    let (new, old) = (home.join("leo-rs"), home.join("leotui"));
+    match !new.exists() && old.exists() {
+        true => old,
+        false => new,
+    }
+}
+
+/// Rename `home/leotui` to `home/leo-rs` if only the old one exists. The
+/// rename keeps a link a dotfiles manager made. Startup does it, in `load`,
+/// rather than every lookup, so reading a theme never moves a directory.
+fn migrate_dir(home: &Path) {
+    let (new, old) = (home.join("leo-rs"), home.join("leotui"));
+    if !new.exists() && old.exists() {
+        let _ = std::fs::rename(&old, &new);
+    }
+}
+
 /// Where the settings file lives.
 pub fn path() -> Option<PathBuf> {
-    config_home().map(|c| c.join("leotui/settings.toml"))
+    dir().map(|d| d.join("settings.toml"))
 }
 
 /// Rename the settings file's old name, `config.toml`, to `settings.toml`
@@ -135,6 +161,9 @@ impl Default for Config {
 
 /// Read the settings file. A missing file is an empty one.
 pub fn load() -> Config {
+    if let Some(home) = config_home() {
+        migrate_dir(&home);
+    }
     let Some(path) = path() else {
         return Config::default();
     };
@@ -598,12 +627,54 @@ mod tests {
     #[test]
     fn saving_creates_the_directory_and_the_file() {
         let s = Scratch::new("create");
-        let path = s.0.join("leotui/settings.toml");
+        let path = s.0.join("leo-rs/settings.toml");
         save_theme(&path, "nord").unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "theme = \"nord\"\n"
         );
+    }
+
+    #[test]
+    fn the_old_directory_is_renamed_with_everything_in_it() {
+        let s = Scratch::new("migrate");
+        std::fs::create_dir_all(s.0.join("leotui/themes")).unwrap();
+        std::fs::write(s.0.join("leotui/settings.toml"), "theme = \"nord\"\n").unwrap();
+        std::fs::write(s.0.join("leotui/session"), "x").unwrap();
+        assert_eq!(
+            dir_in(&s.0),
+            s.0.join("leotui"),
+            "read in place until moved"
+        );
+        migrate_dir(&s.0);
+        let dir = dir_in(&s.0);
+        assert_eq!(dir, s.0.join("leo-rs"));
+        assert!(!s.0.join("leotui").exists());
+        assert!(dir.join("themes").is_dir());
+        assert_eq!(std::fs::read_to_string(dir.join("session")).unwrap(), "x");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.toml")).unwrap(),
+            "theme = \"nord\"\n"
+        );
+    }
+
+    #[test]
+    fn the_new_directory_wins_and_the_old_is_left_alone() {
+        let s = Scratch::new("both");
+        std::fs::create_dir_all(s.0.join("leotui")).unwrap();
+        std::fs::create_dir_all(s.0.join("leo-rs")).unwrap();
+        migrate_dir(&s.0);
+        assert_eq!(dir_in(&s.0), s.0.join("leo-rs"));
+        assert!(s.0.join("leotui").exists());
+    }
+
+    #[test]
+    fn no_directory_is_made_when_there_is_nothing_to_move() {
+        let s = Scratch::new("none");
+        std::fs::create_dir_all(&s.0).unwrap();
+        migrate_dir(&s.0);
+        assert_eq!(dir_in(&s.0), s.0.join("leo-rs"));
+        assert!(!s.0.join("leo-rs").exists());
     }
 
     #[test]

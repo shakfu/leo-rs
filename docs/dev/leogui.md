@@ -7,9 +7,13 @@ A design record. Proposed on 2026-10-05 against leo-rs `8d3a5d8` (v0.6.0) and bu
 gpui was evaluated first and set aside:
 
 - No usable crates.io release. `gpui` 0.2.2 dates from 2025-10-22 ([crates.io](https://crates.io/crates/gpui)). The README's `gpui_platform` is not published. Apps pin a Zed git rev, as [zaku](https://github.com/buildzaku/zaku) does (`rev = "bd747337d7"`), and a git dependency cannot be published to crates.io.
+
 - No API stability: "pre-1.0. There will often be breaking changes between versions" ([README](https://github.com/zed-industries/zed/blob/main/crates/gpui/README.md)).
+
 - Toolchain: Zed pins Rust 1.98.1 and edition 2024. macOS builds need full Xcode.
+
 - `gpui` is Apache-2.0, but Zed's `editor`, `multi_buffer`, `language`, `text`, `rope`, `vim`, `ui`, `workspace` and `project` are GPL-3.0-or-later (each crate's `Cargo.toml`). zaku is AGPL-3.0. Reusing either editor makes the binary GPL.
+
 - gpui-kit's `Editor` (Apache-2.0) owns its text and cursor, and has no vim mode ([repo](https://github.com/longbridge/gpui-kit)). leotui writes every change through `Document::set_body` and its vim layer owns the cursor.
 
 Either way the body is a custom element over leotui's vim layer. egui (eframe 0.36) gives that with stable crates.io releases.
@@ -54,17 +58,27 @@ The proposal's case for ropey was index conversion, chiefly UTF-16 columns for L
 A server sees each external file as `external::file_contents` writes it; a node in no file is an `untitled:` document of its body, directives blanked by `goto::body_as_code`.
 
 - `goto::line_map_of` maps each file line to a gnx, a body row, and the indent `@others` put before it, or no column for a sentinel or directive. It refuses a file the sentinel writer does not write: the check is that `write_to_string` with the file's sentinel setting gives the same text. `@file`, `@clean`, `@nosent` and code `@auto` map; `@edit`, `@asis` and `@auto` of markdown, org, rst or otl do not. The proposal assumed every `@auto` file went through `AtWrite`; the line importers write their own.
+
 - Coverage on `demo/LeoPyRef.leo`: 374 of 381 roots map. The 7 that do not are `@edit`.
+
 - Servers start only when the settings name one (`lsp-python = "pylsp"`). rust-analyzer runs build scripts, so a `.leo` file from someone else must not choose a server.
+
 - Sync: full text, 150 ms after the outline stops changing, at once on moving to another node. INSERT's working copy is not sent; the commit is, as neovim's default `update_in_insert = false`.
+
 - Keys: `K` hover, `Ctrl-]` definition, `]d` `[d` diagnostics, neovim's. `:lsp-rename NAME` and `:lsp-diagnostics`. An answer that arrives during INSERT or a `:` line is not acted on.
+
 - Edits apply all or none, as one undo step. Refused: an edit across a sentinel or into another body, an edit to a file the outline does not hold, file operations, and a rename whose document changed since the request.
+
 - Checked against Apple clangd 21.0.0: diagnostics land on the body row and column behind an `@others` indent, hover and definition answer from a root into a child node, and a rename edits two nodes and undoes as one.
+
 - Not built: completion. INSERT-mode completion needs a popup and an insertion protocol in the vim layer; neither front end has one yet.
 
 ## Open
 
 1. Completion, above.
-2. leoegui reads leotui's settings and themes, `~/.config/leotui/`. One file for both front ends is deliberate for now; a rename to a shared name would move users' files.
+
+2. Done: both front ends read `~/.config/leo-rs/`. `config::load` renames an older `~/.config/leotui/` to it once, at startup.
+
 3. IME composition in leoegui is untested on a real input method. The code follows egui's events; whether winit sends `Commit` or `Text` for ASCII typing with IME allowed differs by platform.
+
 4. Diagnostics drawn in leoegui are untested on screen: the display was off when it was ready to check. The same marks are tested in leotui's render test.

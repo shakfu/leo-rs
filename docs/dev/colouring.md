@@ -61,6 +61,7 @@ The `qdef` edit's changed ranges cover all 4,999 lines below it: error recovery 
 A Helix-style design keeps a tree per body, applies each change with `Tree::edit`, and queries the visible lines. Two places to re-parse:
 
 - **On the UI thread.** A keystroke costs 0.3 ms when the edit keeps the syntax valid, and 6.7-12 ms when it breaks it. Typing breaks the syntax often. `patch` costs 1.8 ms a key (measured on another machine, not re-run). A first visit still needs the 12 ms parse, so the visible-first window and the worker stay. Not a clear win, for a large rewrite: injections, `@language` regions and `plan`'s masking move to the lower-level API.
+
 - **On the worker.** The UI thread queries the visible lines against the latest tree: about 0.07 ms a frame. The worker re-parses in 0.25 ms after a typical pause, 12 ms at worst, against 21 ms for a whole recolour now. Colours follow a whole-document tree, so an unclosed string no longer shows wrong colours beyond `patch`'s 20-line window for about 320 ms. The cost: the UI thread may query a tree one edit behind the text, so ranges must be shifted by the pending edits; plus the rewrite above.
 
 The worker variant is the one that could pay. It is deferred because no measured problem remains for it to solve: a first frame takes 1.3 ms, a key about 1.8 ms, and the whole colouring is off the UI thread. `TODO.md` keeps it under Low.
@@ -68,7 +69,9 @@ The worker variant is the one that could pay. It is deferred because no measured
 Reasons to revisit:
 
 - A profile of continuous typing in a long body shows the 21 ms recolours cost real CPU, for example on battery.
+
 - Users notice wrong colours far from an edit, such as below an unclosed string.
+
 - A grammar or body shape not measured here behaves worse. Every number above is Python, one body shape, and one edit rather than a typing sequence.
 
 The cheapest deciding measurement: replay a recorded typing session into a long body, and compare the worker's total CPU now with an estimate for the worker variant.

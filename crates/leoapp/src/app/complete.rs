@@ -42,18 +42,45 @@ impl App {
         start
     }
 
+    /// The character before the cursor.
+    fn char_before_cursor(&self, lines: &[String]) -> Option<char> {
+        let (row, col) = self.editor.cursor;
+        lines
+            .get(row)
+            .and_then(|l| col.checked_sub(1).and_then(|c| l.chars().nth(c)))
+    }
+
     /// Whether Tab completes here rather than indents: after a word
     /// character or a dot, in a body a server has.
     pub(super) fn completes_here(&self, lines: &[String]) -> bool {
-        let (row, col) = self.editor.cursor;
-        let before = lines
-            .get(row)
-            .and_then(|l| col.checked_sub(1).and_then(|c| l.chars().nth(c)));
         let served = self
             .lsp
             .as_ref()
             .is_some_and(|l| l.serves(self.current.gnx(self.outline())));
-        served && before.is_some_and(|c| is_word(c) || c == '.')
+        served
+            && self
+                .char_before_cursor(lines)
+                .is_some_and(|c| is_word(c) || c == '.')
+    }
+
+    /// Why Tab after a dot cannot complete, when no server has this body.
+    /// Indenting after a dot is never what was meant, so Tab says this
+    /// instead; after a word it still indents.
+    pub(super) fn no_completion_after_dot(&self, lines: &[String]) -> Option<String> {
+        if self.char_before_cursor(lines) != Some('.') {
+            return None;
+        }
+        let language = self.outline().get_language(&self.current);
+        let named = self.settings.servers.iter().any(|s| s.language == language);
+        Some(match (self.settings.lsp, named) {
+            (false, _) => "no completion: language servers are off (lsp = false)".into(),
+            (true, false) => {
+                format!("no completion: no language server for {language}; set lsp-{language} in the settings")
+            }
+            (true, true) => {
+                format!("no completion: the {language} server is not serving this body; see :lsp-status")
+            }
+        })
     }
 
     /// Ask the server what could be typed at the cursor, after sending it
@@ -239,6 +266,51 @@ mod tests {
 
     fn key(app: &mut App, code: KeyCode) {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// INSERT at the end of `text`, the root's only line.
+    fn typing_after(text: &str) -> App {
+        let mut doc = Document::new_empty("");
+        let root = doc.outline().root_position().unwrap();
+        doc.set_body(&root, &format!("@language python\n{text}\n"));
+        doc.clear_undo();
+        let mut app = App::new(doc);
+        app.focus = Focus::Body;
+        app.editor.cursor = (1, 0);
+        app.begin_body_edit();
+        app.editor.cursor = (1, text.chars().count());
+        app
+    }
+
+    #[test]
+    fn tab_after_a_dot_with_no_server_says_why_and_does_not_indent() {
+        let mut app = typing_after("os.");
+        key(&mut app, KeyCode::Tab);
+        assert_eq!(app.body_buffer()[1], "os.");
+        assert_eq!(
+            app.message,
+            "no completion: no language server for python; set lsp-python in the settings"
+        );
+
+        let mut app = typing_after("os.");
+        app.settings.lsp = false;
+        key(&mut app, KeyCode::Tab);
+        assert!(app.message.contains("lsp = false"), "{}", app.message);
+
+        let mut app = typing_after("os.");
+        app.settings.servers.push(leolsp::ServerConfig {
+            language: "python".into(),
+            command: "pylsp".into(),
+        });
+        key(&mut app, KeyCode::Tab);
+        assert!(app.message.contains(":lsp-status"), "{}", app.message);
+    }
+
+    #[test]
+    fn tab_after_a_word_with_no_server_still_indents() {
+        let mut app = typing_after("os");
+        key(&mut app, KeyCode::Tab);
+        assert_eq!(app.body_buffer()[1], "os    ");
     }
 
     #[test]

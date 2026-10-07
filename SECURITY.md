@@ -7,6 +7,7 @@ A `.leo` file is as dangerous as a Makefile from the same source. Opening one an
 The guards, and what they leave open, are in the README under "A `.leo` file names the paths it writes". In short:
 
 - `Outline::may_overwrite` refuses a file the outline has not read. `@clean` and `@nosent` are exempt, as in Leo, so either can overwrite an existing file the outline never read.
+
 - Nothing stops a new file in an existing directory.
 
 A front end that opens untrusted outlines must check `Outline::full_path` against a directory of its own choosing before every write. leotui does not; it is meant for outlines you trust.
@@ -14,8 +15,11 @@ A front end that opens untrusted outlines must check `Outline::full_path` agains
 Reading is not meant to be dangerous. These are parsers of untrusted input, and a crash, hang or unbounded allocation in any of them is a bug worth reporting:
 
 - the `.leo` XML reader (`leofile`);
+
 - the `@file` sentinel reader (`atfile_read`);
+
 - the pickle reader for unknown attributes (`pickle`);
+
 - the `@auto` importers (`importers`).
 
 `fuzz/` holds `cargo-fuzz` targets for the sentinel reader and the pickle reader. Nothing in a `.leo` file is executed: leo-rs has no scripting, so `@button` and `@command` nodes are text.

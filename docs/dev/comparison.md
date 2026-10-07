@@ -3,6 +3,7 @@
 A comparison of leo-rs (`leolib` and `leotui`) with the Qt-based leo-editor.
 
 - Code, tests and commands were measured on 2026-09-28: leo-rs `dcf413a` with that day's uncommitted work, leo-editor `e3b3841f64`.
+
 - Load time was measured on 2026-09-10 and not since: leo-rs `929774f` with the uncommitted regex cache in `atfile_read.rs`, leo-editor `3acfadd8d0`, Python 3.14.7, macOS.
 
 `delta.md` sets each Leo command, directive and node kind against leotui.

@@ -257,6 +257,10 @@ impl App {
             KeyCode::Enter => self.editor.insert_newline(&mut lines),
             KeyCode::Backspace => self.editor.insert_backspace(&mut lines),
             KeyCode::Tab => {
+                if let Some(why) = self.no_completion_after_dot(&lines) {
+                    self.message = why;
+                    return;
+                }
                 for _ in 0..4 {
                     self.editor.insert_char(&mut lines, ' ');
                 }

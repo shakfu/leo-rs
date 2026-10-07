@@ -363,12 +363,14 @@ pub fn names() -> Vec<String> {
 
 /// Where a theme file may live, nearest first.
 ///
-/// leotui's own directory, then Helix's, so a theme can be kept here without
-/// Helix installed and Helix's hundred can be used when it is.
+/// leo-rs's own directory, then Helix's, so a theme can be kept here
+/// without Helix installed and Helix's hundred can be used when it is.
 fn theme_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
+    if let Some(dir) = crate::config::dir() {
+        out.push(dir.join("themes"));
+    }
     if let Some(config) = crate::config::config_home() {
-        out.push(config.join("leotui/themes"));
         out.push(config.join("helix/themes"));
     }
     if let Some(runtime) = std::env::var_os("HELIX_RUNTIME") {

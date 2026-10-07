@@ -34,7 +34,7 @@ fn cheatsheet() -> String {
 
 /// Every key spec bound in NORMAL mode, straight from the binary.
 fn bindings() -> Vec<String> {
-    let out = Command::new(env!("CARGO_BIN_EXE_leotui"))
+    let out = leotui()
         .arg("--key-specs")
         .output()
         .expect("could not run leotui --key-specs");
@@ -85,4 +85,12 @@ fn the_readme_mentions_the_keys_markdown_cannot_quote() {
         sheet.contains("Ctrl-`"),
         "Leo's Ctrl-` chord is undocumented"
     );
+}
+
+/// leotui with no settings: the user's are neither read nor moved.
+fn leotui() -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_leotui"));
+    let none = std::env::temp_dir().join(format!("leotui-no-config-{}", std::process::id()));
+    c.env("XDG_CONFIG_HOME", none);
+    c
 }
