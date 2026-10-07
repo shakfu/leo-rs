@@ -2,7 +2,9 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
-## [Unreleased]
+## [0.6.1]
+
+Tidies up after 0.6.0, whose desktop front end was published as `leoegui` and then withdrawn. `leogui` 0.6.0 on crates.io already had the rename and the Windows fix below; the other crates had neither.
 
 ### Added
 
@@ -13,6 +15,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 - **leoegui is renamed leogui**: the crate, its binaries `leogui` and `leogui-glow`, and its release archives. The `leoegui` crate was removed from crates.io after its one version, 0.6.0; `cargo install leogui` replaces it.
 
 ### Fixed
+
+- **A clone two external files disagree on is no longer overwritten silently.** A node cloned into two files took the text of the one read last, so an edit made in one file was lost when the other still held the old text: an example edited in `@clean README.md` and stale in `@file tests/test_readme.py`, say. The node still keeps the later file's text, as Leo does, but the read now reports the conflict on the status line and in `:messages`, and keeps both texts with a diff under a `Recovered Nodes` node, in Leo's layout for it. Leo itself loses the edit; see `docs/dev/porting-notes.md`. `ReadResult::conflicts` lists them.
 
 - **leogui on Windows opens no console window.** Release builds of `leogui` and `leogui-glow` use the Windows GUI subsystem; debug builds keep the console, so `--help` and errors still print there.
 

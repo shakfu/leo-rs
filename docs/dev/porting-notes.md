@@ -10,6 +10,8 @@ Where this port departs from `leo/leolib`, and why. Everything not listed here f
 
 ## Deliberate behaviour changes
 
+**A clone two external files disagree on is reported, with both texts kept.** `FastAtRead` sets every body it reads (`leoAtFile.py`, the post pass of `scan_lines`), so a node cloned into two files takes the text of the one read last, and an edit made in the other is lost without a word. Leo still has the display for this, `fc.handleNodeConflicts` and its `Recovered Nodes` node, but nothing fills `c.nodeConflictList` any more. Here `external::read_files` compares each clone across the files of one read; the node keeps the later file's text as in Leo, and a `Recovered Nodes` node holds both, with a diff, in Leo's own layout.
+
 **The reader detaches the whole subtree before rebuilding it.** `FastAtRead.read_into_root` clears only the root's children (`leoAtFile.py`, `read_into_root`). Re-reading an unchanged `@file` therefore appends a second parent link to every node below it, and `isCloned` starts answering true for all of them. `Outline::detach_subtree` removes the links first, so every link the scan makes is fresh. The resulting tree is the same, and the parent lists do not accumulate. One case still does: a clone shared with another `@file` tree gains a duplicate parent link (`TODO.md`).
 
 **The write bit is recomputed on every save.** Leo sets `v.setWriteBit()` in `put_v_element` and never clears it, so a node that has since moved out of an `@file` tree keeps a stale answer. `put_v_elements` clears every write bit first. For an outline read from a file -- where the bits start clear -- the output is identical, which the corpus test checks.

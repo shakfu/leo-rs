@@ -255,6 +255,17 @@ pub fn read_report_message(report: &leolib::external::ReadResult) -> Option<Stri
             n => format!("{n} external files not read; first: {}", first.error),
         });
     }
+    if let Some(first) = report.conflicts.first() {
+        return Some(match report.conflicts.len() {
+            1 => format!(
+                "{} differs between external files; both texts are under Recovered Nodes",
+                first.new.headline
+            ),
+            n => format!(
+                "{n} cloned nodes differ between external files; both texts are under Recovered Nodes"
+            ),
+        });
+    }
     let first = report.warnings.first()?;
     Some(match report.warnings.len() {
         1 => format!("{}: {}", first.headline, first.message),
@@ -369,11 +380,17 @@ pub fn read_report_lines(report: &leolib::external::ReadResult) -> Vec<String> {
         .errors
         .iter()
         .map(|e| format!("not read: {}: {}", e.headline, e.error));
+    let conflicts = report.conflicts.iter().map(|c| {
+        format!(
+            "clone conflict: {}: {} and {} differ; kept {}",
+            c.new.headline, c.old.path, c.new.path, c.new.path
+        )
+    });
     let warnings = report
         .warnings
         .iter()
         .map(|w| format!("{}: {}", w.headline, w.message));
-    errors.chain(warnings).collect()
+    errors.chain(conflicts).chain(warnings).collect()
 }
 
 /// How many messages `:messages` keeps, as vim's default.

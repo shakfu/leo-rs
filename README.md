@@ -1,8 +1,8 @@
 # leo-rs
 
-A minimal Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`), with two front ends over it: `leotui` in the terminal and `leogui` on the desktop.
+A minimal Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`), with two frontends using it: `leotui` in the terminal and `leogui` on the desktop.
 
-Leo's outline model was re-implemented in rust in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. Nothing in `leolib` depends on a front end. The front ends share `leoapp`, which holds the editor's state, commands and keys, so leotui and leogui take the same keys, commands, settings and themes.
+Leo's outline model was re-implemented in rust as `leolib`. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. Nothing in `leolib` depends on a frontend. The frontends share `leoapp`, which holds the editor's state, commands and keys, so leotui and leogui take the same keys, commands, settings and themes.
 
 ![leogui, the desktop front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/gui.png)
 

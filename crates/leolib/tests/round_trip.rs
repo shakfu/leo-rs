@@ -1308,3 +1308,111 @@ fn a_move_inside_an_at_file_tree_reaches_the_file() {
         .collect();
     assert_eq!(heads, vec![before[1].clone(), before[0].clone()]);
 }
+
+/// An outline whose example node is cloned into `@clean README.md` and
+/// `@file tests/test_readme.py`, with both files written. Returns the
+/// `.leo` path.
+fn example_in_two_files(dir: &std::path::Path) -> String {
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    let leo_path = dir.join("doc.leo").to_string_lossy().to_string();
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<leo_file xmlns:leo="http://leoeditor.com/namespaces/leo-python-editor/1.1" >
+<leo_header file_format="2"/>
+<vnodes>
+<v t="a.1"><vh>@clean README.md</vh>
+<v t="a.2"><vh>&lt;&lt; example &gt;&gt;</vh></v>
+</v>
+<v t="a.3"><vh>@file tests/test_readme.py</vh>
+<v t="a.2"></v>
+</v>
+</vnodes>
+<tnodes>
+<t tx="a.1">@language md
+Adding:
+
+```python
+&lt;&lt; example &gt;&gt;
+```
+</t>
+<t tx="a.2">assert 2 + 3 == 5
+</t>
+<t tx="a.3">@language python
+def test_example():
+    &lt;&lt; example &gt;&gt;
+</t>
+</tnodes>
+</leo_file>
+"#;
+    fs::write(&leo_path, xml).unwrap();
+    let mut o = leolib::open_outline(&leo_path, false).unwrap();
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.written.len(), 2, "{:?}", result.errors);
+    leo_path
+}
+
+#[test]
+fn a_clone_two_files_disagree_on_keeps_both_texts_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo_path = example_in_two_files(dir.path());
+    // The README's example is edited outside the outline; the test file still
+    // holds the old text, and is read after it.
+    let readme = dir.path().join("README.md");
+    let text = fs::read_to_string(&readme).unwrap();
+    let edited = text.replace(
+        "assert 2 + 3 == 5\n",
+        "assert 2 + 3 == 5\nassert 1 + 1 == 2\n",
+    );
+    assert_ne!(text, edited);
+    fs::write(&readme, &edited).unwrap();
+
+    let (o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert_eq!(report.conflicts.len(), 1, "{:?}", report.conflicts);
+    let c = &report.conflicts[0];
+    assert_eq!(c.gnx, "a.2");
+    assert!(c.old.path.ends_with("README.md"), "{}", c.old.path);
+    assert_eq!(c.old.body, "assert 2 + 3 == 5\nassert 1 + 1 == 2\n");
+    assert!(c.new.path.ends_with("test_readme.py"), "{}", c.new.path);
+    assert_eq!(c.new.body, "assert 2 + 3 == 5\n");
+
+    // The node keeps the later file's text, as Leo does; the edit survives
+    // under Recovered Nodes.
+    let heads: Vec<(String, String)> = o
+        .all_positions()
+        .iter()
+        .map(|p| (p.h(&o).to_string(), p.b(&o).to_string()))
+        .collect();
+    let recovered = heads.iter().position(|(h, _)| h == "Recovered Nodes");
+    let recovered = recovered.expect("a Recovered Nodes node");
+    let rest = &heads[recovered + 1..];
+    assert_eq!(
+        rest[0].0,
+        "Recovered node \"<< example >>\" from test_readme.py"
+    );
+    assert!(
+        rest[0].1.contains("+ assert 2 + 3 == 5") || rest[0].1.contains("  assert 2 + 3 == 5"),
+        "{}",
+        rest[0].1
+    );
+    assert!(rest[0].1.contains("- assert 1 + 1 == 2"), "{}", rest[0].1);
+    assert_eq!(
+        rest[1],
+        ("old:<< example >>".to_string(), c.old.body.clone())
+    );
+    assert_eq!(
+        rest[2],
+        ("new:<< example >>".to_string(), c.new.body.clone())
+    );
+    assert!(o.changed, "the recovered nodes need saving");
+}
+
+#[test]
+fn a_clone_both_files_agree_on_is_no_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo_path = example_in_two_files(dir.path());
+    let (o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+    assert!(o
+        .all_positions()
+        .iter()
+        .all(|p| p.h(&o) != "Recovered Nodes"));
+}

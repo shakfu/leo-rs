@@ -78,7 +78,8 @@ pub fn open_outline_with_report(
         }
         false => external::ReadResult::default(),
     };
-    o.changed = false;
+    // Recovered Nodes holds text no file has, so it needs saving.
+    o.changed = !report.conflicts.is_empty();
     Ok((o, report))
 }
 

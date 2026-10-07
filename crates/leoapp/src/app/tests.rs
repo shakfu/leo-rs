@@ -2114,3 +2114,29 @@ fn a_long_body_is_coloured_whole_by_a_later_poll() {
     }
     assert_eq!(*app.body_view(screen).spans, whole);
 }
+
+#[test]
+fn a_clone_conflict_is_on_the_status_line_and_in_the_log() {
+    use leolib::external::{CloneConflict, NodeText, ReadResult};
+    let text = |path: &str, body: &str| NodeText {
+        path: path.into(),
+        headline: "<< example >>".into(),
+        body: body.into(),
+    };
+    let report = ReadResult {
+        conflicts: vec![CloneConflict {
+            gnx: "a.2".into(),
+            old: text("/p/README.md", "new\n"),
+            new: text("/p/tests/t.py", "old\n"),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        super::read_report_message(&report).as_deref(),
+        Some("<< example >> differs between external files; both texts are under Recovered Nodes")
+    );
+    assert_eq!(
+        super::read_report_lines(&report),
+        vec!["clone conflict: << example >>: /p/README.md and /p/tests/t.py differ; kept /p/tests/t.py"]
+    );
+}

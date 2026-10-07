@@ -5,13 +5,14 @@
 //! `@<file>` node's own kind decides how it is read. Using one reader for all
 //! of them reports every non-sentinel file as invalid.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::atclean;
 use crate::atfile_read;
 use crate::atfile_write;
 use crate::error::{Error, Result};
 use crate::langdata;
+use crate::node::VnodeId;
 use crate::outline::Outline;
 use crate::position::Position;
 use crate::util;
@@ -54,6 +55,35 @@ pub struct ReadResult {
     /// Files the reader normalized. Writing the node back changes the file on
     /// disk even if nobody edits it, so a front end should say so.
     pub warnings: Vec<FileNote>,
+    /// Cloned nodes that two files read in one pass gave different text.
+    /// Each is also kept under a `Recovered Nodes` node.
+    pub conflicts: Vec<CloneConflict>,
+}
+
+/// A cloned node to which two external files gave different text.
+///
+/// The node keeps `new`, the later file's text, as Leo does. Leo's reader
+/// replaces it without a word, so an edit made in one file is lost when another
+/// still holds the old text; this port keeps both for the user to choose.
+#[derive(Debug, Clone)]
+pub struct CloneConflict {
+    /// The node's gnx.
+    pub gnx: String,
+    /// What the earlier file gave it.
+    pub old: NodeText,
+    /// What the later file gave it, which the node keeps.
+    pub new: NodeText,
+}
+
+/// A node's text as one external file gave it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeText {
+    /// The file's full path.
+    pub path: String,
+    /// The headline.
+    pub headline: String,
+    /// The body.
+    pub body: String,
 }
 
 #[derive(Debug, Default)]
@@ -147,14 +177,22 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
 /// (#4385); [`refresh_files`] reads it anyway.
 pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
     let mut result = ReadResult::default();
+    let mut seen: HashMap<VnodeId, NodeText> = HashMap::new();
     for p in files {
         match read_file_at_position(o, &p) {
-            Ok(true) => {
-                // The tree now matches the file; an `@clean` merge set bits.
-                o.clear_dirty_in_tree(&p);
-                result.read += 1
+            Ok(read) => {
+                if read {
+                    // The tree now matches the file; an `@clean` merge set bits.
+                    o.clear_dirty_in_tree(&p);
+                    result.read += 1;
+                }
+                // A file skipped as unchanged already matches its tree, so it
+                // still takes part: a later file must not overwrite it unseen.
+                let path = o.full_path(&p);
+                result
+                    .conflicts
+                    .extend(clone_conflicts(o, &p, &path, &mut seen));
             }
-            Ok(false) => {}
             Err(error) => result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
                 path: o.full_path(&p),
@@ -170,7 +208,111 @@ pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
             });
         }
     }
+    if !result.conflicts.is_empty() {
+        add_recovered_nodes(o, &result.conflicts);
+    }
     result
+}
+
+/// The clones in the tree at p, just read from `path`, whose text differs
+/// from what an earlier file in this read gave them. Records each clone's
+/// text in `seen` for the files after.
+///
+/// Only a node with more than one parent can be in two files.
+fn clone_conflicts(
+    o: &Outline,
+    p: &Position,
+    path: &str,
+    seen: &mut HashMap<VnodeId, NodeText>,
+) -> Vec<CloneConflict> {
+    let mut out = Vec::new();
+    for q in p.self_and_subtree(o) {
+        if o.node(q.v).parents.len() < 2 {
+            continue;
+        }
+        let now = NodeText {
+            path: path.to_string(),
+            headline: q.h(o).to_string(),
+            body: q.b(o).to_string(),
+        };
+        if let Some(was) = seen.get(&q.v) {
+            let differs = was.headline != now.headline || was.body != now.body;
+            if was.path != now.path && differs {
+                out.push(CloneConflict {
+                    gnx: q.gnx(o).to_string(),
+                    old: was.clone(),
+                    new: now.clone(),
+                });
+            }
+        }
+        seen.insert(q.v, now);
+    }
+    out
+}
+
+/// A last top-level `Recovered Nodes` node, as Leo's `handleNodeConflicts`
+/// makes: per conflict, a child holding a diff, with the old and the new
+/// text as its children.
+fn add_recovered_nodes(o: &mut Outline, conflicts: &[CloneConflict]) {
+    let Some(mut last) = o.root_position() else {
+        return;
+    };
+    while let Some(next) = last.next(o) {
+        last = next;
+    }
+    let root = o.insert_after(&last);
+    o.set_headline(&root, "Recovered Nodes");
+    for c in conflicts {
+        let child = o.insert_as_last_child(&root);
+        let file = std::path::Path::new(&c.new.path)
+            .file_name()
+            .map_or(c.new.path.clone(), |f| f.to_string_lossy().to_string());
+        o.set_headline(
+            &child,
+            &format!("Recovered node \"{}\" from {file}", c.old.headline),
+        );
+        o.set_body(&child, &conflict_report(c));
+        for (tag, text) in [("old", &c.old), ("new", &c.new)] {
+            let n = o.insert_as_last_child(&child);
+            o.set_headline(&n, &format!("{tag}:{}", text.headline));
+            o.set_body(&n, &text.body);
+        }
+    }
+}
+
+/// Which files disagreed, and a line diff of the bodies, `- ` for the
+/// old text and `+ ` for the kept one.
+fn conflict_report(c: &CloneConflict) -> String {
+    let mut out = format!(
+        "gnx: {}\nold: {}\nnew, kept: {}\n",
+        c.gnx, c.old.path, c.new.path
+    );
+    if c.old.body == c.new.body {
+        out += &format!(
+            "\nHeadline changed...\nold headline: {}\nnew headline: {}\n",
+            c.old.headline, c.new.headline
+        );
+        return out;
+    }
+    out += "\nDiff...\n";
+    let a = util::split_lines_no_ends(&c.old.body);
+    let b = util::split_lines_no_ends(&c.new.body);
+    for op in crate::seqmatch::SequenceMatcher::new(&a, &b).opcodes() {
+        use crate::seqmatch::Tag;
+        if op.tag == Tag::Equal {
+            for line in &a[op.ai..op.aj] {
+                out += &format!("  {line}\n");
+            }
+            continue;
+        }
+        for line in &a[op.ai..op.aj] {
+            out += &format!("- {line}\n");
+        }
+        for line in &b[op.bi..op.bj] {
+            out += &format!("+ {line}\n");
+        }
+    }
+    out
 }
 
 /// Leo's `refresh-from-disk`: [`read_files`], first forgetting each `@clean`

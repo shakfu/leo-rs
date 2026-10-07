@@ -95,7 +95,7 @@ def test_add():
 
 ## Plan
 
-1. **Clone conflicts, in leolib.** On read, report a clone whose body differs between external files rather than let the last file read win. A correctness fix on its own, found by the spike. Not yet checked: what Python Leo does here.
+1. **Clone conflicts, in leolib.** Done 2026-10-07: a clone two files disagree on is reported on read, and both texts kept under `Recovered Nodes` (`docs/dev/porting-notes.md`). Python Leo keeps the last file's text without a word.
 2. **`@auto-lit` parse and exact writer, in leolib.** Fences and prose runs as nodes, byte-identical round trip, corpus cases.
 3. **Open a real document.** An entangled document from entangled-rs's `examples/`, with step 2 only: does the outline read well? Cheap, and it gates step 4.
 4. **leo-entangled.** `file=` through entangled's tangle, `:entangled-check`, then `include=`.

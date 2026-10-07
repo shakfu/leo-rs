@@ -2195,7 +2195,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "leoapp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "criterion",
  "leolib",
@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "leogui"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "clap",
  "eframe",
@@ -2237,7 +2237,7 @@ dependencies = [
 
 [[package]]
 name = "leolib"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "criterion",
  "once_cell",
@@ -2249,7 +2249,7 @@ dependencies = [
 
 [[package]]
 name = "leolsp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "criterion",
  "leolib",
@@ -2259,14 +2259,14 @@ dependencies = [
 
 [[package]]
 name = "leomcp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "leotui"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "clap",
  "crossterm",

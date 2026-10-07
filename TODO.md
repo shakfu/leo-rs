@@ -4,6 +4,10 @@
 
 ## High
 
+### leolib
+
+- [x] **Report a clone whose body differs between external files.** A node cloned into two external files takes the body of whichever file is read last, with no report, so an edit made in one file is lost when the other still holds the old text. Found with `@clean README.md` and `@file tests/test_readme.py` sharing an example node (`docs/dev/entangled_leo_backend.md`, the spike). Done: reported on read, both texts kept under `Recovered Nodes`. Python Leo keeps the last file's text without a word.
+
 ### leoapp and leolsp (both frontends)
 
 - [x] Performance, measured in leogui (detail in `docs/dev/gui-roadmap.md`, Performance):
@@ -28,7 +32,7 @@
 
 ### leoapp and leolsp (both frontends)
 
-- [x] **Tab completion from the language server.** Done; additional edits (auto-imports) and snippets are not applied.
+- [x] **Tab completion from the language server.** Done; additional edits (auto-imports) and snippets are not applied. With no server for the body, Tab after a dot names the missing `lsp-LANGUAGE` setting.
 
 - [ ] **Syntax colouring from the language server.** Semantic tokens (`textDocument/semanticTokens/full`) name what tree-sitter cannot know: a parameter, a type from another file, a macro, a read-only variable. Request them per document, map each token's line and column to a body row as diagnostics are mapped, and lay them over `highlight`'s spans, tree-sitter staying the colouring for a node with no server. The token types go to Helix scopes (`variable.parameter`, `type`, `function.macro`) so themes colour them. Tokens arrive as deltas against the previous set, and a body edited since the request needs its tokens moved or dropped.
 
@@ -68,13 +72,27 @@ Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`.
 
 - [x] Measure startup and the glow and wgpu renderers. Glow: 0.09 s and 117 MB to the first frame against wgpu's 0.28 s and 198 MB. Switching is a decision (roadmap Performance 7); `strip` saves 10% and is not applied.
 
+- [x] A selected list item takes the theme's `ui.menu.selected` text colour.
+
+- [x] Renamed from leoegui; `leogui` 0.6.0 is on crates.io.
+
+- [x] Release archives on every platform, and no console window on Windows release builds.
+
 ### leotui
 
 Nothing open.
 
+### Workspace
+
+- [x] Settings, session, recent outlines and themes in `~/.config/leo-rs/`, renamed from `~/.config/leotui/` on first start.
+
+- [x] Each crate ships a copy of `LICENSE`; `make lint` checks the copies match.
+
 ## Low
 
 ### leolib
+
+- [ ] **Literate markdown with entangled**: an `@auto-lit` kind whose code fences are nodes, `file=` targets tangled through entangled, and tested Python examples. Design, decisions and plan in `docs/dev/entangled_leo_backend.md`. Its step 1 is the High item on clone conflicts; its later steps wait on entangled-rs 0.3.0.
 
 - [ ] Port `@jupytext`. It is refused on read and write now. Leo reads a notebook as `@clean` over the `py:percent` text jupytext makes of it (`at.readOneAtJupytextNode`), and writes that text back through jupytext (`writeOneAtJupytextNode`). A port has to do the conversion both ways and keep the cells' outputs and metadata, which the text does not carry.
 
@@ -83,6 +101,10 @@ Nothing open.
 - [ ] **Incremental colouring, as Helix does it** (possible optimization; needs a design). `tree-sitter-highlight` parses from scratch on every call (it passes no old tree to `parse_with_options`) and queries the whole tree, so a long body is coloured whole: 21 ms at 5,000 lines, now on a worker thread. Instead, keep a `tree_sitter::Tree` per cached body, apply each change with `Tree::edit` and re-parse incrementally, and run the highlight query on the visible lines only (`QueryCursor::set_byte_range`). That would remove the partial colouring, the worker and `patch`. Costs: line edits must become byte-offset `InputEdit`s, and injections, `@language` regions and `plan`'s masking move to the lower-level API. Measured on a 5,000-line Python body (2026-10-07, Apple silicon): the whole highlight 21 ms, of which a fresh parse is 12 ms and a whole-tree query 6.7 ms; a query over 50 visible lines 0.07 ms. An incremental re-parse after one typed character costs 0.25 ms in a name or a comment, 6.7 ms for an unclosed quote, and 12 ms when it breaks a keyword (`def` to `qdef`), where error recovery re-parses everything below. So a keystroke would cost 0.3 to 12 ms on the UI thread, against `patch`'s 1.8 ms now, unless the parse stays on the worker; a first visit still needs the 12 ms parse.
 
 ### leogui
+
+- [ ] On Windows, a release build prints nothing to a terminal: `--help`, `--version` and open errors are lost, because it uses the GUI subsystem. Attach to the parent's console at startup (`AttachConsole`, through `windows-sys`). Needs a Windows machine to test.
+
+- [ ] On macOS, ship a signed `.app` bundle rather than a bare binary, which Gatekeeper blocks until `xattr -d com.apple.quarantine`. leotui's binary has the same problem. Needs an Apple developer account.
 
 - [ ] Scripting and `@button` (needs a design).
 
