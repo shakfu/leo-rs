@@ -503,7 +503,7 @@ Headlines Leo acts on that name no file. None is ported; each depends on a featu
 
 - **Plugins.** 211 commands (215 names) in 46 of the 143 files in `leo/plugins`. The largest: `qt_frame.py` 28, `viewrendered3.py` 22, `leoscreen.py` 17, `active_path.py` 14, `viewrendered.py` 13, `bookmarks.py` 12. The plugin system itself is not ported.
 
-- **Settings.** Leo reads `@settings` trees in `leoSettings.leo`, `myLeoSettings.leo` and the outline itself: `@bool`, `@int`, `@string`, `@data`, `@shortcuts` and others. leotui and leoegui read `~/.config/leo-rs/settings.toml`, and no settings node.
+- **Settings.** Leo reads `@settings` trees in `leoSettings.leo`, `myLeoSettings.leo` and the outline itself: `@bool`, `@int`, `@string`, `@data`, `@shortcuts` and others. leotui and leogui read `~/.config/leo-rs/settings.toml`, and no settings node.
 
 - **Chapters.** The `@chapter` node kind and the `chapter-*` commands. Not ported.
 

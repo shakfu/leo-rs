@@ -204,7 +204,7 @@ pub struct App {
     pub diagnostics: Vec<leolsp::BodyDiagnostic>,
     row_cache: std::cell::RefCell<RowCache>,
     /// The settings key an accepted `:theme` is saved under: `theme`, or
-    /// leoegui's `theme-light` while it is light.
+    /// leogui's `theme-light` while it is light.
     pub theme_setting: &'static str,
     /// The MCP server, when the settings turn it on, and what its clients
     /// may do.
@@ -538,7 +538,7 @@ impl App {
 
     /// Leo's outline chords where a mode would otherwise eat them.
     ///
-    /// A Cmd chord, which leoegui sends on macOS as SUPER, is Leo's Ctrl:
+    /// A Cmd chord, which leogui sends on macOS as SUPER, is Leo's Ctrl:
     /// on a Mac Leo's Ctrl is the Cmd key. A chord the outline binds runs its
     /// outline command from either pane, after INSERT commits; Cmd-R moves
     /// the node right even in the body, where Control-r is vim's redo. Any

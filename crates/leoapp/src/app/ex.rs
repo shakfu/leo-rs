@@ -297,7 +297,7 @@ impl App {
         Ok(app)
     }
 
-    /// `:import-auto path`, and a file dropped on leoegui: import it as an
+    /// `:import-auto path`, and a file dropped on leogui: import it as an
     /// `@auto` tree and select it.
     pub fn import_auto(&mut self, path: &str) {
         if path.is_empty() {

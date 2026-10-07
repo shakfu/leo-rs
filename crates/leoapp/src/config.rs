@@ -1,5 +1,5 @@
 //! The user's settings file, `~/.config/leo-rs/settings.toml`, read by
-//! leotui and leoegui both. An older `config.toml` beside it is renamed to it
+//! leotui and leogui both. An older `config.toml` beside it is renamed to it
 //! once, and an older `~/.config/leotui/` directory to `leo-rs/`.
 //!
 //! TOML, in the subset `theme` already reads: `key = "value"` lines and `#`
@@ -10,7 +10,7 @@
 //! - `lsp`, off to start no language server, and `lsp-LANGUAGE`, the
 //!   command of the server for Leo's language `LANGUAGE`;
 //! - `mcp`, `mcp-edit`, `mcp-save`, `mcp-port`, `mcp-token`: the MCP server;
-//! - leoegui's `qt-mac-dont-swap-ctrl-and-meta`.
+//! - leogui's `qt-mac-dont-swap-ctrl-and-meta`.
 //!
 //! A line it does not understand is kept as a warning for the status line
 //! rather than refused: a typo in a settings file should cost that setting,
@@ -95,7 +95,7 @@ impl Default for Mcp {
     }
 }
 
-/// Whether leoegui is light or dark, or follows the system's choice.
+/// Whether leogui is light or dark, or follows the system's choice.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Appearance {
     #[default]
@@ -120,10 +120,10 @@ pub struct Config {
     pub theme: Option<String>,
     /// The outline pane's share of the width, in percent, as `:set split=N`.
     pub split_ratio: Option<u16>,
-    /// Leo's setting of the same name: on macOS, Cmd is not Ctrl. leoegui
+    /// Leo's setting of the same name: on macOS, Cmd is not Ctrl. leogui
     /// reads it; a terminal never sees Cmd.
     pub mac_dont_swap_ctrl_and_meta: bool,
-    /// leoegui's light or dark choice, and the theme it uses when light;
+    /// leogui's light or dark choice, and the theme it uses when light;
     /// `theme` is the dark one.
     pub appearance: Appearance,
     pub theme_light: Option<String>,
@@ -292,7 +292,7 @@ pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
     save_theme_as(path, "theme", name)
 }
 
-/// Record `name` under `key`, `theme` or leoegui's `theme-light`.
+/// Record `name` under `key`, `theme` or leogui's `theme-light`.
 pub fn save_theme_as(path: &Path, key: &str, name: &str) -> io::Result<()> {
     if name.is_empty() || name.contains(['"', '\\', '\n', '\r']) {
         return Err(io::Error::new(
@@ -303,7 +303,7 @@ pub fn save_theme_as(path: &Path, key: &str, name: &str) -> io::Result<()> {
     save(path, key, &format!("\"{name}\""))
 }
 
-/// Record leoegui's light or dark choice.
+/// Record leogui's light or dark choice.
 pub fn save_appearance(path: &Path, appearance: Appearance) -> io::Result<()> {
     save(path, "appearance", &format!("\"{}\"", appearance.name()))
 }
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn the_old_directory_is_renamed_with_everything_in_it() {
-        let s = Scratch::new("migrate");
+        let s = Scratch::new("migrate-dir");
         std::fs::create_dir_all(s.0.join("leotui/themes")).unwrap();
         std::fs::write(s.0.join("leotui/settings.toml"), "theme = \"nord\"\n").unwrap();
         std::fs::write(s.0.join("leotui/session"), "x").unwrap();

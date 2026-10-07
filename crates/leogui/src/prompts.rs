@@ -339,7 +339,7 @@ pub fn about(ctx: &egui::Context, open: &mut bool) {
     }
     let response = egui::Modal::new(egui::Id::new("about")).show(ctx, |ui| {
         ui.set_max_width(420.0);
-        ui.heading("leoegui");
+        ui.heading("leogui");
         ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
         ui.add_space(6.0);
         ui.label("A desktop front end for leolib, a Rust port of Leo's outline model.");

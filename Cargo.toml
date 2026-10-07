@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/leolib", "crates/leolsp", "crates/leomcp", "crates/leoapp", "crates/leotui", "crates/leoegui"]
+members = ["crates/leolib", "crates/leolsp", "crates/leomcp", "crates/leoapp", "crates/leotui", "crates/leogui"]
 
 [workspace.package]
 version = "0.6.0"

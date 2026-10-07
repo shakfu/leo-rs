@@ -1497,7 +1497,7 @@ fn cmd_is_leos_ctrl_from_either_pane() {
     let mut app = app();
     press(&mut app, "j");
     press(&mut app, "Tab");
-    // Cmd-r, as leoegui sends it on macOS, from the body: Leo's
+    // Cmd-r, as leogui sends it on macOS, from the body: Leo's
     // move-outline-right, not vim's redo.
     app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::SUPER));
     assert_eq!(heads(&app), ["a", "  a1", "  b", "c"]);
@@ -1883,7 +1883,7 @@ fn a_new_node_is_indented_before_it_has_a_headline() {
     assert_eq!(app.mode, Mode::Normal);
     let new = app.current.clone();
     assert_eq!(new.level(), 1, "the new node is now a child of b");
-    // Cmd-r does the same, as leoegui sends it on macOS.
+    // Cmd-r does the same, as leogui sends it on macOS.
     let mut app = self::app();
     press(&mut app, "j");
     press(&mut app, "o");

@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn the_recent_list_round_trips_through_its_file() {
-        let dir = std::env::temp_dir().join(format!("leoegui-recent-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("leogui-recent-{}", std::process::id()));
         let path = dir.join("sub/recent-outlines");
         assert!(load_recent(&path).is_empty());
         let list = vec!["/a b.leo".to_string(), "/c.leo".to_string()];

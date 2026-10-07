@@ -1,10 +1,10 @@
 # leo-rs
 
-A minimal Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`), with two front ends over it: `leotui` in the terminal and `leoegui` on the desktop.
+A minimal Rust implementation of [Leo](https://github.com/leo-editor/leo-editor)'s model layer (`leolib`), with two front ends over it: `leotui` in the terminal and `leogui` on the desktop.
 
-Leo's outline model was re-implemented in rust in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. Nothing in `leolib` depends on a front end. The front ends share `leoapp`, which holds the editor's state, commands and keys, so leotui and leoegui take the same keys, commands, settings and themes.
+Leo's outline model was re-implemented in rust in `leo/leolib`; this port keeps that boundary. `leolib` reads and writes `.leo` files and the external files they refer to, and knows nothing about how any of it is shown. Nothing in `leolib` depends on a front end. The front ends share `leoapp`, which holds the editor's state, commands and keys, so leotui and leogui take the same keys, commands, settings and themes.
 
-![leoegui, the desktop front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/gui.png)
+![leogui, the desktop front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/gui.png)
 
 ![leotui, the terminal front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/tui.png)
 
@@ -30,18 +30,18 @@ crates/leolib     the model. No view, ever.
 crates/leolsp     language servers, with their positions mapped to nodes.
 crates/leoapp     a front end's state and commands, with no renderer.
 crates/leotui     the terminal front end: leoapp drawn with ratatui.
-crates/leoegui    the desktop front end: leoapp drawn with egui.
+crates/leogui    the desktop front end: leoapp drawn with egui.
 crates/leomcp     an MCP server on localhost, serving the open outline.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leoegui` adds `eframe`, `rfd` and `clap`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`.
 
 ## Installing
 
 ```sh
 cargo install leotui --locked                  # leotui, from crates.io
 cargo install --path crates/leotui --locked    # leotui, from a checkout
-cargo install --path crates/leoegui --locked   # leoegui and leoegui-glow, from a checkout
+cargo install --path crates/leogui --locked    # leogui and leogui-glow, from a checkout
 cargo add leolib                               # the library, in your own crate
 ```
 
@@ -117,7 +117,7 @@ In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor 
 
 ### Cheatsheet
 
-The keys are the same in leoegui.
+The keys are the same in leogui.
 
 <!-- keys:begin -->
 
@@ -286,7 +286,7 @@ The body is coloured by the language declared at the node: an `@language` direct
 
 Twelve languages -- C, C++, CSS, Go, HTML, Java, JavaScript, JSON, Python, Rust, shell, TypeScript -- are parsed with tree-sitter, which tells a function from a field from a type. Every other language Leo knows a comment delimiter for runs a line scanner instead: comments, strings, numbers, and keywords from Leo's colorizer modes for 33 of them.
 
-Colours come from a Helix theme, read from `~/.config/leo-rs/themes` or `~/.config/helix/themes`. Nothing is vendored, so the themes are whichever ones you already have. The default is `sonokai`, and without a file of that name leotui uses the terminal's sixteen colours. leoegui adds a light theme and a picker: see [Using leoegui](#using-leoegui).
+Colours come from a Helix theme, read from `~/.config/leo-rs/themes` or `~/.config/helix/themes`. Nothing is vendored, so the themes are whichever ones you already have. The default is `sonokai`, and without a file of that name leotui uses the terminal's sixteen colours. leogui adds a light theme and a picker: see [Using leogui](#using-leogui).
 
 `:theme` names the current one. `:theme NAME` changes it, and the themes on disk are listed above the command line as you type. Tab and the arrow keys move through the list, applying each as they land on it, so the outline shows the theme before Enter accepts it. Escape puts back the one you started with. Enter saves the choice to `~/.config/leo-rs/settings.toml`, rewriting only its `theme` line, and the next launch starts there. `--theme NAME` picks a theme for one launch without saving it.
 
@@ -296,13 +296,13 @@ The outline's selected row, marked and `@<file>` nodes and pane borders take the
 
 In leotui, flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
-## Using leoegui
+## Using leogui
 
 ```sh
-leoegui FILE.leo [MORE.leo...]      # a tab per outline
-leoegui                             # reopen the outlines open at the last quit
-leoegui --no-session                # neither restore nor save the session
-leoegui FILE.leo --press F1 --screenshot out.ppm   # press keys, save one frame, exit
+leogui FILE.leo [MORE.leo...]      # a tab per outline
+leogui                             # reopen the outlines open at the last quit
+leogui --no-session                # neither restore nor save the session
+leogui FILE.leo --press F1 --screenshot out.ppm   # press keys, save one frame, exit
 ```
 
 or during development
@@ -310,12 +310,12 @@ or during development
 ```sh
 make gui FILE=FILE.leo              # a release build; egui's debug build draws slowly
 make gui-glow FILE=FILE.leo         # the same, drawn with OpenGL instead of wgpu
-cargo run -p leoegui -- FILE.leo
+cargo run -p leogui -- FILE.leo
 ```
 
-`--no-external` and `--theme NAME` work as in leotui. `leoegui-glow` is the same program drawn with OpenGL. On Linux it reached its first frame in a third of the time, with 80 MB less memory (`docs/dev/gui-roadmap.md`, Performance 7); wgpu stays the default because OpenGL is deprecated on macOS.
+`--no-external` and `--theme NAME` work as in leotui. `leogui-glow` is the same program drawn with OpenGL. On Linux it reached its first frame in a third of the time, with 80 MB less memory (`docs/dev/gui-roadmap.md`, Performance 7); wgpu stays the default because OpenGL is deprecated on macOS.
 
-leoegui is the same editor in a window: the same keys, modes, commands, settings and themes, drawn in a monospace grid. The outline and body also take clicks and the wheel in NORMAL. A yes/no dialog answers to `y` or `n` alone.
+leogui is the same editor in a window: the same keys, modes, commands, settings and themes, drawn in a monospace grid. The outline and body also take clicks and the wheel in NORMAL. A yes/no dialog answers to `y` or `n` alone.
 
 On macOS, Cmd is Leo's Ctrl, as in Leo: a Cmd chord the outline binds runs from either pane, so Cmd-R indents the node even in the body, and any other Cmd chord is Ctrl. Control keeps leotui's keys, vim's in the body. `qt-mac-dont-swap-ctrl-and-meta = true` in the settings leaves Cmd unbound.
 
@@ -324,7 +324,7 @@ What the window adds to leotui:
 | | |
 |-|-|
 | Several outlines | A tab each. File > Open..., Save As... (the system's dialogs) and Open Recent (the last ten). Quitting asks about each outline with unsaved work. |
-| Session | Started with no outline named, leoegui reopens the outlines open at the last quit, with their selections, tabs, panel and window size. |
+| Session | Started with no outline named, leogui reopens the outlines open at the last quit, with their selections, tabs, panel and window size. |
 | Go to node | Cmd-P: every headline, fuzzy-matched. |
 | Command palette | Cmd-Shift-P: every command, by name. |
 | Find panel | Cmd-Shift-F: find and replace, regex, whole word and case, over the outline, a subtree or the marked nodes; Find All, Replace All and Clone Find All. |
@@ -339,7 +339,7 @@ View > Appearance picks dark, light, or the system's choice, saved as `appearanc
 
 ## Settings
 
-Both front ends read `~/.config/leo-rs/settings.toml`. leoegui keeps its `session` and `recent-outlines` beside it, and both look for themes in `themes/` there. On first start, an older `~/.config/leotui/` directory is renamed to `leo-rs/`, and an older `config.toml` to `settings.toml`. leoegui edits it in File > Settings... (Cmd-,), which writes only the keys that changed and keeps comments and keys it does not know. The keys:
+Both front ends read `~/.config/leo-rs/settings.toml`. leogui keeps its `session` and `recent-outlines` beside it, and both look for themes in `themes/` there. On first start, an older `~/.config/leotui/` directory is renamed to `leo-rs/`, and an older `config.toml` to `settings.toml`. leogui edits it in File > Settings... (Cmd-,), which writes only the keys that changed and keeps comments and keys it does not know. The keys:
 
 | key | what it does |
 |-|-|
@@ -354,7 +354,7 @@ Both front ends read `~/.config/leo-rs/settings.toml`. leoegui keeps its `sessio
 
 ## MCP
 
-With `mcp = true`, the running leotui or leoegui serves its open outline to MCP clients at `http://127.0.0.1:PORT/mcp` (port 7341 by default), over MCP's streamable HTTP transport. A client must send `Authorization: Bearer TOKEN`; the token is made the first time MCP is turned on, and the Settings dialog shows the command that connects Claude Code:
+With `mcp = true`, the running leotui or leogui serves its open outline to MCP clients at `http://127.0.0.1:PORT/mcp` (port 7341 by default), over MCP's streamable HTTP transport. A client must send `Authorization: Bearer TOKEN`; the token is made the first time MCP is turned on, and the Settings dialog shows the command that connects Claude Code:
 
 ```sh
 claude mcp add --transport http leo http://127.0.0.1:7341/mcp --header "Authorization: Bearer TOKEN"
@@ -380,7 +380,7 @@ lsp-cplusplus = "clangd"
 lsp-rust = "rust-analyzer"
 ```
 
-`LANGUAGE` is Leo's name, as `@language` spells it: `cplusplus` for C++, `shell` for shell scripts. In leoegui, File > Settings... (Cmd-,) > Language servers edits the same keys: a checkbox for `lsp`, and a row per language.
+`LANGUAGE` is Leo's name, as `@language` spells it: `cplusplus` for C++, `shell` for shell scripts. In leogui, File > Settings... (Cmd-,) > Language servers edits the same keys: a checkbox for `lsp`, and a row per language.
 
 A server's workspace is the outline's directory, or the current directory for an unsaved outline.
 
@@ -404,7 +404,7 @@ A `rust-analyzer` installed by rustup is a stub until `rustup component add rust
 
 ### What the servers do here
 
-| feature | keys and commands | leoegui |
+| feature | keys and commands | leogui |
 |-|-|-|
 | Diagnostics | underlined in the body; the cursor line's on the status line. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's | Body > Next Problem, Previous Problem; View > Problems |
 | Hover | `K` | Body > Hover |
@@ -462,7 +462,7 @@ See `docs/dev/porting-notes.md` for the places this port deliberately differs fr
 make build      # cargo build --workspace
 make release    # the same, optimised
 make run FILE=FILE.leo    # leotui
-make gui FILE=FILE.leo    # leoegui, release build
+make gui FILE=FILE.leo    # leogui, release build
 make test       # cargo test --workspace
 make bench      # leolib's load times; LEO_EDITOR=... adds leo-editor's own outline
 make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Python Leo

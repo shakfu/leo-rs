@@ -1,7 +1,7 @@
 //! Session restore, as Leo's `leo.session`: the open outlines, each one's
 //! selection, body cursor and tabs, the bottom panel and the window size.
 //!
-//! Written when leoegui quits, read when it starts with no outline named.
+//! Written when leogui quits, read when it starts with no outline named.
 //! One line per fact, so a hand edit or an older file reads as far as it
 //! makes sense:
 //!
@@ -95,7 +95,7 @@ pub fn parse(text: &str) -> Session {
 
 pub fn render(s: &Session) -> String {
     let mut out =
-        String::from("# leoegui session: written on quit, read when no outline is named.\n");
+        String::from("# leogui session: written on quit, read when no outline is named.\n");
     if let Some([w, h]) = s.window {
         out += &format!("window {} {}\n", w.round(), h.round());
     }
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_session_saves_and_loads() {
-        let dir = std::env::temp_dir().join(format!("leoegui-session-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("leogui-session-{}", std::process::id()));
         let path = dir.join("sub/session");
         assert!(load(&path).is_none());
         let s = Session {

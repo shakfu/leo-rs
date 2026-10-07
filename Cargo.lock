@@ -2222,7 +2222,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "leoegui"
+name = "leogui"
 version = "0.6.0"
 dependencies = [
  "clap",

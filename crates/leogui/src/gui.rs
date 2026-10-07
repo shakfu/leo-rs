@@ -88,7 +88,7 @@ pub fn title(app: &App) -> String {
         false => leolib::util::short_file_name(&o.file_name),
     };
     let changed = if o.changed { " *" } else { "" };
-    format!("{name}{changed} - leoegui")
+    format!("{name}{changed} - leogui")
 }
 
 impl Gui {
@@ -263,7 +263,7 @@ impl Gui {
             if let egui::Event::Screenshot { image, .. } = event {
                 if let Some(path) = self.screenshot.take() {
                     if let Err(e) = crate::write_ppm(&path, image) {
-                        eprintln!("leoegui: {}: {e}", path.display());
+                        eprintln!("leogui: {}: {e}", path.display());
                     }
                     self.app.quit = true;
                     self.closing_all = true;
@@ -997,7 +997,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("leoegui-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("leogui-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

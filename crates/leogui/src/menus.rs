@@ -174,7 +174,7 @@ pub const MENUS: &[(&str, &[Item])] = &[
         &[
             Run("Key Bindings", "help"),
             Run("Messages", "messages"),
-            Gui("About leoegui", Action::About, ""),
+            Gui("About leogui", Action::About, ""),
         ],
     ),
 ];

@@ -1,9 +1,9 @@
-//! leoegui: a desktop front end for leolib, drawn with egui.
+//! leogui: a desktop front end for leolib, drawn with egui.
 //!
 //! ```text
-//! leoegui FILE.leo...                      edit outlines, a tab each
-//! leoegui                                  the outlines open at the last quit
-//! leoegui F.leo --press "l,l" --screenshot out.ppm
+//! leogui FILE.leo...                      edit outlines, a tab each
+//! leogui                                  the outlines open at the last quit
+//! leogui F.leo --press "l,l" --screenshot out.ppm
 //!                                          press keys, save one frame, exit
 //! ```
 //!
@@ -11,8 +11,8 @@
 //! commands and vim body. The window around them is an editor's: menus, a
 //! command palette, an outline sidebar, tabs, a status bar and a panel.
 //!
-//! Two executables run it: `leoegui`, drawn with wgpu, eframe's default, and
-//! `leoegui-glow`, drawn with OpenGL, to compare the two.
+//! Two executables run it: `leogui`, drawn with wgpu, eframe's default, and
+//! `leogui-glow`, drawn with OpenGL, to compare the two.
 
 mod editor;
 mod find;
@@ -41,9 +41,9 @@ use leoapp::theme::Depth;
 
 /// A desktop front end for leolib.
 #[derive(Parser)]
-#[command(name = "leoegui", version)]
+#[command(name = "leogui", version)]
 struct Args {
-    /// The outlines to open, a tab each. Without one, leoegui opens those
+    /// The outlines to open, a tab each. Without one, leogui opens those
     /// open when it last quit, or an unsaved outline.
     #[arg(value_name = "FILE.leo")]
     paths: Vec<String>,

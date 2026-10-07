@@ -2,6 +2,20 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
+## [Unreleased]
+
+### Added
+
+- **Release archives for leogui.** Each GitHub release has a `leogui-VERSION-TARGET` archive per platform, holding `leogui` and `leogui-glow`, beside leotui's. The release's check job now installs the window libraries leogui needs to build on Linux, as `ci.yml` does; without them its `make check` would fail.
+
+### Changed
+
+- **leoegui is renamed leogui**: the crate, its binaries `leogui` and `leogui-glow`, and its release archives. The `leoegui` crate was removed from crates.io after its one version, 0.6.0; `cargo install leogui` replaces it.
+
+### Fixed
+
+- **leogui on Windows opens no console window.** Release builds of `leogui` and `leogui-glow` use the Windows GUI subsystem; debug builds keep the console, so `--help` and errors still print there.
+
 ## [0.6.0]
 
 ### Added

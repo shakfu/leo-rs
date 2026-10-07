@@ -1,6 +1,6 @@
-# leoegui roadmap
+# leogui roadmap
 
-Features proposed for leoegui on 2026-10-05, after the GUI redesign, the Leo key bindings and the Helix theme work. Effort is a rough estimate against this codebase: small is a day or less, medium a few days, large needs a design first. Done: go-to-node, external-file status, code actions, the find panel and several outlines (see `CHANGELOG.md`). Language-server completion and semantic colouring are in `TODO.md` already.
+Features proposed for leogui on 2026-10-05, after the GUI redesign, the Leo key bindings and the Helix theme work. Effort is a rough estimate against this codebase: small is a day or less, medium a few days, large needs a design first. Done: go-to-node, external-file status, code actions, the find panel and several outlines (see `CHANGELOG.md`). Language-server completion and semantic colouring are in `TODO.md` already.
 
 The first five, by value for effort: go-to-node, external-file status, code actions, the find panel, several outlines.
 

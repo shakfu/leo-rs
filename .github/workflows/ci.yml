@@ -22,7 +22,7 @@ jobs:
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
-      # leoegui's window libraries, as eframe's README lists them.
+      # leogui's window libraries, as eframe's README lists them.
       - name: Install the GUI build libraries
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
       - name: make check

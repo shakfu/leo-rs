@@ -1,4 +1,4 @@
-# A GUI front end: leoegui
+# A GUI front end: leogui
 
 A design record. Proposed on 2026-10-05 against leo-rs `8d3a5d8` (v0.6.0) and built the same day: leotui's front-end-neutral code moved into `leoapp`, an egui front end over it, and language servers in both front ends through `leolsp`. Where the build departs from the proposal, the section says so and why.
 
@@ -26,7 +26,7 @@ leolsp    language servers: transport, documents, position mapping. leolib only.
 leoapp    leotui minus drawing: App, modes, vim editor, commands, bindings,
           search, minibuffer, highlight, theme, view, LSP glue.
 leotui    ratatui renderer and terminal loop.
-leoegui   eframe renderer and event translation.
+leogui   eframe renderer and event translation.
 ```
 
 `leolsp` is a plain dependency of `leoapp`, not behind the proposed feature. A server's threads and processes exist only once the settings name a server and a node in its language is shown, so the feature would have saved compile time and nothing at run time.
@@ -37,9 +37,9 @@ leoegui   eframe renderer and event translation.
 
 The proposed `Input` enum became five methods: `handle_key`, `handle_text`, `click_tree`, `click_body` and `scroll`. Each front end calls the one its event means, and an enum would only be matched straight back into them.
 
-egui-winit sends a printable key twice, as `Event::Key` and `Event::Text`, and sends no text while Ctrl or Cmd is held. It turns Cmd-C, Cmd-X and Cmd-V (Ctrl elsewhere) into `Copy`, `Cut` and `Paste` with no key event (`egui-winit-0.36.2/src/lib.rs`, `on_keyboard_input`). So `leoegui::input` takes a bare printable key from its text, a chord from its key, turns `Copy` back into `Ctrl-c` and `Cut` into `Ctrl-x`, and pastes `Paste`. The text egui sends after an Alt chord (Option-g types a symbol on macOS) is dropped. On Windows `Ctrl-Insert` also arrives as `Copy`, so it reaches leoapp as `Ctrl-c`, not as `insert-child`.
+egui-winit sends a printable key twice, as `Event::Key` and `Event::Text`, and sends no text while Ctrl or Cmd is held. It turns Cmd-C, Cmd-X and Cmd-V (Ctrl elsewhere) into `Copy`, `Cut` and `Paste` with no key event (`egui-winit-0.36.2/src/lib.rs`, `on_keyboard_input`). So `leogui::input` takes a bare printable key from its text, a chord from its key, turns `Copy` back into `Ctrl-c` and `Cut` into `Ctrl-x`, and pastes `Paste`. The text egui sends after an Alt chord (Option-g types a symbol on macOS) is dropped. On Windows `Ctrl-Insert` also arrives as `Copy`, so it reaches leoapp as `Ctrl-c`, not as `insert-child`.
 
-On macOS, Cmd is Leo's Ctrl, as Qt makes it for Leo (`ControlModifier` is the Command key, [Qt docs](https://doc.qt.io/qt-6/qt.html#KeyboardModifier-enum)). leoegui sends Cmd as SUPER, and leoapp runs a Cmd chord the outline binds from either pane, so Cmd-R indents the node from the body as in Leo; any other Cmd chord is Ctrl. Control stays leoapp's Ctrl, which is vim's in the body. A first version made Cmd and Control both Ctrl, which made Cmd-R vim's redo. Leo's `qt-mac-dont-swap-ctrl-and-meta` (`leo/plugins/qt_gui.py:118`, leo-editor `e3b3841f64`) makes Cmd Meta, which binds nothing. leoegui turns off winit's default menu, so Cmd-Q, Cmd-H and Cmd-M reach the app rather than macOS.
+On macOS, Cmd is Leo's Ctrl, as Qt makes it for Leo (`ControlModifier` is the Command key, [Qt docs](https://doc.qt.io/qt-6/qt.html#KeyboardModifier-enum)). leogui sends Cmd as SUPER, and leoapp runs a Cmd chord the outline binds from either pane, so Cmd-R indents the node from the body as in Leo; any other Cmd chord is Ctrl. Control stays leoapp's Ctrl, which is vim's in the body. A first version made Cmd and Control both Ctrl, which made Cmd-R vim's redo. Leo's `qt-mac-dont-swap-ctrl-and-meta` (`leo/plugins/qt_gui.py:118`, leo-editor `e3b3841f64`) makes Cmd Meta, which binds nothing. leogui turns off winit's default menu, so Cmd-Q, Cmd-H and Cmd-M reach the app rather than macOS.
 
 ## View
 
@@ -79,6 +79,6 @@ A server sees each external file as `external::file_contents` writes it; a node 
 
 2. Done: both front ends read `~/.config/leo-rs/`. `config::load` renames an older `~/.config/leotui/` to it once, at startup.
 
-3. IME composition in leoegui is untested on a real input method. The code follows egui's events; whether winit sends `Commit` or `Text` for ASCII typing with IME allowed differs by platform.
+3. IME composition in leogui is untested on a real input method. The code follows egui's events; whether winit sends `Commit` or `Text` for ASCII typing with IME allowed differs by platform.
 
-4. Diagnostics drawn in leoegui are untested on screen: the display was off when it was ready to check. The same marks are tested in leotui's render test.
+4. Diagnostics drawn in leogui are untested on screen: the display was off when it was ready to check. The same marks are tested in leotui's render test.
