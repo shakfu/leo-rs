@@ -36,6 +36,8 @@
 
 - [ ] **Syntax colouring from the language server.** Semantic tokens (`textDocument/semanticTokens/full`) name what tree-sitter cannot know: a parameter, a type from another file, a macro, a read-only variable. Request them per document, map each token's line and column to a body row as diagnostics are mapped, and lay them over `highlight`'s spans, tree-sitter staying the colouring for a node with no server. The token types go to Helix scopes (`variable.parameter`, `type`, `function.macro`) so themes colour them. Tokens arrive as deltas against the previous set, and a body edited since the request needs its tokens moved or dropped.
 
+- [ ] **`@wiki`: wikilinks in a markdown subtree** (leo-rs only; proposed, nothing built). An `@wiki <name>` node's descendants are markdown pages linked by `[[Page]]`, `[[Parent/Page]]` and `[[other:Page]]`; `export-wiki` writes the subtree to `<name>.md` with the links made markdown links. Also `open-url-under-cursor` (`gd`, `gf`) extended from `<< section >>`, its only branch today, to wiki links, `gnx:` and UNLs; `Ctrl-o` for `go-back`; `[[` headline completion through the completion list; renames that rewrite links; and `wiki::check` enforcing the note's five constraints on load, edit and export. Design and open questions in `docs/dev/wiki.md`, revised 2026-10-07 for leoapp.
+
 ### leogui
 
 Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`.
@@ -92,7 +94,7 @@ Nothing open.
 
 ### leolib
 
-- [ ] **Literate markdown with entangled**: an `@auto-lit` kind whose code fences are nodes, `file=` targets tangled through entangled, and tested Python examples. Design, decisions and plan in `docs/dev/entangled_leo_backend.md`. Its step 1 is the High item on clone conflicts; its later steps wait on entangled-rs 0.3.0.
+- [ ] **Literate markdown with entangled**: the `@entangled` kind. Phase 1 is done: the kind, its CommonMark scanner, named fences as `<< name >>` nodes, the exact writer and its read-time check, and fence languages for colouring and the language servers. Next: renaming a fence node (1b), `:entangled-tangle` and `:entangled-check` through the CLI (2), `include=` (3), and the Python harness (4). Design and plan in `docs/dev/entangled_leo_backend.md`.
 
 - [ ] Port `@jupytext`. It is refused on read and write now. Leo reads a notebook as `@clean` over the `py:percent` text jupytext makes of it (`at.readOneAtJupytextNode`), and writes that text back through jupytext (`writeOneAtJupytextNode`). A port has to do the conversion both ways and keep the cells' outputs and metadata, which the text does not carry.
 

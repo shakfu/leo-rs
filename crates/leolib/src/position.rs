@@ -338,6 +338,10 @@ impl Position {
     pub fn is_at_auto_node(&self, o: &Outline) -> bool {
         !crate::node::at_auto_node_name(self.h(o)).is_empty()
     }
+    /// True for `@entangled`, a leo-rs kind (`crate::entangled`).
+    pub fn is_at_entangled_node(&self, o: &Outline) -> bool {
+        !crate::node::at_entangled_node_name(self.h(o)).is_empty()
+    }
     /// True for `@clean`, as `p.isAtCleanNode`.
     pub fn is_at_clean_node(&self, o: &Outline) -> bool {
         !crate::node::at_clean_node_name(self.h(o)).is_empty()

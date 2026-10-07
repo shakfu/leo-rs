@@ -238,6 +238,11 @@ pub fn language_id(language: &str) -> &str {
 /// rendering it.
 fn source_of(o: &Outline, p: &Position) -> Option<(Source, Position)> {
     match goto::find_root(o, p) {
+        // An `@entangled` file is markdown, but its fence nodes are code in
+        // their own languages: each node is a document of its own.
+        Some(root) if root.is_at_entangled_node(o) => {
+            Some((Source::Node(p.gnx(o).to_string()), p.clone()))
+        }
         Some(root) => {
             let path = std::path::absolute(o.full_path(&root)).ok()?;
             Some((Source::File(path), root))

@@ -138,6 +138,7 @@ pub fn find_files_to_read(o: &Outline, root: &Position, all: bool) -> (Vec<Posit
             || cur.is_at_shadow_file_node(o)
             || cur.is_at_file_node(o)
             || cur.is_at_clean_node(o)
+            || cur.is_at_entangled_node(o)
             || cur.is_at_jupytext_node(o)
         {
             files.push(cur.clone());
@@ -341,6 +342,9 @@ fn read_file_by_kind(o: &mut Outline, p: &Position) -> Result<bool> {
     let encoding = o.get_encoding(p);
     if !encoding_is_supported(&encoding) {
         return Err(Error::UnsupportedEncoding { encoding });
+    }
+    if p.is_at_entangled_node(o) {
+        return crate::entangled::read_one_at_entangled_node(o, p);
     }
     if p.is_at_auto_node(o) {
         return read_one_at_auto_node(o, p);
@@ -823,6 +827,9 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     // UTF-8 over a file the directive says is not UTF-8 changes its bytes.
     if !encoding_is_supported(&encoding) {
         return Err(Error::UnsupportedEncoding { encoding });
+    }
+    if p.is_at_entangled_node(o) {
+        return Ok((crate::entangled::write_string(o, p)?, newline, encoding));
     }
     if p.is_at_auto_node(o) {
         let path = o.full_path(p);

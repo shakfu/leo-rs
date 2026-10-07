@@ -255,6 +255,29 @@ fn a_node_in_no_file_is_a_document_of_its_own() {
 }
 
 #[test]
+fn an_entangled_fence_node_is_a_document_in_its_own_language() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let mut o = Outline::new_empty();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@entangled doc.md");
+    o.set_body(&root, "# Doc\n\n```python #add\n<< add >>\n```\n");
+    let add = o.insert_as_last_child(&root);
+    o.set_headline(&add, "<< add >>");
+    o.set_body(&add, "x = 1\n");
+    o.node_mut(add.v).uas.insert(
+        leolib::entangled::LANGUAGE.to_string(),
+        leolib::node::Ua::Text("python".into()),
+    );
+    lsp.sync(&o, &add);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    let doc = &opened(&seen)[0];
+    assert_eq!(doc["text"], "x = 1\n");
+    assert_eq!(doc["uri"], format!("untitled:leo/{}", add.gnx(&o)));
+    assert!(lsp.serves(add.gnx(&o)));
+}
+
+#[test]
 fn a_language_without_a_server_starts_nothing() {
     let mut lsp = lsp(Default::default());
     let mut o = Outline::new_empty();

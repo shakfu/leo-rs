@@ -1205,6 +1205,10 @@ impl Outline {
     /// and an apostrophe opens a string. Reporting the absence lets a caller
     /// leave such a node alone.
     pub fn language_at(&self, p: &Position) -> Option<String> {
+        // An `@entangled` fence node's language, from its info string.
+        if let Some(node::Ua::Text(lang)) = self.node(p.v).uas.get(crate::entangled::LANGUAGE) {
+            return Some(lang.clone());
+        }
         if let Some(lang) = find_first_valid_at_language(p.b(self)) {
             return Some(lang);
         }

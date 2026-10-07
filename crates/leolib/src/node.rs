@@ -177,7 +177,17 @@ pub fn any_at_file_node_name(h: &str) -> String {
     if !name.is_empty() {
         return name;
     }
+    let name = at_entangled_node_name(h);
+    if !name.is_empty() {
+        return name;
+    }
     find_at_file_name(h, &["@leo"])
+}
+
+/// The file name after `@entangled`, a leo-rs kind Leo does not know, so it
+/// is in neither of Leo's lists (`crate::entangled`).
+pub fn at_entangled_node_name(h: &str) -> String {
+    find_at_file_name(h, &["@entangled"])
 }
 
 /// True if `h` names any `@<file>` or `@leo` node, as `v.isAnyAtFileNode`.

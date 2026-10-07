@@ -1,12 +1,14 @@
 # `@wiki`: wikilinks in a markdown subtree
 
-Status: **proposed**. Nothing here is implemented. Leo has no equivalent; `@wiki` is a leo-rs extension.
+Status: **proposed**. Nothing here is implemented. Leo has no equivalent; `@wiki` is a leo-rs extension. Revised 2026-10-07 for leoapp: keys and commands checked against `crates/leoapp/src/bindings.rs`.
 
 ## 0. Summary
 
 A node whose headline is `@wiki <name>` is a *wiki root*. Its descendants are *pages*. Page bodies are markdown, and `[[...]]` in them is a link to another page. `export-wiki` writes the subtree to `<name>.md` and turns each link into a markdown link.
 
 Wikilinks are live only inside a wiki. Links from anywhere else use Leo's own syntax (section 3), which Leo can also follow.
+
+`docs/dev/entangled_leo_backend.md` proposes the other markdown kind, `@entangled <path>`. It reads its file back and writes it on save; `@wiki` only exports.
 
 ---
 
@@ -73,7 +75,7 @@ Leo resolves duplicates silently, taking the last match in outline order (`leoGl
 
 - `unl://#Parent-->Page`
 
-`follow-link` handles these, and `gnx:<gnx>` and `<< section >>`, in every body, as Leo's `openUrlHelper` does (`leoGlobals.py:5457`). A UNL has no closing delimiter: `unl_regex` runs to the end of the line or the next quote or backtick (`leo/leolib/util.py:506`). Write it last on its line or in backticks.
+`open-url-under-cursor` follows these, and `gnx:<gnx>` and `<< section >>`, in every body, as Leo's `openUrlHelper` does (`leoGlobals.py:5457`). Today it follows `<< section >>` only (`crates/leoapp/src/app/body.rs:307`). A UNL has no closing delimiter: `unl_regex` runs to the end of the line or the next quote or backtick (`leo/leolib/util.py:506`). Write it last on its line or in backticks.
 
 ---
 
@@ -83,7 +85,7 @@ Leo resolves duplicates silently, taking the last match in outline order (`leoGl
 |-|-|-|
 | C1 | No `@wiki` below another `@wiki`. | One wiki per page keeps resolution and export unambiguous. |
 | C2 | No page is a clone: every vnode in a wiki has one parent. | A clone has several ancestor chains, so its links and anchors have several meanings. |
-| C3 | No page headline starts with `@`. | The file readers and writers act on `@file`, `@clean` and `@auto` wherever they appear. An `@file` page would still write its external file on save. |
+| C3 | No page headline starts with `@`. | The file readers and writers act on `@file`, `@clean` and `@auto`, and would on `@entangled`, wherever they appear. An `@file` page would still write its external file on save. |
 | C4 | No body directives in pages. Use fenced blocks, not `@language`. | Markdown has its own code syntax. Directive lines would be exported as text or silently dropped. |
 | C5 | Names are unique in the outline and contain no `:`, `/`, `\` or control characters. | A name is a namespace and a filename stem. |
 
@@ -105,13 +107,15 @@ One function, `wiki::check(outline) -> Vec<Violation>`, is called from three pla
 
 | Key | Pane | Command |
 |-|-|-|
-| `gf` | body | `follow-link` |
-| `Ctrl-o` | both | `jump-back` |
+| `gd` `gf` | body | `open-url-under-cursor`: follow the link under the cursor |
+| `Ctrl-o` | both | `go-back`: return to the node before |
 | `[[` | body, insert mode | headline completion |
 
-- `gf` follows vim's "go to file under cursor". `Ctrl-]` is taken by `demote` in the tree (`crates/leotui/src/bindings.rs:91`). `gd` stays free for a later go-to-definition.
+- `gd` already runs Leo's `open-url-under-cursor`, so wiki links, `gnx:` and UNLs extend that command rather than add one. `gf`, vim's "go to file under cursor", is a second key for it. Go-to-definition is `Ctrl-]` in the body (`lsp-definition`); in the outline `Ctrl-]` is `demote`.
 
-- There is no forward jump. `Ctrl-i` sends the same byte as `Tab`, and `Tab` is `focus-to-tree` in the body.
+- Following a link selects a node, which `go-back` and `go-forward` already record (`H` and `L` in the outline). `Ctrl-o` binds `go-back` in both panes, as vim's jump list. `Ctrl-i` cannot be the forward jump: a terminal without the kitty protocol sends it as `Tab`, and `Tab` is `focus-to-tree` in the body.
+
+- `[[` completion uses the list the language-server completion draws (`CompletionMenu`, `crates/leoapp/src/app/complete.rs`).
 
 - Completion inserts `\/` for a `/` in a headline.
 
@@ -141,7 +145,7 @@ One function, `wiki::check(outline) -> Vec<Violation>`, is called from three pla
 
   - Cross-links assume both wikis export to the same directory.
 
-`write_markdown` (`crates/leolib/src/importers/lines.rs:346`) already writes a subtree as headings and drops directive lines. Export can reuse its walk. It does not cap heading depth: depth 7 writes `#######`, which CommonMark reads as a paragraph, not a heading.
+`write_markdown` (`crates/leolib/src/importers/lines.rs:347`) already writes a subtree as headings and drops directive lines. Export can reuse its walk. It does not cap heading depth: depth 7 writes `#######`, which CommonMark reads as a paragraph, not a heading.
 
 ### `convert-wikilinks-to-unls`
 

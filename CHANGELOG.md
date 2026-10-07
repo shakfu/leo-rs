@@ -2,6 +2,12 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
+## [Unreleased]
+
+### Added
+
+- **`@entangled PATH`: a markdown file whose named code fences are nodes.** A leo-rs kind for literate documents in [entangled](https://github.com/shakfu/entangled-rs)'s syntax, so the code examples in documentation can be tangled to files and tested. Headings become nodes; a fence entangled would name (`#name`, `file=`, `label=`, or Quarto's `#| label:`) leaves its fence lines in the heading's body around a `<< name >>` reference, and its code becomes a child node headlined `<< name >>`. Prose and unnamed fences stay text. The file is written back byte for byte, and a read that would not reproduce it leaves the whole file in the node with an error. A fence node takes its language from the info string, so its code is coloured and served by a language server as that language. The scanner follows CommonMark, unlike `@auto-md`'s. Renaming and the `:entangled-tangle` commands are still to come; the design is in `docs/dev/entangled_leo_backend.md`.
+
 ## [0.6.1]
 
 Tidies up after 0.6.0, whose desktop front end was published as `leoegui` and then withdrawn. `leogui` 0.6.0 on crates.io already had the rename and the Windows fix below; the other crates had neither.

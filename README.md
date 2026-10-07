@@ -426,6 +426,27 @@ A code action that replaces the whole file is applied to just the lines it chang
 
 - "language server: ..." on the status line: the server refused the request, often because it does not offer that feature.
 
+## `@entangled`
+
+`@entangled PATH` reads a markdown file written in [entangled](https://github.com/shakfu/entangled-rs)'s literate syntax. A leo-rs kind: Leo has no equivalent, and opens such a node as plain.
+
+````markdown
+## Adding
+
+```python #add file=hello.py
+print(2 + 3)
+```
+````
+
+becomes a heading node `Adding` whose body keeps the fence lines around a `<< add >>` reference, with a child node `<< add >>` holding `print(2 + 3)`.
+
+- Headings are nodes. A fence entangled would name -- `#name`, `file=`, `label=`, or Quarto's `#| label:` and `#| file:` -- becomes a `<< name >>` node; prose and other fences stay in the heading's body.
+- A fence node is in its fence's language (`python`, `py`, `{.rust}`), for colouring and the language servers, so an example gets completion and diagnostics.
+- Saving writes the file back as it was, with edited code and headings in place. A file that would not read back exactly opens as one node, with an error. A heading or fence node deleted from the tree stops the write rather than drop text.
+- The `.leo` file stores only the `@entangled` node; the tree is read from the markdown on every open.
+
+Tangling `file=` targets is entangled's job for now: run `entangled tangle`. The design, and what comes next, is in `docs/dev/entangled_leo_backend.md`.
+
 ## `@auto`
 
 An `@auto` file is the user's own source, with no sentinels in it. Its structure comes from the language, through a port of Leo's importers.

@@ -368,6 +368,7 @@ fn put_v_element(
     let is_edit = p.is_at_edit_node(o) && !p.has_children(o);
     let is_external = is_auto
         || is_edit
+        || p.is_at_entangled_node(o)
         || p.is_at_file_node(o)
         || p.is_at_shadow_file_node(o)
         || p.is_at_thin_file_node(o);

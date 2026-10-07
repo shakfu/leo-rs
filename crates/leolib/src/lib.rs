@@ -17,6 +17,7 @@ pub(crate) mod atclean;
 pub(crate) mod atfile_read;
 pub(crate) mod atfile_write;
 pub mod document;
+pub mod entangled;
 pub mod error;
 pub mod external;
 #[cfg(feature = "fuzzing")]
