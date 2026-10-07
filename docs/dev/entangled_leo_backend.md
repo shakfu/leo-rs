@@ -2,6 +2,25 @@
 
 A sketch of 2026-09-12. Nothing here is scheduled. It is judgement unless a line says it was measured.
 
+## The Use Case
+
+It is quite common to include code examples in markdown, yet if these code examples are not systematically tested against the application's changing api, the documentation and the examples
+can get stale leading to a poor user experience.
+
+Leo makes it easy to create markdown documents several ways:
+
+1. as a structure outline: @auto-md or @auto
+2. as a flat file: @edit
+
+But as of yet, it doesn't provide for a way to `stich` external example files to a markdown file.
+
+Engtangled has solved this problem. We could create leo-friendly versions of entangled's `tangle` and `stich` commands. `leo-tangle` or `@auto-md-tangle` takes a markdown document with code examples and parses it into a leo outline.
+
+leo-stich is essentially an export function which *stiches* the examples into the markdown document. It can do some additional things as well if customized: test the examples would be the
+valuable of course.
+
+So basically, entangled gives leo-rs a third way to handle markdown.
+
 ## The proposal
 
 Show an [entangled](https://github.com/shakfu/entangled-rs) markdown document as a Leo outline in leotui, and write edits back to the markdown. Split the work three ways:
