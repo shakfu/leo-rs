@@ -2,9 +2,9 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
-## [Unreleased]
+## [0.8.0]
 
-`@qmd` and `@rmd` are in the `leo-markdown` crate, which leotui and leogui register through `leo-plugins`. `@entangled` is in the unpublished `leo-entangled` crate, and no binary registers it. What they do is in `docs/plugins.md`.
+`@qmd` and `@rmd` (in `leo-markdown`) and `@wiki` (in `leo-wiki`) are registered in leotui and leogui through `leo-plugins`. `@entangled` is in the unpublished `leo-entangled` crate, and no binary registers it. What they do is in `docs/plugins.md`. leolib, leolsp and leoapp change their public APIs, hence the minor version.
 
 ### Added
 

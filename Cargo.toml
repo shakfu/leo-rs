@@ -26,7 +26,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 # leoapp's floor: tree-sitter-language 0.1.8 requires 1.90. leolib sets its own.
 rust-version = "1.90"
@@ -36,14 +36,14 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Keep in step with [workspace.package] version.
-leolib = { path = "crates/leolib", version = "0.7.0" }
-leolsp = { path = "crates/leolsp", version = "0.7.0" }
-leomcp = { path = "crates/leomcp", version = "0.7.0" }
-leoapp = { path = "crates/leoapp", version = "0.7.0" }
-leo-markdown = { path = "crates/leo-markdown", version = "0.7.0" }
-leo-entangled = { path = "crates/leo-entangled", version = "0.7.0" }
-leo-plugins = { path = "crates/leo-plugins", version = "0.7.0" }
-leo-wiki = { path = "crates/leo-wiki", version = "0.7.0" }
+leolib = { path = "crates/leolib", version = "0.8.0" }
+leolsp = { path = "crates/leolsp", version = "0.8.0" }
+leomcp = { path = "crates/leomcp", version = "0.8.0" }
+leoapp = { path = "crates/leoapp", version = "0.8.0" }
+leo-markdown = { path = "crates/leo-markdown", version = "0.8.0" }
+leo-entangled = { path = "crates/leo-entangled", version = "0.8.0" }
+leo-plugins = { path = "crates/leo-plugins", version = "0.8.0" }
+leo-wiki = { path = "crates/leo-wiki", version = "0.8.0" }
 
 [profile.release]
 lto = true

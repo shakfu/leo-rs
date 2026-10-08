@@ -1,7 +1,7 @@
 # Plugins
 
-`@qmd` and `@rmd` are in `leo-markdown`, registered in leotui and leogui
-by `leo-plugins`, from the release after 0.7.0. `@entangled` is in the
+`@qmd` and `@rmd` are in `leo-markdown`, and `@wiki` in `leo-wiki`,
+registered in leotui and leogui by `leo-plugins`, from 0.8.0. `@entangled` is in the
 unpublished `leo-entangled`, and no binary registers it. The design is in
 `docs/dev/plugins.md`. Its settings key, `entangled`, applies only when
 the plugin is registered:

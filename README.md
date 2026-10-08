@@ -378,7 +378,7 @@ A code action or a format that replaces the whole file is applied to just the li
 
 ## Plugins
 
-The workspace holds kinds Leo does not have, as plugins outside leolib: `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs)), `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes), and `@wiki` (markdown pages linked by `[[...]]`, exported to one file). leotui and leogui register `@qmd`, `@rmd` and `@wiki` from the release after 0.7.0. `@entangled` is in no release: its crate is unpublished, and `make ... ENTANGLED=1` builds and tests it. leolib keeps the extension API they use (`leolib::ext`); with no kind registered, it reads an outline as Leo does. What they do is in `docs/plugins.md`; the design is in `docs/dev/plugins.md`.
+The workspace holds kinds Leo does not have, as plugins outside leolib: `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs)), `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes), and `@wiki` (markdown pages linked by `[[...]]`, exported to one file). leotui and leogui register `@qmd`, `@rmd` and `@wiki` from 0.8.0. `@entangled` is in no release: its crate is unpublished, and `make ... ENTANGLED=1` builds and tests it. leolib keeps the extension API they use (`leolib::ext`); with no kind registered, it reads an outline as Leo does. What they do is in `docs/plugins.md`; the design is in `docs/dev/plugins.md`.
 
 ## Using leolib
 
