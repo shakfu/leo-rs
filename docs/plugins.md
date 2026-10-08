@@ -1,9 +1,9 @@
 # Plugins
 
-These kinds are not in any release. They live in the workspace's plugin
-crates (`leo-entangled`, `leo-markdown`), registered by `leo-plugins`, and
-no released binary registers them yet. The design is in
-`docs/dev/plugins.md`. Their settings key, `entangled`, applies only when
+`@qmd` and `@rmd` are in `leo-markdown`, registered in leotui and leogui
+by `leo-plugins`, from the release after 0.7.0. `@entangled` is in the
+unpublished `leo-entangled`, and no binary registers it. The design is in
+`docs/dev/plugins.md`. Its settings key, `entangled`, applies only when
 the plugin is registered:
 
 | Key | Meaning |
@@ -63,5 +63,26 @@ becomes a heading node `Load` with two children, `<< load >>` and `<< python cel
 - An unnamed cell is headlined by its language and its number among the document's cells. Renaming it gives it a label in its kind's syntax: `#| label: name` or `{r name}`. Renaming a labelled cell renames its label. Two cells with one label open as one node with an error, as knitr and Quarto refuse them.
 - As in `@entangled`: the file is written back byte for byte, front matter stays in the root node, a cell node is in its cell's language, heading levels follow the tree, and the `.leo` file stores only the `@qmd` or `@rmd` node. `file=` and `include=` have no meaning here.
 
+Working with one:
+
+- **An existing file:** add a node headlined `@qmd report.qmd`, then `:refresh-from-disk`. It asks whether to discard the new node's edits; answer `y`, and the file's headings and cells become nodes.
+- **A new file:** headline a node `@qmd new.qmd` and type the document in its body as markdown. A save writes the file; `:refresh-from-disk` then splits it into nodes.
+- **A new cell:** type it in a heading's body as a fence, save, and `:refresh-from-disk`. A `<< name >>` node added by hand needs its fence lines and a `<< name >>` line in its parent's body, as the reader puts them; the save refuses one without.
+- **Moving a cell** to another heading: move its two fence lines and its `<< name >>` line with it, or the save refuses the tree.
+- **Renaming the root** to another path writes a new file there and leaves the old one.
+
 Code-first literate programming: clone a labelled cell into an `@clean` tree. The same node is a fence in the markdown and code in the `.py` file, so an edit in either tree is saved to both, and `<<load>>` in a cell resolves as the `<< load >>` section. The `.leo` file keeps each labelled cell's gnx, so the clone survives a reopen; if both files changed on disk, the `@clean` file's text wins and the markdown's goes to Recovered Nodes. An unnamed cell is renumbered as cells are added, so label a cell before cloning it. This works for `@entangled` fence nodes too. The design is in `docs/dev/markdown_importer.md`.
 
+
+## `@wiki`
+
+A node headlined `@wiki NAME` is a wiki; its descendants are pages, written in markdown. `[[Page]]` in a page links to the page headed `Page`; `[[Parent/Page]]` narrows it by its parent; `[[Page|text]]` shows `text`; `[[other:Page]]` and `[[other:]]` reach another wiki. `\/`, `\|` and `\]` escape. Links in code are text.
+
+- `gd` on a link follows it, and `Ctrl-o` comes back. `gd` also follows Leo's `gnx:GNX`, `unl:gnx://#GNX` and `unl://#Parent-->Page` links, anywhere.
+- In INSERT, `[[` offers the wiki's pages.
+- Renaming a page rewrites every link to it, from any wiki, as one undo step; renaming a wiki rewrites `[[old:...]]`.
+- `:export-wiki` writes `NAME.md` beside the outline (or in the `@path` in effect): the root's body, then each page under a heading of its depth, links as `[text](#anchor)` with GitHub's anchors. A link naming no page or several, or a page deeper than six levels, refuses the export and says which.
+- `:convert-wikilinks-to-unls` rewrites the wiki's links as Leo's `unl:gnx://` links, for an outline shared with Leo.
+- The rules: no wiki inside another, no page a clone, no page headline starting with `@`, no directive in a page, and a name without `:`, `/` or `\`. An edit that breaks one is undone and the message names it; `:check-wiki` lists what an outline opened from elsewhere breaks.
+
+The design is in `docs/dev/wiki.md`.

@@ -88,6 +88,29 @@ impl Editor {
             );
         }
 
+        // The `@pagewidth` ruler, behind the text: the column past the width.
+        if let Some(width) = body.ruler {
+            let column = match body.wrap {
+                true => (width < body.text_width).then_some(width),
+                false => width
+                    .checked_sub(body.hscroll)
+                    .filter(|c| *c < body.text_width),
+            };
+            if let Some(c) = column {
+                let x = at(0, body.number_width + c).x;
+                let band = Rect::from_min_max(pos2(x, text.top()), pos2(x + cell.x, text.bottom()));
+                painter.rect_filled(band, 0.0, colours.ruler);
+            }
+        }
+        // A bracket and its match, behind their characters.
+        if let Some((a, b)) = body.brackets {
+            for (row, col) in [a, b] {
+                if let Some((y, x)) = body.screen_of(row, col) {
+                    painter.rect_filled(Rect::from_min_size(at(y, x), cell), 2.0, colours.bracket);
+                }
+            }
+        }
+
         let lines = body.screen_lines();
         let cursor_row = body.cursor.map(|c| c.0);
         let palette = classes(app);
@@ -155,6 +178,31 @@ impl Editor {
                     );
                     painter.rect_filled(r, 0.0, colours.selection);
                 }
+            }
+            // Indent guides on a line's first screen row only: a wrapped
+            // continuation has no indent of its own.
+            if body.guides && screen.first {
+                for column in body.indent_guides(i) {
+                    let Some(c) = column
+                        .checked_sub(screen.from)
+                        .filter(|c| *c < body.text_width)
+                    else {
+                        continue;
+                    };
+                    let x = at(y, body.number_width + c).x + 0.5;
+                    painter.vline(x, row_rect.y_range(), egui::Stroke::new(1.0, colours.guide));
+                }
+            }
+            if body.list {
+                paint_whitespace(
+                    &painter,
+                    &body,
+                    i,
+                    screen.from,
+                    at(y, body.number_width),
+                    cell,
+                    colours.whitespace,
+                );
             }
             let runs = view::columns(&cells, screen.from, body.text_width);
             paint_runs(&painter, at(y, body.number_width), cell, &runs);
@@ -386,6 +434,40 @@ fn selected_columns(body: &BodyView, i: usize) -> Option<(usize, usize)> {
 
 /// Paint runs left to right from `at`. A character that is not one cell wide
 /// is placed by itself, so the cells after it stay on the grid.
+/// `:set list`: a dot for each space and an arrow for each tab of line `i`,
+/// from screen column `from`.
+fn paint_whitespace(
+    painter: &egui::Painter,
+    body: &view::BodyView,
+    i: usize,
+    from: usize,
+    at: Pos2,
+    cell: Vec2,
+    colour: Color32,
+) {
+    let line = body.lines[i].trim_end_matches('\n');
+    for (c, ch) in line.chars().enumerate() {
+        let mark = match ch {
+            ' ' => "\u{b7}",
+            '\t' => "\u{2192}",
+            _ => continue,
+        };
+        let Some(x) = view::display_col(line, c, body.tab)
+            .checked_sub(from)
+            .filter(|x| *x < body.text_width)
+        else {
+            continue;
+        };
+        painter.text(
+            at + vec2(x as f32 * cell.x, 1.0),
+            egui::Align2::LEFT_TOP,
+            mark,
+            FontId::monospace(FONT_SIZE),
+            colour,
+        );
+    }
+}
+
 fn paint_runs(painter: &egui::Painter, at: Pos2, cell: Vec2, runs: &[(String, Look)]) {
     let mut col = 0;
     for (text, look) in runs {

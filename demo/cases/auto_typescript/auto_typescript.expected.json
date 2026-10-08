@@ -1,0 +1,27 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto c.ts",
+   "b": "@others\n@language typescript\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "1 f",
+   "b": "function f(): number {\n    return 1;\n}\n\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "1 class C",
+   "b": "class C {\n    m() {}\n}\n"
+  }
+ ],
+ "auto_written": {
+  "@auto c.ts": "function f(): number {\n    return 1;\n}\n\nclass C {\n    m() {}\n}\n"
+ }
+}

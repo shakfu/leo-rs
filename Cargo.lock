@@ -2368,7 +2368,6 @@ name = "leo-markdown"
 version = "0.7.0"
 dependencies = [
  "leolib",
- "once_cell",
  "regex",
  "tempfile",
 ]
@@ -2377,8 +2376,17 @@ dependencies = [
 name = "leo-plugins"
 version = "0.7.0"
 dependencies = [
- "leo-entangled",
  "leo-markdown",
+ "leo-wiki",
+ "leoapp",
+ "leolib",
+ "tempfile",
+]
+
+[[package]]
+name = "leo-wiki"
+version = "0.7.0"
+dependencies = [
  "leoapp",
  "leolib",
  "tempfile",
@@ -2395,6 +2403,7 @@ dependencies = [
  "once_cell",
  "regex",
  "serde_json",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
@@ -2421,6 +2430,7 @@ dependencies = [
  "egui_commonmark",
  "egui_extras",
  "image",
+ "leo-plugins",
  "leoapp",
  "leolib",
  "leolsp",
@@ -2464,10 +2474,12 @@ version = "0.7.0"
 dependencies = [
  "clap",
  "crossterm",
+ "leo-plugins",
  "leoapp",
  "leolib",
  "ratatui",
  "regex",
+ "signal-hook",
 ]
 
 [[package]]

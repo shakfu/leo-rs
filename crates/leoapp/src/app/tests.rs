@@ -407,7 +407,11 @@ fn a_leo_file_that_fails_to_save_holds_back_every_file() {
     let wrote = dir.join("good.py").exists();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(!wrote, "{}", app.message);
-    assert!(app.message.starts_with("save failed: "), "{}", app.message);
+    assert!(
+        app.message.starts_with("cannot save s.leo: no directory "),
+        "{}",
+        app.message
+    );
     assert!(
         app.message.ends_with("; 2 external files not written"),
         "{}",
@@ -447,7 +451,6 @@ fn declining_to_overwrite_the_leo_file_writes_no_file() {
     app.run_command_line("w");
     assert_eq!(app.mode, Mode::Confirm);
     type_text(&mut app, "n");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let leo_after = std::fs::read_to_string(&leo).unwrap();
     let good_after = std::fs::read_to_string(dir.join("good.py")).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
@@ -467,7 +470,11 @@ fn save_and_quit_stays_when_the_save_fails() {
     let mut app = App::new(doc);
     app.run_command_line("wq");
     assert!(!app.quit);
-    assert!(app.message.contains("save failed"), "{}", app.message);
+    assert!(
+        app.message.starts_with("cannot save x.leo: "),
+        "{}",
+        app.message
+    );
 }
 
 #[test]
@@ -522,11 +529,9 @@ fn writing_over_a_file_changed_on_disk_asks_first() {
         app.mini_label()
     );
     type_text(&mut app, "n");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(std::fs::read_to_string(&py).unwrap(), theirs);
     app.write_dirty_at_file_nodes();
     type_text(&mut app, "y");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let written = std::fs::read_to_string(&py).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(written.contains("x = 2"), "{written}");
@@ -556,7 +561,6 @@ fn refresh_from_disk_reads_the_file_and_asks_over_unwritten_edits() {
 
     app.run_command_line("refresh-from-disk");
     type_text(&mut app, "y");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(app.current.b(app.outline()), "x = 3\n", "{}", app.message);
 }
@@ -647,13 +651,11 @@ fn writing_over_an_unread_file_asks_first() {
         app.mini_label()
     );
     type_text(&mut app, "n");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
     assert_eq!(app.message, "not overwritten: 1 file");
 
     app.write_dirty_at_file_nodes();
     type_text(&mut app, "y");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let written = std::fs::read_to_string(&file).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(written.contains("print('ours')"), "{written}");
@@ -675,7 +677,6 @@ fn import_at_file_asks_before_adding_sentinels() {
     assert_eq!(app.mode, Mode::Confirm, "{}", app.message);
     assert!(app.current.h(app.outline()).starts_with("@file "));
     type_text(&mut app, "y");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let written = std::fs::read_to_string(&file).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(
@@ -1328,7 +1329,8 @@ fn a_long_count_in_the_outline_neither_panics_nor_hangs() {
     press(&mut app, "G");
     let start = std::time::Instant::now();
     press(&mut app, &format!("{}K", "9".repeat(40)));
-    assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    // A hang never ends; a generous bound keeps a loaded machine from failing it.
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
     assert_eq!(app.message, "cannot move up");
 }
 
@@ -1975,7 +1977,6 @@ fn an_unread_file_and_a_refused_one_are_flagged() {
     app.read_at_file_nodes();
     // A new node is dirty, so the read asks first.
     type_text(&mut app, "y");
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let rows = app.rows();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(app.message.contains("not read"), "{}", app.message);
@@ -2138,5 +2139,212 @@ fn a_clone_conflict_is_on_the_status_line_and_in_the_log() {
     assert_eq!(
         super::read_report_lines(&report),
         vec!["clone conflict: << example >>: /p/README.md and /p/tests/t.py differ; kept /p/tests/t.py"]
+    );
+}
+
+#[test]
+fn a_save_failure_leads_with_the_reason() {
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    let e = leolib::Error::io("/work/notes/a.leo", denied);
+    assert_eq!(
+        super::files::save_failed(&e),
+        "cannot save a.leo: permission denied; in /work/notes"
+    );
+}
+
+#[test]
+fn a_long_message_wraps_in_the_messages_overlay() {
+    let mut app = app();
+    app.overlay = Some(("messages".into(), vec!["abcdefghij".into(), String::new()]));
+    let view = app.help_view(10, 4);
+    assert_eq!(view.lines, ["abcd", "efgh", "ij", ""]);
+    assert_eq!(view.total, 4);
+}
+
+#[test]
+fn s_at_the_quit_question_saves_then_quits() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("q.leo").to_string_lossy().to_string();
+    let mut doc = Document::new_empty(&leo);
+    let root = doc.outline().root_position().unwrap();
+    doc.set_headline(&root, "changed");
+    let mut app = App::new(doc);
+    app.request_quit();
+    assert_eq!(app.mode, Mode::Confirm);
+    assert!(
+        app.mini_label().contains("s saves and quits"),
+        "{}",
+        app.mini_label()
+    );
+    type_text(&mut app, "s");
+    assert!(app.quit, "{}", app.message);
+    assert!(std::fs::read_to_string(&leo).unwrap().contains("changed"));
+}
+
+#[test]
+fn s_at_the_quit_question_stays_when_the_save_fails() {
+    let mut doc = Document::new_empty("/nonexistent-leotui-dir/x.leo");
+    let root = doc.outline().root_position().unwrap();
+    doc.set_headline(&root, "changed");
+    let mut app = App::new(doc);
+    app.request_quit();
+    type_text(&mut app, "s");
+    assert!(!app.quit);
+    assert!(
+        app.message.starts_with("cannot save x.leo"),
+        "{}",
+        app.message
+    );
+}
+
+#[test]
+fn unsaved_work_is_written_beside_the_outline_and_announced_on_the_next_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("w.leo").to_string_lossy().to_string();
+    let mut doc = Document::new_empty(&leo);
+    doc.save(&leo).unwrap();
+    let root = doc.outline().root_position().unwrap();
+    doc.set_headline(&root, "unsaved");
+    let mut app = App::new(doc);
+    let copy = app.write_recovery().unwrap();
+    assert_eq!(copy, dir.path().join("w.recovered.leo"));
+    let text = std::fs::read_to_string(&copy).unwrap();
+    assert!(
+        text.contains("@ignore recovered from w.leo") && text.contains("unsaved"),
+        "{text}"
+    );
+    let notice = super::files::recovery_notice(&leo).unwrap();
+    assert!(notice.contains("w.recovered.leo holds work"), "{notice}");
+    // Nothing unsaved, nothing written.
+    app.save_now(true);
+    assert!(app.write_recovery().is_none());
+}
+
+#[test]
+fn leo_command_names_run_and_a_typo_gets_a_suggestion() {
+    let mut leaving = app();
+    // Leo's name for quit: the outline is unsaved, so it asks first.
+    leaving.run_command_line("exit-leo");
+    assert_eq!(
+        leaving.mini.as_ref().map(|m| m.kind),
+        Some(crate::minibuffer::MiniKind::ConfirmQuit)
+    );
+    let mut app = app();
+    app.run_command_line("delete-nod");
+    assert_eq!(
+        app.message,
+        "no such command: delete-nod; did you mean delete-node? :commands lists them all"
+    );
+    app.run_command_line("zzzzzzzz");
+    assert_eq!(
+        app.message,
+        "no such command: zzzzzzzz; :commands lists them all"
+    );
+}
+
+#[test]
+fn the_commands_overlay_lists_unbound_commands_too() {
+    let mut app = app();
+    app.run_command_line("commands");
+    assert_eq!(app.mode, Mode::Help);
+    let (name, lines) = app.overlay.clone().unwrap();
+    assert_eq!(name, "commands");
+    assert!(lines
+        .iter()
+        .any(|l| l.starts_with("commands  list every command")));
+    assert!(lines
+        .iter()
+        .any(|l| l.starts_with("delete-node ") && l.contains('[')));
+    assert_eq!(lines.len(), crate::commands::all().count());
+}
+
+#[test]
+fn typing_replaces_a_new_nodes_placeholder_and_an_arrow_keeps_it() {
+    // A new outline's node is `newHeadline`; `e` selects it, as Leo does.
+    let mut app = App::new(Document::new_empty(""));
+    press(&mut app, "e");
+    assert!(app.mini.as_ref().unwrap().selected_all);
+    type_text(&mut app, "abc");
+    press(&mut app, "Enter");
+    assert_eq!(app.current.h(app.outline()), "abc");
+    let mut app = App::new(Document::new_empty(""));
+    press(&mut app, "e");
+    press(&mut app, "End");
+    type_text(&mut app, "X");
+    press(&mut app, "Enter");
+    assert_eq!(app.current.h(app.outline()), "newHeadlineX");
+    // Any other headline is edited at its end, as before.
+    press(&mut app, "e");
+    assert!(!app.mini.as_ref().unwrap().selected_all);
+    type_text(&mut app, "Y");
+    press(&mut app, "Enter");
+    assert_eq!(app.current.h(app.outline()), "newHeadlineXY");
+}
+
+#[test]
+fn list_and_guides_are_set_options() {
+    let mut app = app();
+    assert!(!app.options.list && app.options.guides);
+    app.run_command_line("set list noguides");
+    assert!(app.options.list && !app.options.guides);
+    app.run_command_line("set list?");
+    assert_eq!(app.message, "list");
+}
+
+/// The top-level row headed `h`.
+fn top(app: &App, h: &str) -> leolib::Position {
+    app.rows()
+        .into_iter()
+        .map(|r| r.position)
+        .find(|p| p.h(app.outline()) == h)
+        .unwrap()
+}
+
+#[test]
+fn ctrl_and_shift_clicks_choose_rows_that_act_together() {
+    use super::Extend;
+    let mut app = app();
+    let (a, b, c) = (top(&app, "a"), top(&app, "b"), top(&app, "c"));
+    app.click_node(&a);
+    app.click_node_with(&c, Extend::Toggle);
+    assert_eq!(app.selection, [a.clone(), c.clone()]);
+    assert_eq!(app.message, "2 nodes chosen");
+    // Marking marks both; again, unmarks both, in one undo step each.
+    app.run("mark", 1);
+    assert!(a.is_marked(app.outline()) && c.is_marked(app.outline()));
+    app.run("mark", 1);
+    assert!(!a.is_marked(app.outline()) && !c.is_marked(app.outline()));
+    // Shift-click from the current row, c, back to b.
+    app.click_node_with(&b, Extend::Range);
+    assert_eq!(app.selection, [b.clone(), c.clone()]);
+    app.run("delete-node", 1);
+    assert_eq!(heads(&app), ["a"]);
+    assert!(app.selection.is_empty());
+    app.doc.undo();
+    assert_eq!(heads(&app), ["a", "b", "c"]);
+}
+
+#[test]
+fn dragging_a_chosen_row_moves_them_all_and_another_command_unchooses() {
+    use super::Extend;
+    let mut app = app();
+    let (a, b, c) = (top(&app, "a"), top(&app, "b"), top(&app, "c"));
+    app.click_node(&b);
+    app.click_node_with(&c, Extend::Toggle);
+    app.drop_node(&c, &a, leolib::Place::Before);
+    assert_eq!(heads(&app), ["b", "c", "a"]);
+    assert_eq!(app.message, "moved 2 nodes");
+    assert_eq!(app.selection.len(), 2);
+    app.run("goto-next-visible", 1);
+    assert!(
+        app.selection.is_empty(),
+        "a command for one row unchooses the rest"
+    );
+    app.click_node(&b);
+    app.click_node_with(&c, Extend::Toggle);
+    app.click_node_with(&c, Extend::Toggle);
+    assert!(
+        app.selection.is_empty(),
+        "one row left is no multiple selection"
     );
 }

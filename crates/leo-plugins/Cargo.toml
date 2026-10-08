@@ -6,20 +6,22 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
-# Not released: the plugins are untested in use (docs/dev/plugins.md).
-publish = false
+readme = "README.md"
+keywords = ["leo", "outliner", "plugins"]
+categories = ["text-editors"]
 
 [features]
-default = ["entangled", "markdown"]
-entangled = ["dep:leo-entangled"]
+# leo-entangled is not here until it is published: crates.io refuses a
+# dependency it does not have, even an optional one.
+default = ["markdown", "wiki"]
 markdown = ["dep:leo-markdown"]
+wiki = ["dep:leo-wiki"]
 
 [dependencies]
 leolib.workspace = true
 leoapp.workspace = true
 leo-markdown = { workspace = true, optional = true }
-leo-entangled = { workspace = true, optional = true, features = ["leoapp"] }
+leo-wiki = { workspace = true, optional = true, features = ["leoapp"] }
 
 [dev-dependencies]
 tempfile = "3"

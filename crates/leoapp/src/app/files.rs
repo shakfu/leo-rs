@@ -49,12 +49,12 @@ impl App {
                         self.report_save(format!("saved {name}"), result.files);
                         return self.note_dropped_uas(result.dropped_descendent_uas);
                     }
-                    Err(e) => format!("save failed: {e}"),
+                    Err(e) => save_failed(&e),
                 }
             }
             true => match self.doc.save("") {
                 Ok(_) => return self.message = format!("saved {name}"),
-                Err(e) => format!("save failed: {e}"),
+                Err(e) => save_failed(&e),
             },
             false => format!("not saved: {name}"),
         };
@@ -341,5 +341,81 @@ impl App {
             parts.push(format!("{} not written", plural(files, "external file")));
         }
         parts.join(", ")
+    }
+}
+
+/// A failed save, reason first: the status line cuts off its end, and the
+/// path is the part a user can best do without.
+pub(super) fn save_failed(e: &leolib::Error) -> String {
+    let short = leolib::util::short_file_name;
+    let dir = |path: &str| leolib::util::os_path_dirname(path);
+    match e {
+        leolib::Error::NotFound { path } => {
+            format!("cannot save {}: no directory {}", short(path), dir(path))
+        }
+        leolib::Error::Io { path, source } => {
+            let reason = source.to_string();
+            let reason = reason.split(" (os error").next().unwrap_or_default();
+            let mut chars = reason.chars();
+            let reason: String = chars
+                .next()
+                .map(|c| c.to_lowercase().chain(chars).collect())
+                .unwrap_or_default();
+            format!("cannot save {}: {reason}; in {}", short(path), dir(path))
+        }
+        e => format!("cannot save: {e}"),
+    }
+}
+
+/// Where a recovery copy of the outline at `file_name` goes: beside it as
+/// `NAME.recovered.leo`, or in the settings directory for one never saved.
+pub fn recovery_path(file_name: &str) -> Option<std::path::PathBuf> {
+    match file_name.is_empty() {
+        true => crate::config::dir().map(|d| d.join("recovered.leo")),
+        false => {
+            let path = std::path::Path::new(file_name);
+            let stem = path.file_stem()?.to_string_lossy();
+            Some(path.with_file_name(format!("{stem}.recovered.leo")))
+        }
+    }
+}
+
+/// The status line's word on a recovery copy of `file_name` newer than the
+/// outline itself, or None.
+pub fn recovery_notice(file_name: &str) -> Option<String> {
+    let copy = recovery_path(file_name)?;
+    let copied = std::fs::metadata(&copy).and_then(|m| m.modified()).ok()?;
+    let saved = std::fs::metadata(file_name).and_then(|m| m.modified()).ok();
+    if saved.is_some_and(|s| s >= copied) {
+        return None;
+    }
+    Some(format!(
+        "{} holds work from a session that ended unsaved; open it to copy back what you need",
+        copy.display()
+    ))
+}
+
+impl App {
+    /// Write every node to [`recovery_path`] if anything is unsaved, as a
+    /// session ends without the user's say: a hangup, or a terminal gone.
+    /// Returns the path written.
+    pub fn write_recovery(&mut self) -> Option<std::path::PathBuf> {
+        if self.unsaved_work().is_empty() {
+            return None;
+        }
+        let file_name = self.outline().file_name.clone();
+        let path = recovery_path(&file_name)?;
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let name = match file_name.is_empty() {
+            true => "an unsaved outline".to_string(),
+            false => leolib::util::short_file_name(&file_name),
+        };
+        let headline = format!("recovered from {name}");
+        self.doc
+            .write_recovery(&path.to_string_lossy(), &headline)
+            .ok()?;
+        Some(path)
     }
 }

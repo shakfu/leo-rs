@@ -173,7 +173,15 @@ pub fn load() -> Config {
     };
     migrate(&path);
     match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&text),
+        // Warnings name the file, so a user knows which one to fix.
+        Ok(text) => {
+            let mut config = parse(&text);
+            let name = format!("{} line", path.display());
+            for w in &mut config.warnings {
+                *w = w.replacen("config line", &name, 1);
+            }
+            config
+        }
         Err(_) => Config::default(),
     }
 }
@@ -217,7 +225,15 @@ pub fn parse(text: &str) -> Config {
                 config.plugin.insert(key.to_string(), v.to_string());
             }
             ("split-ratio", v) => match v.parse::<u16>() {
-                Ok(pct) => config.split_ratio = Some(pct.clamp(15, 85)),
+                Ok(pct) => {
+                    let kept = pct.clamp(15, 85);
+                    if kept != pct {
+                        config.warnings.push(format!(
+                            "config line {n}: split-ratio {pct} is outside 15 to 85; using {kept}"
+                        ));
+                    }
+                    config.split_ratio = Some(kept);
+                }
                 Err(_) => config
                     .warnings
                     .push(format!("config line {n}: split-ratio is not a number: {v}")),
@@ -355,10 +371,22 @@ pub fn update(path: &Path, changes: &[(String, Option<String>)]) -> io::Result<(
         Some(value) => with_setting(&text, key, value),
         None => without_setting(&text, key),
     });
+    let secret = text
+        .lines()
+        .any(|l| l.trim_start().starts_with("mcp-token"));
     std::fs::write(&tmp, text)?;
     if let Ok(meta) = std::fs::metadata(&path) {
         let _ = std::fs::set_permissions(&tmp, meta.permissions());
     }
+    // The MCP token lets a process edit and save outlines: for the owner only.
+    #[cfg(unix)]
+    if secret {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&tmp)?.permissions().mode() & 0o600;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    let _ = secret;
     match std::fs::rename(&tmp, &path) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -535,6 +563,12 @@ mod tests {
     #[test]
     fn the_split_ratio_is_read_clamped_and_saved_beside_the_theme() {
         assert_eq!(parse("split-ratio = 25").split_ratio, Some(25));
+        let wide = parse("split-ratio = 500");
+        assert_eq!(wide.split_ratio, Some(85));
+        assert_eq!(
+            wide.warnings,
+            ["config line 1: split-ratio 500 is outside 15 to 85; using 85"]
+        );
         assert_eq!(parse("split-ratio = 5").split_ratio, Some(15));
         let bad = parse("split-ratio = wide");
         assert_eq!(bad.split_ratio, None);
@@ -590,6 +624,20 @@ mod tests {
         std::fs::write(&old, "theme = \"x\"\n").unwrap();
         migrate(&new);
         assert!(old.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_settings_file_holding_the_mcp_token_is_the_owners_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let s = Scratch::new("token");
+        let path = s.0.join("settings.toml");
+        std::fs::create_dir_all(&s.0).unwrap();
+        std::fs::write(&path, "lsp = true\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        update(&path, &[("mcp-token".into(), Some("\"t\"".into()))]).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

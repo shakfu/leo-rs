@@ -34,6 +34,7 @@ pub(crate) mod pickle;
 pub mod position;
 pub mod reformat;
 pub mod seqmatch;
+pub mod settings;
 pub mod state;
 pub mod undo;
 pub mod util;
@@ -80,6 +81,16 @@ pub fn open_outline_with_kinds(
     }
     let mut o = leofile::read_leo_file(&path)?;
     o.kinds = std::sync::Arc::new(kinds);
+    // Before the external files: `tab-width` and the like shape the reads.
+    let setting_notes = settings::apply(&mut o);
+    // Write-only files the `.leo` file already had are this outline's to
+    // overwrite; one typed or renamed since is not, until the user says so.
+    for p in o.all_positions() {
+        if p.is_at_nosent_node(&o) || p.is_at_asis_node(&o) {
+            let file = o.full_path(&p);
+            o.remember_read_path(&p, &file);
+        }
+    }
     let report = match read_external {
         true => {
             let report = external::read_external_files(&mut o);
@@ -90,6 +101,8 @@ pub fn open_outline_with_kinds(
         }
         false => external::ReadResult::default(),
     };
+    let mut report = report;
+    report.settings = setting_notes;
     // Recovered Nodes holds text no file has, so it needs saving.
     o.changed = !report.conflicts.is_empty();
     Ok((o, report))
@@ -99,6 +112,8 @@ pub fn open_outline_with_kinds(
 pub fn new_outline(file_name: &str) -> Outline {
     let mut o = Outline::new_empty();
     o.file_name = file_name.to_string();
+    // The user's settings; a new outline has no `@settings` of its own.
+    settings::apply(&mut o);
     o
 }
 

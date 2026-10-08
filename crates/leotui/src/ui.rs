@@ -259,7 +259,23 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(mini) = &app.mini {
         let label = app.mini_label();
         let text = truncate(&format!("{label}{}", mini.buffer), area.width as usize);
-        f.render_widget(Paragraph::new(Line::from(Span::raw(text))), area);
+        // A selected text is shown reversed: typing replaces it.
+        let line = match mini.selected_all {
+            true => {
+                let n = label.chars().count().min(text.chars().count());
+                let (head, tail) =
+                    text.split_at(text.char_indices().nth(n).map_or(text.len(), |(i, _)| i));
+                Line::from(vec![
+                    Span::raw(head.to_string()),
+                    Span::styled(
+                        tail.to_string(),
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    ),
+                ])
+            }
+            false => Line::from(Span::raw(text)),
+        };
+        f.render_widget(Paragraph::new(line), area);
         let x = area.x + (label.chars().count() + mini.cursor) as u16;
         f.set_cursor_position((x.min(area.x + area.width.saturating_sub(1)), area.y));
         return;
@@ -292,7 +308,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Clear, popup);
 
     let inner = h.saturating_sub(2) as usize;
-    let help = app.help_view(inner);
+    let help = app.help_view(inner, w.saturating_sub(2) as usize);
     let shown: Vec<Line> = help
         .lines
         .iter()
@@ -337,9 +353,7 @@ fn match_style() -> Style {
 
 /// The completion drop-down, above the `:` line.
 ///
-/// Only for a command's argument. A bare command name completes in place, as
-/// vim's does, and a list over the whole command table would cover the outline
-/// every time `:` is pressed.
+/// See `Menu::is_open` for when it shows.
 fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
     let Some(mini) = &app.mini else {
         return;
@@ -399,7 +413,10 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title(format!(" {} themes ", menu.items.len())),
+                .title(match menu.at {
+                    0 => format!(" {} commands ", menu.items.len()),
+                    _ => format!(" {} themes ", menu.items.len()),
+                }),
         ),
         popup,
     );

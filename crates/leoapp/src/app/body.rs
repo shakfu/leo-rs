@@ -268,14 +268,19 @@ impl App {
             return;
         }
         let mut lines = self.buffer.clone().unwrap_or_else(|| self.body_buffer());
+        let mut typed = None;
         match event.code {
             // Tab completes after a word where a server can; else it indents.
             KeyCode::Tab if self.completes_here(&lines) => return self.request_completion(),
             KeyCode::Char('n') if event.modifiers == KeyModifiers::CONTROL => {
-                return self.request_completion();
+                if !self.offer_plugin_completion() {
+                    self.request_completion();
+                }
+                return;
             }
             KeyCode::Esc => {
                 self.completion = None;
+                self.signature = None;
                 self.editor.end_insert(&mut lines);
                 self.commit_body(&lines);
                 self.mode = Mode::Normal;
@@ -324,12 +329,98 @@ impl App {
                 }
             }
             KeyCode::Char(_) if keys::is_chord(event.modifiers) => {}
-            KeyCode::Char(ch) => self.editor.insert_char(&mut lines, ch),
+            KeyCode::Char(ch) => {
+                self.editor.insert_char(&mut lines, ch);
+                typed = Some(ch);
+            }
             _ => {}
         }
         self.buffer = Some(lines);
         self.scroll_to_cursor();
         self.refilter_completion();
+        // A call's signature while its arguments are typed, as editors show it.
+        match typed {
+            Some('(' | ',') if self.served() => self.request_signature(),
+            Some(')') => self.signature = None,
+            // A plugin's completion opens on its own trigger, `[[`.
+            Some(_) if self.completion.is_none() => {
+                self.offer_plugin_completion();
+            }
+            _ => {}
+        }
+    }
+
+    /// Leo's `open-url-under-cursor`: a plugin's link, else a `gnx:` or
+    /// `unl:` link on the cursor's line, else the `<< section >>` alone on it.
+    pub fn open_url_under_cursor(&mut self) {
+        if crate::plugins::open_url(self) || self.follow_leo_link() {
+            return;
+        }
+        self.goto_section_definition();
+    }
+
+    /// A `gnx:GNX`, `unl:gnx://FILE#GNX` or `unl://FILE#A-->B` link on the
+    /// cursor's line, the one under the cursor if there are several: select
+    /// the node it names. False if the line has none.
+    fn follow_leo_link(&mut self) -> bool {
+        static LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r#"unl:gnx://([^\s'"`#]*)#([^\s'"`]+)|unl://([^\s'"`#]*)#([^'"`\n]+)|gnx:([^\s'"`]+)"#)
+                .expect("a valid pattern")
+        });
+        let lines = self.body_buffer();
+        let (row, col) = self.editor.cursor;
+        let Some(line) = lines.get(row) else {
+            return false;
+        };
+        let at = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
+        let links: Vec<regex::Captures> = LINK.captures_iter(line).collect();
+        let Some(m) = links
+            .iter()
+            .find(|c| c.get(0).is_some_and(|m| m.start() <= at && at <= m.end()))
+            .or(links.first())
+        else {
+            return false;
+        };
+        // A link into another outline names its file; this one's is fine.
+        let file = m.get(1).or(m.get(3)).map_or("", |f| f.as_str());
+        let here = leolib::util::short_file_name(&self.outline().file_name);
+        if !file.is_empty() && leolib::util::short_file_name(file) != here {
+            self.message = format!("{file} is another outline: open it to follow the link");
+            return true;
+        }
+        let o = self.outline();
+        let target = match (m.get(2).or(m.get(5)), m.get(4)) {
+            (Some(gnx), _) => o
+                .all_positions()
+                .into_iter()
+                .find(|p| p.gnx(o) == gnx.as_str()),
+            (None, Some(path)) => {
+                // Leo's `findUnl`: the headlines name a suffix of the path.
+                let parts: Vec<&str> = path.as_str().trim().split("-->").map(str::trim).collect();
+                o.all_positions().into_iter().find(|p| {
+                    let mut chain: Vec<String> = p
+                        .self_and_parents(o)
+                        .iter()
+                        .map(|q| q.h(o).trim().to_string())
+                        .collect();
+                    chain.reverse();
+                    chain.len() >= parts.len()
+                        && chain[chain.len() - parts.len()..]
+                            .iter()
+                            .zip(&parts)
+                            .all(|(a, b)| a == b)
+                })
+            }
+            _ => None,
+        };
+        match target {
+            Some(p) => {
+                self.focus = Focus::Tree;
+                self.select(p);
+            }
+            None => self.message = format!("no node for {}", m.get(0).map_or("", |x| x.as_str())),
+        }
+        true
     }
 
     /// The section branch of Leo's `open-url-under-cursor`: select the node

@@ -2,19 +2,53 @@
 
 ## Critical
 
+Found by the 2026-10-08 review. Each was reproduced, by the reviewer or by hand.
+
+### leolib
+
+- [x] **A new `@clean` or `@nosent` node overwrites an existing file it never read.** `Outline::may_overwrite` (`outline.rs:891`) exempts both kinds. Typing `@clean b.py` over a 12-byte `b.py` and saving left 0 bytes, with no prompt. Through MCP, a client with edit and save rights can write any file the user can (`@nosent ~/.bashrc`). Leo has the same exemption (`shouldPromptForDangerousWrite`).
+- [x] **External edits to an `@clean` file are overwritten without notice.** A file that matches the tree on open gets no stamp (`atclean.rs:114,134`, `external.rs:350`), so `changed_files()` never reports a later edit. With `--no-external`, a save writes the `.leo` copy over the file.
+- [x] **An `@file` with no `@-leo` line reads as success with every body empty** (`atfile_read.rs:611`). A truncated file shows empty nodes with no error, and the next save writes them.
+- [x] **Gnxs are written to `.leo` unescaped** (`leofile.rs:391`, `put_t_elements`). `t="a&amp;b.1"` saves as `t="a&b.1"`, which the next open refuses. The id comes raw from `$USER` (`gnx.rs:62`); Leo's `cleanLeoID` strips `.`, `,`, quotes and whitespace.
+- [x] **The Python importer panics on a backslash before a non-ASCII character** (`importers/python.rs:81-83`). `y = "\é"` under `@auto` crashes at open.
+- [x] **A node listed as its own child hangs the reader** (`leofile.rs:255`). `<v t="a.1"><vh>x</vh><v t="a.1"/></v>` runs out of memory.
+
+### leo-markdown (blocks publishing)
+
+- [x] **A body with no trailing newline joins the next heading onto it** (`write_own`, `heading`). `text` then `## B` is written as `text## B`, with 0 errors, and the headings are gone on reopen.
+- [x] **Every `\r` is deleted on read, and a BOM is dropped.** A CR-only file loses all line breaks on its first write; `a\rb` in code becomes `ab`. The module doc claims byte for byte.
+- [x] **A refused read erases `str_leo-rs-cell-ids`** (`save_cell_ids`). The `@clean` clones lose their link for good.
+- [x] **A display fence whose first line is `<< name >>` made the file unsaveable.** Fixed: the refused file is written as its body holds it. The read is still refused, so such a file opens as one node; reading it as text needs the writer to tell a deleted cell from a display fence.
+- [ ] **A refused write leaves the tree's edits only in memory.** Deleting, cloning or reordering a cell, or adding a child under one, is refused at write, and the `.leo` file does not store the tree; the quit guard asks first. Current Leo does the same for any `@<file>` (`addToOrphanList`, the "Not Written" dialog). Storing a failed tree in the `.leo` file would go beyond Leo: a design decision.
+- [x] **The packaged tests read files outside the package.** `tests/cells.rs` reads `../leo-entangled/tests/data` and `../../demo/entangled`; `cargo test` on the crates.io tarball fails.
+
 ## High
 
 ### Plugins
 
-- [ ] **Use the plugins on real documents, then release them.** `@entangled`, `@qmd` and `@rmd` are built and tested but not used in earnest, so 0.7.0 leaves them out: their crates are `publish = false` and no binary registers them. To ship them: try each on real documents (a Quarto report, an R Markdown paper, an entangled README), then give leotui and leogui a `leo-plugins` dependency and call `leo_plugins::register()` first in `main` (with the `debug_assert!` on its result), and publish `leo-markdown`, `leo-entangled` and `leo-plugins`. crates.io refuses a crate whose dependencies, optional ones included, are unpublished, so a cargo feature cannot keep them out of a release.
-
-- [ ] **A way to run the plugins from a checkout before they ship.** With no binary registering them, only their tests run them. A `leotui`/`leogui` built with plugins needs either a local patch adding `leo_plugins::register()`, or binaries in `leo-plugins` itself (leogui's `run` is a library function; leotui would need its `main` split into a library the same way).
+- [ ] **Use `@entangled` on real documents, then release it.** leotui and leogui register `@qmd` and `@rmd` through `leo-plugins`, and `leo-markdown` and `leo-plugins` are publishable. `leo-entangled` stays `publish = false` and out of `leo-plugins`, since crates.io refuses an unpublished dependency, even an optional one; `make ... ENTANGLED=1` builds and tests it.
+- [x] **Quoted labels.** `#| label: "b c"` reads as `<< b c >>`, and a rename adds a second `#| label:` line, which Quarto rejects. knitr's `{r label='x y'}` reads as `<< x >>` and renames to `label='z y'`.
+- [x] **An indented fence with a whitespace-only line is refused**: the line loses its indent and the read check fails.
+- [x] **Edits that change structure silently.** Done: an underlined heading renamed to text that would not read as one is written with `#`; a heading node with no headline, and a cell whose code would close its fence, are refused at write; `#` lines in an HTML comment spanning lines stay text. Open: `#` lines in unclosed YAML front matter still become headings.
+- [x] **`leo-markdown` API before publishing.** Done: unused items private, `get`/`set` hidden, `FENCE_OPEN` replaced by `fence_opener_info`, `std::sync::LazyLock` for `once_cell`, `#[non_exhaustive]` on `FenceInfo`, `Style` and `Policy`, keywords, categories and a crate README. Not done: `leolib::ext::Rename`, which leo-markdown constructs from outside leolib.
+- [x] **`leo-plugins` tests fail under `--no-default-features`.** They assume the `markdown` feature.
+- [x] **A failed `register()` is silent in release builds.** The `debug_assert!` goes, and `@qmd` nodes open as plain nodes.
+- [x] **An error names the wrong plugin**: renaming a cell to `mk df` says "an entangled name has no spaces" (`leo-markdown/src/lib.rs:862`).
 
 ### leolib
 
 - [x] **Plugins: move the leo-rs-only kinds out of leolib.** Done (released in 0.7.0 as the API only): leolib is Leo plus `leolib::ext`; `@entangled` is in `leo-entangled`, `@qmd` and `@rmd` in `leo-markdown`, registered by `leo-plugins`. Design: `docs/dev/plugins.md`.
 - [x] **`@qmd` and `@rmd`: Quarto and R Markdown with cells as nodes.** Unreleased plugin. Opt-in; `@auto` stays Leo's. Exact round trip, cells and labelled fences as nodes, labels, fenced divs, and labelled cells cloned into `@clean` trees that survive a reopen. Design: `docs/dev/markdown_importer.md`, `docs/dev/plugins.md`.
 - [x] **Report a clone whose body differs between external files.** A node cloned into two external files takes the body of whichever file is read last, with no report, so an edit made in one file is lost when the other still holds the old text. Found with `@clean README.md` and `@file tests/test_readme.py` sharing an example node (`docs/dev/entangled_leo_backend.md`, the spike). Done: reported on read, both texts kept under `Recovered Nodes`. Python Leo keeps the last file's text without a word.
+
+- [x] **Descendent uAs are lost when an external read fails.** Done: a node whose read failed keeps its blob parked and writes it back. Open: a blob the pickle reader cannot parse is still dropped on a restructure, since its positions change; that needs the fuller pickle reader (Low).
+- [x] **Saves use one fixed temp name and no fsync** (`external.rs:1003`). Two instances saving at once share `{path}.leo-rs-tmp`.
+- [x] **An `@clean` tree with no text outside its directives takes the file's text into its root body**, dropping `@others`, so its children fail the next write as orphans. Not changed: Leo's `readOneAtCleanNode` does the same, nothing is lost, and the write error stops the save. Reported as an empty file; it needs a tree with no text at all.
+
+### leomcp
+
+- [x] **Resource limits before auth.** The server allocates up to 16 MiB per request, reads unbounded lines and spawns a thread per connection before checking the token (`leomcp/src/lib.rs:156,188`).
+- [x] **The token file's permissions.** `settings.toml` holding `mcp-token` is created with the umask (usually 0644).
 
 ### leoapp and leolsp (both frontends)
 
@@ -32,6 +66,29 @@
 
 ## Medium
 
+### Tests
+
+- [x] A generated round trip for `leo-markdown`: headings, prose, `{lang}` and display fences, fenced divs, front matter, CRLF, no final newline. Assert `write_string(read(x)) == x` and that a save reports the file unchanged.
+- [x] CI runs `make check ENTANGLED=1`, `leo-plugins` without default features, and a minute of `cargo fuzz run` per target, with new targets `read_leo` and `markdown`. The fuzz job has not run yet; a stable smoke run of 200k mutated inputs per new target found the `tx` attribute bug.
+- [x] MCP: `save` writes the `.leo` and external files when allowed; a non-JSON body, an oversized Content-Length and a wrong path or method get errors and the server keeps answering.
+- [x] An undo property test (`crates/leolib/tests/undo.rs`): 300 random sequences of edits. It found that demoting into, or moving right into, a node's own clone made a cycle, and that deleting the only top-level node emptied the outline; both fixed.
+- [x] Corpus cases for the unpinned importers: `auto_block_languages` (`.rs`, `.java`, `.lua`, `.php`, `.c`) and `auto_typescript`, a known difference. The Rust case found the `$` bug in the importer patterns; fixed.
+- [x] Timing: the LSP test `wait` helper polls by count (`leolsp/src/tests.rs:116`), and `leoapp/src/app/tests.rs:1329` asserts under 500 ms in a debug build.
+- [x] An `@auto` write-back is checked against Leo: the corpus records `atAutoToString` for each `@auto` node (`auto_written`), and `every_at_auto_node_writes_back_as_python_leo_writes_it` compares. They agree.
+
+### Usability
+
+- [x] **Recovery.** leotui writes `NAME.recovered.leo` on a hangup, SIGTERM, a failed terminal or a panic. Not done: a `.leo~` backup on save, which the atomic save makes less needed, and recovery in leogui.
+- [x] **The quit prompt has no save choice.** Offer save / quit / cancel, answered by one key in both front ends (leotui needs Enter, leogui does not).
+- [x] **Save errors name the temp file and are cut off.** `save failed: .../demo.leo.leo-rs-tmp: Permiss`. Lead with the reason and the outline's name; wrap long lines in `:messages`.
+- [x] **A malformed `.leo` file is reported as `no <leo_file> element`.** Report the unclosed element and its line. Without a terminal leotui says `Device not configured`.
+- [x] **Command names.** The README claims every Leo command name; `save-file`, `exit-leo`, `execute-script` and others are missing. Add did-you-mean, a candidate list on a second Tab, and a way to list unbound commands.
+- [x] **Headline editing.** A new outline's `newHeadline` starts selected; the README no longer says `Ctrl-u` clears a headline. No key clears a headline being edited, as `Ctrl-u` moves the node.
+- [x] **`@qmd` and `@rmd` steps are undocumented**: creating one over an existing file, adding a cell (its fence and reference in the parent's body), renaming the root.
+- [x] **Startup messages hide each other.** Settings warnings go only to `:messages` and do not name `~/.config/leo-rs/settings.toml`; `split-ratio = 500` and `--theme nosuch` are accepted silently.
+- [x] **README order.** Install starts near line 47, after the conformance table; the leolib API precedes using leotui.
+- [x] **leogui offers `.leojs` and `.db`** in its open dialog and file drop, then fails to open them.
+
 ### leolib
 
 - [ ] Run the `fuzz/` targets under libFuzzer. They compile on stable but need nightly and `cargo-fuzz` to run, and neither was installed when they were written. A one-minute random-mutation run over `demo/` found the pickle allocation bug and nothing else.
@@ -42,9 +99,9 @@
 
 - [x] **Tab completion from the language server.** Done; additional edits (auto-imports) and snippets are not applied. With no server for the body, Tab after a dot names the missing `lsp-LANGUAGE` setting.
 
-- [ ] **Syntax colouring from the language server.** Semantic tokens (`textDocument/semanticTokens/full`) name what tree-sitter cannot know: a parameter, a type from another file, a macro, a read-only variable. Request them per document, map each token's line and column to a body row as diagnostics are mapped, and lay them over `highlight`'s spans, tree-sitter staying the colouring for a node with no server. The token types go to Helix scopes (`variable.parameter`, `type`, `function.macro`) so themes colour them. Tokens arrive as deltas against the previous set, and a body edited since the request needs its tokens moved or dropped.
+- [x] **Syntax colouring from the language server.** Done: full-document semantic tokens, asked for when the server's text changes, laid over tree-sitter's spans, mapped to Helix scopes; not while a change is typed. Deltas (`semanticTokens/full/delta`) are not asked for.
 
-- [ ] **`@wiki`: wikilinks in a markdown subtree** (leo-rs only, a plugin; proposed, nothing built). Before it: `leo_markdown::markdown_root` treats any registered kind's node as a markdown root, so a kind needs a way to say it is not markdown. An `@wiki <name>` node's descendants are markdown pages linked by `[[Page]]`, `[[Parent/Page]]` and `[[other:Page]]`; `export-wiki` writes the subtree to `<name>.md` with the links made markdown links. Also `open-url-under-cursor` (`gd`, `gf`) extended from `<< section >>`, its only branch today, to wiki links, `gnx:` and UNLs; `Ctrl-o` for `go-back`; `[[` headline completion through the completion list; renames that rewrite links; and `wiki::check` enforcing the note's five constraints on load, edit and export. Design and open questions in `docs/dev/wiki.md`, revised 2026-10-07 for leoapp.
+- [x] **`@wiki`: wikilinks in a markdown subtree.** Done in `leo-wiki` (`docs/dev/wiki.md`, with where it departs from the design).
 
 ### leogui
 
@@ -66,15 +123,15 @@ Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`.
 
 - [x] Hoist banner with a de-hoist button.
 
-- [ ] Find references gathered as clones under a `Found` node.
+- [x] Find references gathered as clones under a `Found` node.
 
-- [ ] Signature help and format document.
+- [x] Signature help and format document.
 
 - [x] Language-server status and log.
 
-- [ ] Matching bracket highlight; `@pagewidth` ruler, whitespace and indent guides; sticky headers.
+- [x] Matching bracket highlight; `@pagewidth` ruler, whitespace and indent guides. Sticky headers are not done.
 
-- [ ] Multi-select in the outline.
+- [x] Multi-select in the outline: Delete, Mark and drag act on every chosen row. Other commands act on the current row.
 
 - [x] Drop a file on the outline to import it as `@auto`.
 
@@ -99,6 +156,21 @@ Nothing open.
 - [x] Each crate ships a copy of `LICENSE`; `make lint` checks the copies match.
 
 ## Low
+
+### Leo coverage
+
+From the 2026-10-08 review; `docs/dev/delta.md` has the command count.
+
+- [x] `@settings` and `myLeoSettings`, for the seven settings that change what is read or written (`leolib::settings`). Keybindings, `@data`, `@button` and the rest are not read.
+- [x] `@ifenv` and `@ifhostname` in `@settings`, as Leo tests them. `@if EXPRESSION` is Python, and its settings are still skipped.
+- [x] The gnx id from `~/.leo/.leoID.txt`, which Leo reads before the login name.
+- [x] `$VAR` in `@path` and file names (`util.rs:367` expands only `~`).
+- [ ] `@persistence`. The pickle reader now reads and writes floats and tuples as CPython does; sets and bytes, pickled as calls to a global, are still refused.
+- [ ] `%NAME%` in paths on Windows, as `ntpath.expandvars` does. Needs a Windows machine to test.
+- [ ] Chapters and bookmarks. UNLs are followed (`gd` on `unl:gnx://`, `unl://` and `gnx:`), not yet made.
+- [x] Two consecutive doc parts read the second `@` back as `@+at`. Leo does the same (corpus case `doc_parts_twice`), so this is Leo's behaviour.
+- [ ] `@edit` drops content lines that parse as directives (`external.rs:902`), as Leo's `writeOneAtEditNode` does.
+- [x] A CRLF `.leo` file reads with LF, as XML and Leo read it (corpus case `leo_crlf`); `&#13;` stays a CR.
 
 ### leolib
 

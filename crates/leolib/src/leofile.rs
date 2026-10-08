@@ -44,6 +44,8 @@ struct Element {
     text: String,
     children: Vec<Element>,
     name: String,
+    /// Byte offset just past its start tag, to name its line in an error.
+    start: usize,
 }
 
 impl Element {
@@ -72,22 +74,43 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
             }
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) => {
-                stack.push(element_from_start(&e, &reader)?);
+                let mut el = element_from_start(&e, &reader)?;
+                el.start = reader.buffer_position() as usize;
+                stack.push(el);
             }
             Ok(Event::Empty(e)) => {
                 let el = element_from_start(&e, &reader)?;
                 stack.last_mut().unwrap().children.push(el);
             }
-            Ok(Event::End(_)) => {
+            Ok(Event::End(e)) => {
+                // Checked here, not by `check_end_names`, to name both lines.
+                let closing = e.name().into_inner().to_string();
+                if let Some(open) = stack.get(1..).and_then(|s| s.last()) {
+                    if open.name != closing {
+                        let line = |at: usize| {
+                            contents[..at.min(contents.len())].matches('\n').count() + 1
+                        };
+                        return Err(Error::NotALeoFile {
+                            detail: format!(
+                                "</{closing}> on line {} closes <{}> opened on line {}",
+                                line(reader.buffer_position() as usize),
+                                open.name,
+                                line(open.start)
+                            ),
+                        });
+                    }
+                }
                 if stack.len() > 1 {
                     let el = stack.pop().unwrap();
                     stack.last_mut().unwrap().children.push(el);
                 }
             }
-            // Raw text, not `xml_content()`: that normalizes `\r\n`, and the
-            // body must keep the bytes the file holds.
+            // XML's end-of-line handling, as Leo's ElementTree does it: a
+            // literal CRLF or CR is a newline, so a .leo file checked out
+            // with CRLF reads as written. `&#13;` stays a CR.
             Ok(Event::Text(e)) => {
-                stack.last_mut().unwrap().text.push_str(&e);
+                let text = e.replace("\r\n", "\n").replace('\r', "\n");
+                stack.last_mut().unwrap().text.push_str(&text);
             }
             // `&lt;`, `&#10;` and the like arrive apart from the text around them.
             Ok(Event::GeneralRef(e)) => {
@@ -103,6 +126,20 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
             _ => {}
         }
         buf.clear();
+    }
+    // An element still open at the end: the file was cut short, or a closing
+    // tag names another element, which `check_end_names` lets pass.
+    if let Some(open) = stack.get(1..).and_then(|s| s.last()) {
+        let line = contents[..open.start.min(contents.len())]
+            .matches('\n')
+            .count()
+            + 1;
+        return Err(Error::NotALeoFile {
+            detail: format!(
+                "<{}> opened on line {line} is not closed: the file is cut short or a tag is mismatched",
+                open.name
+            ),
+        });
     }
     let root = stack.remove(0);
     let leo_file = root
@@ -145,9 +182,8 @@ fn element_from_start<R: BufRead>(
     }
     Ok(Element {
         attrs,
-        text: String::new(),
-        children: Vec::new(),
         name,
+        ..Element::default()
     })
 }
 
@@ -210,8 +246,14 @@ pub fn read_leo_string(o: &mut Outline, contents: &str) -> Result<()> {
         o,
         gnx2body: &gnx2body,
         gnx2ua: &gnx2ua,
+        cycle: None,
     };
     visitor.visit(&v_elements, hidden);
+    if let Some(gnx) = visitor.cycle {
+        return Err(Error::NotALeoFile {
+            detail: format!("node {gnx} is listed inside itself"),
+        });
+    }
 
     // #1111: every outline has at least one node.
     if o.node(hidden).children.is_empty() {
@@ -235,9 +277,26 @@ struct VnodeVisitor<'a> {
     o: &'a mut Outline,
     gnx2body: &'a HashMap<String, String>,
     gnx2ua: &'a HashMap<String, Vec<(String, Ua)>>,
+    /// A clone listed inside itself, which would make the tree endless.
+    cycle: Option<String>,
 }
 
 impl VnodeVisitor<'_> {
+    /// Whether v is `parent_v` or one of its ancestors.
+    fn is_ancestor(&self, v: VnodeId, parent_v: VnodeId) -> bool {
+        let mut todo = vec![parent_v];
+        let mut seen = HashSet::new();
+        while let Some(w) = todo.pop() {
+            if w == v {
+                return true;
+            }
+            if seen.insert(w) {
+                todo.extend(self.o.node(w).parents.iter().copied());
+            }
+        }
+        false
+    }
+
     fn visit(&mut self, parent_e: &Element, parent_v: VnodeId) {
         for e in &parent_e.children {
             match e.name.as_str() {
@@ -252,6 +311,9 @@ impl VnodeVisitor<'_> {
                         self.o.find_gnx(&gnx)
                     };
                     match existing {
+                        Some(v) if self.is_ancestor(v, parent_v) => {
+                            self.cycle.get_or_insert(gnx);
+                        }
                         Some(v) => {
                             // A clone. The last body in the file wins, as in Leo.
                             self.o.node_mut(parent_v).children.push(v);
@@ -388,7 +450,7 @@ fn put_v_element(
         o.node_mut(p.v).set_bit(status::WRITE);
     }
     let attrs = descendent_ua_attrs(o, p, any_uas);
-    let v_head = format!("<v t=\"{gnx}\"{attrs}>");
+    let v_head = format!("<v t={}{attrs}>", util::xml_quoteattr(&gnx));
     if written.contains(&gnx) {
         out.push_str(&v_head);
         out.push_str("</v>\n");
@@ -529,6 +591,11 @@ fn resolve_archived_position(o: &Outline, root_v: VnodeId, key: &str) -> Option<
 /// as Leo leaves them: the nodes they name are not there to take them.
 pub fn restore_descendent_uas(o: &mut Outline) {
     for v in o.all_unique_nodes() {
+        // The tree is not the file's: its positions would match nothing, and
+        // dropping the blob would lose its uAs for good.
+        if o.failed_reads.contains(&v) {
+            continue;
+        }
         for key in DESCENDENT_UA_KEYS {
             let parked = format!("__native__{key}");
             let Some(ua) = o.node(v).uas.get(&parked) else {
@@ -603,7 +670,8 @@ fn put_t_elements(o: &Outline, out: &mut String) {
             true => util::xml_escape(&o.node(v).b),
             false => String::new(),
         };
-        out.push_str(&format!("<t tx=\"{gnx}\"{ua}>{body}</t>\n"));
+        let tx = util::xml_quoteattr(&gnx);
+        out.push_str(&format!("<t tx={tx}{ua}>{body}</t>\n"));
     }
     out.push_str("</tnodes>\n");
 }
@@ -618,7 +686,9 @@ fn is_in_memory(key: &str) -> bool {
 fn put_unknown_attributes(o: &Outline, v: VnodeId) -> String {
     let mut out = String::new();
     for (key, val) in &o.node(v).uas {
-        if key.starts_with("__native__") || is_in_memory(key) {
+        // A `tx` read from a `<v>` element would repeat `<t>`'s own `tx`, and
+        // a duplicated attribute makes the file unreadable.
+        if key.starts_with("__native__") || is_in_memory(key) || key == "tx" {
             continue;
         }
         // Both kinds are escaped. Leo's `fc.pickle` writes a hexlified
@@ -655,6 +725,41 @@ pub fn write_leo_copy(o: &mut Outline, path: &str) -> Result<String> {
     let path = util::finalize(path);
     write_xml(o, &path)?;
     Ok(path)
+}
+
+/// Write every node of `o`, external trees included, to `path`, under one
+/// top-level node headlined `@ignore {headline}`: a copy to recover unsaved
+/// work from. `@ignore` keeps every body and child in the `.leo` file, and
+/// opening the copy reads no external file, so nothing on disk replaces what
+/// it holds. The outline is left as it was.
+pub fn write_recovery(o: &mut Outline, path: &str, headline: &str) -> Result<String> {
+    let hidden = o.hidden_root;
+    let tops = std::mem::take(&mut o.node_mut(hidden).children);
+    let wrapper = o.new_vnode(None);
+    o.node_mut(wrapper).h = format!("@ignore {headline}");
+    let relink = |o: &mut Outline, from: VnodeId, to: VnodeId| {
+        for &v in &tops {
+            for parent in o.node_mut(v).parents.iter_mut().filter(|p| **p == from) {
+                *parent = to;
+            }
+        }
+    };
+    relink(o, hidden, wrapper);
+    o.node_mut(wrapper).children = tops.clone();
+    o.node_mut(wrapper).parents.push(hidden);
+    o.node_mut(hidden).children.push(wrapper);
+    // A kind's node keeps only what its kind stores; here everything is kept.
+    let kinds = std::mem::replace(
+        &mut o.kinds,
+        std::sync::Arc::new(crate::ext::Kinds::empty()),
+    );
+    let result = write_leo_copy(o, path);
+    o.kinds = kinds;
+    relink(o, wrapper, hidden);
+    o.node_mut(hidden).children = tops.clone();
+    o.node_mut(wrapper).children.clear();
+    o.node_mut(wrapper).parents.clear();
+    result
 }
 
 /// Write the XML to a temporary file and rename it over `path`.
@@ -785,6 +890,85 @@ mod tests {
         assert!(xml.contains("kept"));
     }
 
+    #[test]
+    fn a_v_element_attribute_named_tx_does_not_break_the_saved_file() {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
+             <v t=\"a.1\" tx=\"b.1\"><vh>x</vh></v>\
+             </vnodes><tnodes><t tx=\"a.1\">body</t></tnodes></leo_file>\n";
+        let mut o = Outline::new("");
+        read_leo_string(&mut o, xml).unwrap();
+        let o = round_trip(&mut o);
+        let root = o.root_position().unwrap();
+        assert_eq!(root.b(&o), "body");
+    }
+
+    #[test]
+    fn a_recovery_copy_holds_external_trees_and_leaves_the_outline_alone() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file a.py");
+        o.set_body(&root, "@others\n");
+        let child = o.insert_as_last_child(&root);
+        o.set_headline(&child, "f");
+        o.set_body(&child, "def f(): pass\n");
+        let before = outline_to_xml_string(&mut o);
+        let dir = std::env::temp_dir().join(format!("leolib-recover-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("r.leo").to_string_lossy().to_string();
+        write_recovery(&mut o, &path, "x.leo").unwrap();
+        let copy = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(copy.contains("<vh>@ignore x.leo</vh>"), "{copy}");
+        assert!(copy.contains("def f(): pass"), "{copy}");
+        assert_eq!(outline_to_xml_string(&mut o), before);
+        assert_eq!(o.root_position().unwrap().h(&o), "@file a.py");
+    }
+
+    #[test]
+    fn a_mismatched_closing_tag_names_both_lines() {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\n<v t=\"a.1\"><vh>A</v>\n</vnodes></leo_file>\n";
+        let mut o = Outline::new("");
+        let err = read_leo_string(&mut o, xml).unwrap_err().to_string();
+        assert!(
+            err.contains("</v> on line 3 closes <vh> opened on line 3"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_cut_short_leo_file_names_the_element_left_open() {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\n<v t=\"a.1\"><vh>x</vh>\n";
+        let mut o = Outline::new("");
+        let err = read_leo_string(&mut o, xml).unwrap_err().to_string();
+        assert!(err.contains("<v> opened on line 3 is not closed"), "{err}");
+    }
+
+    #[test]
+    fn a_node_listed_inside_itself_is_refused() {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
+             <v t=\"a.1\"><vh>x</vh><v t=\"b.1\"><vh>y</vh><v t=\"a.1\"/></v></v>\
+             </vnodes><tnodes></tnodes></leo_file>\n";
+        let mut o = Outline::new("");
+        let err = read_leo_string(&mut o, xml).unwrap_err().to_string();
+        assert!(err.contains("a.1 is listed inside itself"), "{err}");
+    }
+
+    #[test]
+    fn a_gnx_holding_xml_characters_survives_a_save() {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
+             <v t=\"a&amp;b&quot;.1\"><vh>h</vh></v></vnodes>\
+             <tnodes><t tx=\"a&amp;b&quot;.1\">x</t></tnodes></leo_file>\n";
+        let mut o = Outline::new("");
+        read_leo_string(&mut o, xml).unwrap();
+        let root = o.root_position().unwrap();
+        assert_eq!(root.gnx(&o), "a&b\".1");
+        let saved = outline_to_xml_string(&mut o);
+        let mut again = Outline::new("");
+        read_leo_string(&mut again, &saved).unwrap();
+        let root = again.root_position().unwrap();
+        assert_eq!((root.gnx(&again), root.b(&again)), ("a&b\".1", "x"));
+    }
+
     fn read(t: &str) -> Result<Outline> {
         let xml = format!(
             "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
@@ -798,11 +982,14 @@ mod tests {
 
     #[test]
     fn references_and_line_ends_are_read_as_written() {
-        let o = read("<t tx=\"a.1\" str_k=\"x&#10;y\tz &lt;\">1 &lt; 2&#10;&#9;&gt;\r\n&apos;</t>")
-            .unwrap();
+        let o = read(
+            "<t tx=\"a.1\" str_k=\"x&#10;y\tz &lt;\">1 &lt; 2&#10;&#9;&gt;\r\n&apos;&#13;\r</t>",
+        )
+        .unwrap();
         let p = &o.all_positions()[0];
         assert_eq!(p.h(&o), "h & A");
-        assert_eq!(p.b(&o), "1 < 2\n\t>\r\n'");
+        // A literal CRLF or CR is a newline, as XML and Leo read it; `&#13;` is a CR.
+        assert_eq!(p.b(&o), "1 < 2\n\t>\n'\r\n");
         let ua = &o.node(p.v).uas["str_k"];
         assert_eq!(ua, &Ua::Text("x\ny\tz <".to_string()));
     }

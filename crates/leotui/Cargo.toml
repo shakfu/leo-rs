@@ -17,9 +17,15 @@ path = "src/main.rs"
 [dependencies]
 leolib.workspace = true
 leoapp.workspace = true
+leo-plugins.workspace = true
 crossterm = "0.29"
 ratatui = "0.30"
 clap = { version = "4", features = ["derive"] }
+
+# Already in the build through crossterm; a hangup ends the session with a
+# recovery copy rather than killing the process.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
 
 [dev-dependencies]
 # Already in the build through leolib; a test sets an hlsearch pattern.

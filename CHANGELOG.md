@@ -4,11 +4,11 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## [Unreleased]
 
-Not in any release: the plugins below live in the workspace's unpublished `leo-entangled`, `leo-markdown` and `leo-plugins` crates, and no released binary registers them. What they do is in `docs/plugins.md`.
+`@qmd` and `@rmd` are in the `leo-markdown` crate, which leotui and leogui register through `leo-plugins`. `@entangled` is in the unpublished `leo-entangled` crate, and no binary registers it. What they do is in `docs/plugins.md`.
 
 ### Added
 
-- **The plugin crates.** `@entangled` is in `leo-entangled`, with its `:entangled-*` commands as a leoapp plugin (feature `leoapp`); `@qmd` and `@rmd` are in `leo-markdown`; `leo-plugins` registers them. None is published (`publish = false`), and leotui and leogui do not depend on them. `Document::rename_entangled_block` is now `rename_block`.
+- **The plugin crates.** `@entangled` is in `leo-entangled`, with its `:entangled-*` commands as a leoapp plugin (feature `leoapp`); `@qmd` and `@rmd` are in `leo-markdown`; `leo-plugins` registers `@qmd` and `@rmd`, and leotui and leogui call it at startup. `leo-markdown` and `leo-plugins` are published; `leo-entangled` is not, so `leo-plugins` leaves it out, as crates.io refuses an unpublished dependency even when optional. The workspace builds it only with `make ... ENTANGLED=1`. `Document::rename_entangled_block` is now `rename_block`.
 
 - **`@qmd PATH` and `@rmd PATH`: Quarto and R Markdown documents with cells as nodes.** Headings, executable cells (`{python}`, `{r setup}`) and labelled fences become nodes; display fences stay in the prose, and the file is written back byte for byte. The kind fixes the label rules whatever the extension: `#| label:` under `@qmd`, the chunk header (`{r setup}`, `label=`) under `@rmd`. An unnamed cell is headlined `<< python cell 2 >>`; renaming it adds a label in its kind's syntax. New kinds rather than a change to `@auto`, so `@auto` and `@auto-md` stay Leo's importer and existing outlines read as before. They share `@entangled`'s scanner and writer, in the `leo-markdown` crate. A heading inside a fenced div (`::: {.callout-note}`, a tabset) stays in the body, in all three kinds, so the div's opening and closing lines stay in one node. An R fence is now in the `r` language: Leo's extension table reads `.r` as REBOL.
 
@@ -27,6 +27,69 @@ Not in any release: the plugins below live in the workspace's unpublished `leo-e
 - **`:entangled-tangle` and `:entangled-check`** run entangled's own command in the outline's directory, so tangling follows `entangled.toml` exactly. They write the unsaved `@entangled` files first, and stop if one cannot be written, since entangled would read the old text. The command runs on a thread of its own; its output goes to `:messages` and its last line, or why it failed, to the status line. Arguments pass through: `:entangled-tangle --force`. leogui has them in the Body menu. The `entangled` setting names the program, for an app started without the shell's `PATH`.
 
 - **`demo/entangled/`: a README whose examples are tested.** `tests.md` places each named example from `README.md` in a pytest function by reference; tangling writes `test_readme.py`, and an example that no longer holds fails its test. `demo.leo` holds the README, the tests and the library in one outline. The conformance corpus skips it: Python Leo reads `@entangled` as a plain node, so there is nothing to check it against.
+
+- **`@settings` trees set what leolib reads and writes.** The outline's `@settings` tree, and `~/.leo/myLeoSettings.leo` in leotui and leogui, give `tab-width`, `page-width`, `output-newline`, `target-language`, `default-derived-file-encoding`, `create-nonexistent-directories` and `force-newlines-in-at-nosent-bodies`; an outline with `@string output-newline = crlf` now writes CRLF files, as Leo does. Other settings are ignored. A value that is not valid is reported and the default kept. `@ignore`, `@ifplatform`, `@ifenv` and `@ifhostname` are honoured; `@if EXPRESSION` is Python, so its settings are skipped.
+
+- **A session that ends without the user's say keeps its work.** On a hangup (a dropped ssh session), SIGTERM, a terminal that fails, or a panic, leotui writes every node to `NAME.recovered.leo` beside the outline, all under one `@ignore` node, so opening it reads no external file. The next open names the copy. Five seconds after a signal the process exits whatever it is doing.
+
+- **The quit question offers to save.** `s` saves and quits, `y` quits without saving, `n` stays; a question answers to one key in leotui, as it did in leogui, whose dialog gains a Save button.
+
+- **`:commands`** lists every command with its keys, including the many no key runs. An unknown command suggests the nearest name. Leo's `save-file`, `save-file-as`, `save-file-to`, `exit-leo`, `open-outline` and `help-for-command` run their leo-rs commands. Tab on a command name with several matches shows them, as vim's wildmenu does.
+
+- **`@wiki`: markdown pages linked by `[[...]]`**, in the new `leo-wiki` crate. `gd` follows a link and `Ctrl-o` comes back; `[[` completes a page; renaming a page rewrites the links to it; `:export-wiki` writes one markdown file with GitHub anchors, refusing a broken or ambiguous link or a page deeper than six. An edit that breaks a wiki's rules (no clones, no `@` headlines, no directives in pages) is undone and named. `leolib::ext::TreeKind` is the extension it uses: a directive whose tree is stored in the `.leo` file, unlike a `FileKind`'s. `gd` also follows Leo's `gnx:` and `unl:` links everywhere. Design: `docs/dev/wiki.md`.
+
+- **Semantic-token colouring.** Where a language server offers semantic tokens, parameters, variables, macros, namespaces and enum members take their theme colours over tree-sitter's; `:set nosemantic` turns it off. Tokens are asked for when the text the server has changes, and not shown while a change is typed.
+
+- **Find references, signature help and format document**, from the language server. `gr` clones the nodes using the symbol under `Found N:references to NAME`, as `clone-find-all` gathers matches. A call's signature shows while its arguments are typed, its parameter in brackets on the status line and in a popup in leogui. `:lsp-format` formats the node's file and applies just the lines it changes; one touching a sentinel line refuses the whole.
+
+- **leogui's body: matching brackets, a ruler and guides.** The bracket at the cursor and its match are shaded; an `@pagewidth` directive draws a ruler; indent guides mark each level (`:set noguides`); `:set list` marks spaces and tabs.
+
+- **Several nodes at once in leogui.** Cmd- or Ctrl-click adds a row, Shift-click a run; Delete, Mark and a drag then act on every chosen row, as one undo step each (`Document::move_nodes`, `delete_nodes`).
+
+### Fixed
+
+- **A new `@clean`, `@nosent` or `@asis` node no longer overwrites a file it never read.** Typing `@clean b.py` over an existing `b.py` and saving emptied it without a prompt: `may_overwrite` exempted `@clean` and `@nosent`, as Leo does. Now each asks first. An `@nosent` or `@asis` node the `.leo` file already had is still written without asking. Through MCP, a client with edit and save rights could otherwise write any file the user can.
+
+- **An `@clean` file edited by another program is no longer overwritten unseen.** A file that matched its tree on open got no stamp, so the edit was never reported and the next save replaced it. With `--no-external`, a save wrote the `.leo` copy over the file.
+
+- **An `@file` cut short before its `@-leo` line is a read error.** It read as success with every body empty, and the next save wrote the empty bodies over the code.
+
+- **A `.leo` file stays readable whatever its gnxs and attributes hold.** Gnxs were written unescaped, so one holding `&` or `"` made the next open fail; the login name in new gnxs is now cleaned as Leo's `cleanLeoID` cleans it. A `tx` attribute on a `<v>` element was written back as a second `tx` on its `<t>`. A node listed inside itself is refused; it hung the reader.
+
+- **Demoting a node whose next sibling is its clone, or moving one into its clone, is refused.** Either made the node its own descendant, and the outline endless. Deleting the only top-level node is refused too; it emptied the outline while the status line said it could not.
+
+- **The Rust importer makes `impl`, `struct` and `trait` blocks nodes**, as Leo does. Its patterns end in `$`, which in Rust's regex did not match before the line's newline, as Python's does.
+
+- **Messages that say what to do.** A failed save leads with the reason and the file (`cannot save a.leo: permission denied; in /work`), not the temp file's path. A broken `.leo` file names the element left open or the closing tag that does not match, with lines. leotui without a terminal says so; given a file that is not an outline, it names the import commands. Startup messages no longer hide each other: the first shows with a count, and `:messages` has all of them, wrapped. Settings warnings name the settings file, and an out-of-range `split-ratio` is reported. A new outline's `newHeadline` starts selected, so typing replaces it.
+
+- **leogui no longer offers `.leojs` and `.db`** in its Open dialog, which it could not open.
+
+- **A `.leo` file with CRLF line endings reads as Leo reads it.** A Windows checkout's file put `\r\n` into every body, where Leo, following XML, reads `\n`; a written `&#13;` is still a CR.
+
+- **Gnxs take Leo's id first from `~/.leo/.leoID.txt`**, then the login name, as Leo does, so one person's nodes carry one id in both.
+
+- **`@ifenv` and `@ifhostname` in `@settings` are tested as Leo tests them**; their settings were skipped. The pickle reader reads and writes floats and tuples, so a uA blob holding one survives a restructure.
+
+- **The Python importer no longer panics on a backslash before a non-ASCII character** (`"\é"`).
+
+- **`$NAME` and `${NAME}` in `@path` and file names are expanded**, as Leo's `os.path.expandvars` does. `%NAME%` on Windows is not.
+
+- **Saving is atomic per writer and durable.** Each save writes a temp file of its own, fsynced before the rename, so two instances saving one file no longer share `FILE.leo-rs-tmp`. Errors name the file being saved, not the temp file.
+
+- **A file that fails to read keeps its nodes' uAs.** The `descendentVnodeUnknownAttributes` blob was consumed even though the tree it names was not read, so the next save dropped its uAs for good.
+
+- **The MCP server reads nothing large before it checks the token**, closes a refused connection, caps request lines and headers, and serves at most 16 connections. A settings file holding `mcp-token` is written readable by its owner only.
+
+- **leotui and leogui say when plugins failed to register**, on stderr; a release build was silent.
+
+- **`@qmd` and `@rmd` fixes before their release.**
+  - A body edited to end without a newline joined the next heading onto it; the headings were lost on reopen.
+  - Only the CR of a CRLF is removed. A line ending in CR alone makes the read refuse, which keeps the file byte for byte; it lost every line break before. A dropped byte-order mark is reported.
+  - A refused read kept the whole file in the node, but the next write could refuse that body too; it is now written as it stands. A refused read no longer erases the saved cell gnxs, which unlinked `@clean` clones.
+  - A fence opener on a file's last line, with no newline, is text.
+  - A quoted label is one name: `#| label: "b c"` renames in place, where a second label line was added, and knitr's `label='x y'` no longer reads as `x`. A label named `label` renames its value.
+  - An indented cell with a line of just its indent reads; it was refused.
+  - Edits that would change the tree on the next read are written another way or refused: an underlined heading renamed to `- todo` is written `## - todo`, and a cell whose code would close its fence, or a heading with no headline, is refused. `#` lines in an HTML comment spanning lines stay text.
 
 ## [0.7.0]
 

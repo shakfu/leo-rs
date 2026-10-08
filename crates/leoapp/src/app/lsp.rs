@@ -130,7 +130,7 @@ impl App {
         // would move the cursor or the text under the typing.
         let idle = self.mode == Mode::Normal && self.buffer.is_none();
         match event {
-            Event::Diagnostics => {}
+            Event::Diagnostics | Event::Tokens => {}
             Event::Message(m) => self.message = m,
             Event::Hover(lines) if lines.is_empty() => self.message = "no hover information".into(),
             Event::Hover(lines) if idle => {
@@ -155,6 +155,11 @@ impl App {
             }
             // Completions come while typing: that is when they are asked for.
             Event::Completions(items) => self.offer_completions(items),
+            // So do signatures; asked for in NORMAL, one is a message.
+            Event::References(targets) if idle => self.gather_references(targets),
+            Event::Signature(sig) if self.mode == Mode::Insert => self.signature = sig,
+            Event::Signature(None) => self.message = "not in a call".into(),
+            Event::Signature(Some(sig)) => self.message = signature_line(&sig),
             Event::CodeActions(list) if list.is_empty() => {
                 self.message = "no code actions here".into()
             }
@@ -164,12 +169,48 @@ impl App {
                 self.apply_edits(edits, &label, &format!("applied {label}"));
             }
             Event::Hover(_)
+            | Event::References(_)
             | Event::Definition(_)
             | Event::Rename(_)
             | Event::CodeActions(_)
             | Event::Edit(..) => {
                 self.message = "a language server answered while you were typing; ask again".into()
             }
+        }
+    }
+
+    /// The nodes holding references, cloned under a new last top-level node
+    /// as `clone-find-all` gathers matches: `Found N:references to NAME`.
+    pub fn gather_references(&mut self, targets: Vec<Target>) {
+        let lines = self.body_buffer();
+        let (row, col) = self.editor.cursor;
+        let name = word_at(lines.get(row).map_or("", |l| l.as_str()), col);
+        let mut gnxs: Vec<String> = Vec::new();
+        let mut elsewhere = 0;
+        for t in targets {
+            match t {
+                Target::Body(at) if !gnxs.contains(&at.gnx) => gnxs.push(at.gnx),
+                Target::Body(_) => {}
+                Target::File { .. } => elsewhere += 1,
+            }
+        }
+        let outside = match elsewhere {
+            0 => String::new(),
+            n => format!("; {n} in files this outline does not hold"),
+        };
+        let pattern = format!("references to {name}");
+        let found = self
+            .doc
+            .clone_find_all(&pattern, "lsp-references", true, |o, p| {
+                gnxs.iter().any(|g| g == p.gnx(o))
+            });
+        match found {
+            Some((found, n)) => {
+                self.focus = Focus::Tree;
+                self.select(found);
+                self.message = format!("found {n} nodes with {pattern}{outside}");
+            }
+            None => self.message = format!("no {pattern} in this outline{outside}"),
         }
     }
 
@@ -462,6 +503,33 @@ impl App {
 pub const CODE_ACTIONS: &str = "code actions";
 
 /// `E: message`, with the severity's letter, as the status line shows it.
+/// The identifier at or before character `col` of `line`.
+fn word_at(line: &str, col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let word = |c: &char| c.is_alphanumeric() || *c == '_';
+    let mut start = col.min(chars.len());
+    while start > 0 && word(&chars[start - 1]) {
+        start -= 1;
+    }
+    let end = (col..chars.len())
+        .find(|&i| !word(&chars[i]))
+        .unwrap_or(chars.len());
+    chars[start..end.max(start)].iter().collect()
+}
+
+/// A signature as one line, its active parameter in brackets: `f(a, [b])`.
+pub fn signature_line(sig: &leolsp::Signature) -> String {
+    match &sig.active {
+        Some(r) => format!(
+            "{}[{}]{}",
+            &sig.label[..r.start],
+            &sig.label[r.clone()],
+            &sig.label[r.end..]
+        ),
+        None => sig.label.clone(),
+    }
+}
+
 pub fn diagnostic_line(d: &leolsp::BodyDiagnostic) -> String {
     let letter = match d.severity {
         Severity::Error => 'E',
@@ -652,6 +720,71 @@ mod tests {
         app.lsp_event(Event::Hover(vec!["doc".into()]));
         assert_eq!(app.mode, Mode::Insert);
         assert!(app.message.contains("ask again"));
+    }
+
+    #[test]
+    fn references_are_cloned_under_a_found_node() {
+        let mut app = app("count = 1\n");
+        let root = app.current.clone();
+        let other = app.doc.insert_node(&root);
+        app.doc.set_headline(&other, "user");
+        app.select(root.clone());
+        let gnx = |p: &leolib::Position, app: &App| p.gnx(app.outline()).to_string();
+        let targets = vec![
+            Target::Body(BodyPos {
+                gnx: gnx(&root, &app),
+                row: 0,
+                col: 0,
+            }),
+            Target::Body(BodyPos {
+                gnx: gnx(&other, &app),
+                row: 3,
+                col: 1,
+            }),
+            Target::Body(BodyPos {
+                gnx: gnx(&other, &app),
+                row: 5,
+                col: 1,
+            }),
+            Target::File {
+                path: "/x/y.py".into(),
+                line: 1,
+                col: 0,
+            },
+        ];
+        app.gather_references(targets);
+        assert_eq!(
+            app.message,
+            "found 2 nodes with references to count; 1 in files this outline does not hold"
+        );
+        let found = app.current.clone();
+        assert_eq!(found.h(app.outline()), "Found 2:references to count");
+        assert_eq!(found.children(app.outline()).len(), 2);
+    }
+
+    #[test]
+    fn a_signature_shows_while_typing_and_goes_with_insert() {
+        let mut app = app("f(1, 2)\n");
+        let sig = leolsp::Signature {
+            label: "f(a, b)".into(),
+            active: Some(5..6),
+            documentation: None,
+        };
+        assert_eq!(signature_line(&sig), "f(a, [b])");
+        app.lsp_event(Event::Signature(Some(sig.clone())));
+        assert_eq!(app.message, "f(a, [b])", "asked in NORMAL, it is a message");
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        app.lsp_event(Event::Signature(Some(sig.clone())));
+        assert_eq!(app.signature, Some(sig));
+        app.handle_key(KeyEvent::new(KeyCode::Char(')'), KeyModifiers::NONE));
+        assert_eq!(app.signature, None, "a closing parenthesis ends the call");
+        app.lsp_event(Event::Signature(Some(leolsp::Signature {
+            label: "g()".into(),
+            active: None,
+            documentation: None,
+        })));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.signature, None);
     }
 
     #[test]

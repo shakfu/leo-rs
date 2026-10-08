@@ -117,6 +117,9 @@ pub struct Outline {
     /// dropped. Reported and cleared by [`crate::save_all`]; see
     /// [`Outline::invalidate_descendent_uas`].
     pub(crate) dropped_descendent_uas: Vec<String>,
+    /// File nodes whose last read failed: their trees are not the files', so
+    /// [`crate::leofile::restore_descendent_uas`] leaves their blobs parked.
+    pub(crate) failed_reads: HashSet<VnodeId>,
     /// Arena slots freed by [`Outline::free_unreachable`], for reuse.
     free: Vec<VnodeId>,
 }
@@ -141,6 +144,7 @@ impl Outline {
             mod_time_cache: HashMap::new(),
             file_stamps: HashMap::new(),
             dropped_descendent_uas: Vec::new(),
+            failed_reads: HashSet::new(),
             read_paths: HashSet::new(),
             import_warnings: HashMap::new(),
             refilled: HashSet::new(),
@@ -885,12 +889,10 @@ impl Outline {
     /// warns about (issue #50): the outline holds no copy of what is in that
     /// file, so writing it discards the file. The writer refuses and lists the
     /// node in `WriteResult::refused`; a caller that can ask the user records
-    /// approval with `remember_read_path`. `@nosent` is exempt because its
-    /// file is never read, and `@clean` because its reader runs on every open.
+    /// approval with `remember_read_path`. `@nosent` and `@asis` files are
+    /// never read; [`crate::open_outline_with_kinds`] counts those the
+    /// `.leo` file already had as read.
     pub fn may_overwrite(&self, p: &Position) -> bool {
-        if p.is_at_nosent_node(self) || p.is_at_clean_node(self) {
-            return true;
-        }
         let path = self.full_path(p);
         if !std::path::Path::new(&path).exists() {
             return true;
@@ -1211,6 +1213,11 @@ impl Outline {
         .unwrap_or_default()
     }
 
+    /// The `@pagewidth` a directive puts in effect at p, if one does.
+    pub fn page_width_directive(&self, p: &Position) -> Option<i32> {
+        self.scan_directive(p, "@pagewidth", |s| s.parse::<i32>().ok())
+    }
+
     /// The `@pagewidth` in effect at p, else the configured default. Leo's `getPageWidth`.
     pub fn get_page_width(&self, p: &Position) -> i32 {
         self.scan_directive(p, "@pagewidth", |s| s.parse::<i32>().ok())
@@ -1274,6 +1281,10 @@ impl Outline {
         // A kind's node's language, from the file: a fence's info string.
         if let Some(node::Ua::Text(lang)) = self.node(p.v).uas.get(crate::ext::LANGUAGE) {
             return Some(lang.clone());
+        }
+        // A tree kind fixes its tree's language: every `@wiki` page is markdown.
+        if let Some(lang) = crate::ext::tree_at(self, p).and_then(|(k, _)| k.language()) {
+            return Some(lang.to_string());
         }
         if let Some(lang) = find_first_valid_at_language(p.b(self)) {
             return Some(lang);

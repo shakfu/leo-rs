@@ -87,6 +87,10 @@ pub struct Server {
     initialize_id: i64,
     pub initialized: bool,
     pub encoding: Encoding,
+    /// The server's semantic token legend, once it answers `initialize`:
+    /// empty if it has no full-document tokens.
+    pub token_types: Vec<String>,
+    pub token_modifiers: Vec<String>,
     /// Set when the server stopped or a write failed; the server is dead.
     pub error: Option<String>,
 }
@@ -167,6 +171,8 @@ impl Server {
             initialize_id: 0,
             initialized: false,
             encoding: Encoding::Utf16,
+            token_types: Vec::new(),
+            token_modifiers: Vec::new(),
             error: None,
         };
         server.initialize(root);
@@ -196,6 +202,21 @@ impl Server {
                     "completion": {
                         "completionItem": {"snippetSupport": false},
                         "contextSupport": false,
+                    },
+                    "signatureHelp": {"signatureInformation": {
+                        "parameterInformation": {"labelOffsetSupport": true},
+                    }},
+                    "references": {},
+                    "formatting": {},
+                    "semanticTokens": {
+                        "requests": {"full": true},
+                        "tokenTypes": SEMANTIC_TYPES,
+                        "tokenModifiers": ["declaration", "definition", "readonly", "static",
+                            "deprecated", "abstract", "async", "modification", "documentation",
+                            "defaultLibrary"],
+                        "formats": ["relative"],
+                        "overlappingTokenSupport": false,
+                        "multilineTokenSupport": false,
                     },
                     "codeAction": {
                         "isPreferredSupport": true,
@@ -312,6 +333,21 @@ impl Server {
         if caps["positionEncoding"].as_str() == Some("utf-8") {
             self.encoding = Encoding::Utf8;
         }
+        let tokens = &caps["semanticTokensProvider"];
+        let full = tokens["full"]
+            .as_bool()
+            .unwrap_or(tokens["full"].is_object());
+        if full {
+            let names = |v: &Value| -> Vec<String> {
+                v.as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|n| n.as_str().map(str::to_string))
+                    .collect()
+            };
+            self.token_types = names(&tokens["legend"]["tokenTypes"]);
+            self.token_modifiers = names(&tokens["legend"]["tokenModifiers"]);
+        }
         self.initialized = true;
         self.write(&json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
         while let Some(msg) = self.queue.pop_front() {
@@ -319,6 +355,33 @@ impl Server {
         }
     }
 }
+
+/// The semantic token types this client colours, LSP's standard set.
+const SEMANTIC_TYPES: [&str; 23] = [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+    "decorator",
+];
 
 /// The answer to a request a server makes of its client: one null per item
 /// for `workspace/configuration`, which means "no settings", else null.
@@ -368,7 +431,14 @@ pub mod fake {
                 let replies = match msg["method"].as_str() {
                     Some("initialize") => vec![json!({
                         "jsonrpc": "2.0", "id": msg["id"],
-                        "result": {"capabilities": {"positionEncoding": encoding}},
+                        "result": {"capabilities": {
+                            "positionEncoding": encoding,
+                            "semanticTokensProvider": {
+                                "legend": {"tokenTypes": ["parameter", "macro"],
+                                           "tokenModifiers": ["readonly"]},
+                                "full": true,
+                            },
+                        }},
                     })],
                     Some("exit") => break,
                     _ => answer(&msg),

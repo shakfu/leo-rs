@@ -96,6 +96,26 @@ fn lsp(seen: Seen) -> Lsp {
                             uri.as_str().unwrap(): [{"range": range(0, 7, 9), "newText": "sys"}],
                         }}}}),
                     ],
+                    Some("textDocument/references") => reply(json!([
+                        {"uri": uri, "range": range(2, 8, 9)},
+                        {"uri": uri, "range": range(3, 8, 14)},
+                        {"uri": "file:///elsewhere/other.py", "range": range(0, 0, 1)},
+                    ])),
+                    // `os` on file line 0 (the root's row 1, after `@language`), and
+                    // `return` on line 3, readonly.
+                    Some("textDocument/semanticTokens/full") => reply(json!({
+                        "data": [0, 7, 2, 1, 0, 3, 8, 6, 0, 1],
+                    })),
+                    Some("textDocument/signatureHelp") => reply(json!({
+                        "signatures": [{"label": "f(a, b)", "documentation": "adds",
+                                        "parameters": [{"label": "a"}, {"label": [5, 6]}]}],
+                        "activeSignature": 0, "activeParameter": 1,
+                    })),
+                    // A formatter's answer: the whole file, replaced.
+                    Some("textDocument/formatting") => reply(json!([{
+                        "range": {"start": {"line": 0, "character": 0}, "end": {"line": 4, "character": 0}},
+                        "newText": "import os\nclass A:\n    def f():\n        return 1  # one\n",
+                    }])),
                     Some("textDocument/rename") => {
                         reply(json!({"changes": {uri.as_str().unwrap(): [
                             {"range": range(2, 8, 9), "newText": msg["params"]["newName"]},
@@ -110,9 +130,11 @@ fn lsp(seen: Seen) -> Lsp {
     Lsp::with_connect(configs, PathBuf::from("/tmp"), Arc::new(|| {}), connect)
 }
 
-/// Poll until `done`.
+/// Poll until `done`, for up to ten seconds: a deadline, not a count, as a
+/// server starts slowly under a full parallel run.
 fn wait(lsp: &mut Lsp, o: &Outline, mut done: impl FnMut(&Event) -> bool) -> Event {
-    for _ in 0..500 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
         if let Some(event) = lsp.poll(o).into_iter().find(|e| done(e)) {
             return event;
         }
@@ -577,4 +599,133 @@ fn a_refresh_sends_a_body_changed_in_place() {
     let sent = changes(&seen, "x.py", 1);
     assert_eq!(sent.len(), 1);
     assert!(sent[0].ends_with("return 9\n"), "{}", sent[0]);
+}
+
+#[test]
+fn a_signature_names_its_active_parameter() {
+    let mut lsp = lsp(Seen::default());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    lsp.request(f.gnx(&o), 1, 4, Request::SignatureHelp)
+        .unwrap();
+    let Event::Signature(Some(sig)) = wait(&mut lsp, &o, |e| matches!(e, Event::Signature(_)))
+    else {
+        panic!("no signature");
+    };
+    assert_eq!(sig.label, "f(a, b)");
+    assert_eq!(&sig.label[sig.active.unwrap()], "b");
+    assert_eq!(sig.documentation.as_deref(), Some("adds"));
+}
+
+#[test]
+fn a_whole_file_format_lands_in_the_one_body_it_changes() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    let format = Request::Format {
+        tab_size: 4,
+        insert_spaces: true,
+    };
+    lsp.request(f.gnx(&o), 0, 0, format).unwrap();
+    let Event::Edit(label, Ok(edits)) = wait(&mut lsp, &o, |e| matches!(e, Event::Edit(..))) else {
+        panic!("no edit");
+    };
+    assert_eq!(label, "format document");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+        (edits[0].start.gnx.as_str(), edits[0].start.row),
+        (f.gnx(&o), 1)
+    );
+    assert!(
+        edits[0].text.contains("return 1  # one"),
+        "{:?}",
+        edits[0].text
+    );
+    let sent = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|m| m["method"] == "textDocument/formatting")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        sent["params"]["options"],
+        json!({"tabSize": 4, "insertSpaces": true})
+    );
+}
+
+#[test]
+fn references_map_to_bodies_and_name_other_files() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    lsp.request(f.gnx(&o), 0, 8, Request::References).unwrap();
+    let Event::References(targets) = wait(&mut lsp, &o, |e| matches!(e, Event::References(_)))
+    else {
+        panic!("no references");
+    };
+    let bodies: Vec<(String, usize)> = targets
+        .iter()
+        .filter_map(|t| match t {
+            Target::Body(at) => Some((at.gnx.clone(), at.row)),
+            Target::File { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        bodies,
+        [(f.gnx(&o).to_string(), 0), (f.gnx(&o).to_string(), 1)]
+    );
+    assert!(matches!(&targets[2], Target::File { path, .. } if path.ends_with("other.py")));
+    let sent = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|m| m["method"] == "textDocument/references")
+        .cloned()
+        .unwrap();
+    assert_eq!(sent["params"]["context"]["includeDeclaration"], true);
+}
+
+#[test]
+fn semantic_tokens_are_asked_for_once_and_land_in_their_bodies() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (o, root, f) = outline();
+    lsp.sync(&o, &f);
+    // The first ask, before the server answers `initialize`, finds none.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let got = lsp.semantic_tokens(f.gnx(&o)).to_vec();
+        if !got.is_empty() {
+            assert_eq!(got.len(), 1);
+            assert_eq!((got[0].row, got[0].start, got[0].end), (1, 4, 10));
+            assert_eq!(
+                (got[0].kind.as_str(), got[0].modifiers.clone()),
+                ("parameter", vec!["readonly".to_string()])
+            );
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no tokens");
+        lsp.poll(&o);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let root_tokens = lsp.semantic_tokens(root.gnx(&o)).to_vec();
+    assert_eq!(root_tokens.len(), 1);
+    assert_eq!(
+        (
+            root_tokens[0].row,
+            root_tokens[0].start,
+            root_tokens[0].kind.as_str()
+        ),
+        (1, 7, "macro")
+    );
+    let asked = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|m| m["method"] == "textDocument/semanticTokens/full")
+        .count();
+    assert_eq!(asked, 1, "unchanged text is not asked about again");
 }

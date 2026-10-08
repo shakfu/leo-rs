@@ -8,37 +8,6 @@ Leo's outline model was re-implemented in rust as `leolib`. `leolib` reads and w
 
 ![leotui, the terminal front end.](https://raw.githubusercontent.com/shakfu/leo-rs/main/docs/media/tui.png)
 
-## Status
-
-Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor `e3b3841f64`. The two `@auto` rows come from an earlier checkout and have not been re-measured since.
-
-| check | result |
-|---|---|
-| nodes read from the `.leo` file | 538, identical gnx/headline/body to Python `leolib` |
-| nodes read with all external files | 11,596, identical to Python `leolib` |
-| `.leo` file rewritten | byte-identical to the file read |
-| external files written | 383 of 383 byte-identical to the files on disk |
-| `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
-| `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
-
-Those figures come from runs against a leo-editor checkout. What `cargo test` checks every time is the conformance corpus in `demo/`: each outline there has an expected file written by Python Leo (`scripts/make_corpus.py`), and leo-editor checks Python Leo against a copy of the same files. One case per feature, indexed in `demo/README.md`. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
-
-## Layout
-
-```text
-crates/leolib         the model: Leo's, with an API for kinds Leo lacks. No view, ever.
-crates/leolsp         language servers, with their positions mapped to nodes.
-crates/leoapp         a front end's state and commands, with no renderer.
-crates/leo-markdown   @qmd and @rmd, and their markdown scanner and writer. Unreleased.
-crates/leo-entangled  @entangled, and its :entangled-* commands. Unreleased.
-crates/leo-plugins    registers the plugins; no binary calls it yet. Unreleased.
-crates/leotui         the terminal front end: leoapp drawn with ratatui.
-crates/leogui         the desktop front end: leoapp drawn with egui.
-crates/leomcp         an MCP server on localhost, serving the open outline.
-```
-
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`, and `egui_commonmark`, `egui_extras` and `image` for the rendered view.
-
 ## Installing
 
 ```sh
@@ -49,39 +18,6 @@ cargo add leolib                               # the library, in your own crate
 ```
 
 `--locked` builds with the `Cargo.lock` shipped in the package. A checkout build uses the workspace's `lto = true`; the crates.io build does not, as cargo drops workspace profiles from a published package.
-
-## Using leolib
-
-```rust
-let mut outline = leolib::open_outline("myfile.leo", true)?;
-for p in outline.all_unique_positions() {
-    println!("{}", p.h(&outline));
-}
-let root = outline.root_position().unwrap();
-outline.set_body(&root, "edited with no window in sight\n");
-let saved = leolib::save_all(&mut outline, "");   // the .leo file, then the dirty external files
-saved.leo?;
-```
-
-`leolib::save` writes only the `.leo` file and `leolib::write_external_files` only the external files; `save_all` does both, in that order, and reports each in `SaveResult`.
-
-`leolib::Document` adds an undo history and the structural commands (insert, delete, clone, copy, paste, move, mark) on top of an `Outline`.
-
-Every fallible call answers with `leolib::Error`, whose variants are the distinctions a caller acts on: `NotFound`, `NotUtf8`, `UnsupportedEncoding`, `RefusedOverwrite`, `ChangedOnDisk`, `Import`, `Write`. Reading and writing the external files reports per file rather than failing the outline, in `ReadResult` and `WriteResult`.
-
-### A `.leo` file names the paths it writes
-
-An `@<file>` headline and an `@path` directive can name any path: an absolute one, or one that climbs out with `..`, with `~` expanded. So opening an outline and writing its external files can write anywhere the user can write, and a `.leo` file from someone else is as dangerous as a Makefile from someone else. Leo behaves the same way.
-
-Three guards narrow this without closing it:
-
-- `Outline::may_overwrite` refuses a file the outline has not read.
-
-- A write refuses a file changed on disk since the outline read or wrote it (`Error::ChangedOnDisk`).
-
-- A write refuses a directory that does not exist, unless `Config::create_nonexistent_directories` is set. Leo's default is the same.
-
-None of them stops a new file in an existing directory. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
 
 ## Using leotui
 
@@ -116,7 +52,7 @@ leotui is modal. The pane decides what a key means -- Leo's own `!tree`/`!body` 
 
 `Ctrl-c` in any mode keeps what you typed, closes what is open, and asks to quit if anything is unsaved. In a yes/no prompt it answers no.
 
-In INSERT and every one-line input, `Ctrl-w` deletes the word before the cursor and `Ctrl-u` the text before it. Other Ctrl and Alt chords type nothing. While a headline is edited, a chord the outline binds keeps the headline as typed and acts on the node, as in Leo: `Ctrl-r` indents a new node before it has a name, `Ctrl-i` starts the next, and `Ctrl-u` moves the node up.
+In INSERT and the `:` and `/` lines, `Ctrl-w` deletes the word before the cursor and `Ctrl-u` the text before it. Other Ctrl and Alt chords type nothing. While a headline is edited, a chord the outline binds keeps the headline as typed and acts on the node instead, as in Leo: `Ctrl-r` indents a new node before it has a name, `Ctrl-i` starts the next, and `Ctrl-u` moves the node up. A new outline's `newHeadline` starts selected, so typing replaces it.
 
 ### Cheatsheet
 
@@ -138,6 +74,7 @@ The keys are the same in leogui.
 | `[m` `]m` | previous, next marked node |
 | `]c` `Alt-n` | next clone of this node |
 | `H` `L` | back, forward through the nodes selected |
+| `Ctrl-o` | back, in either pane, as vim's jump back: after following a link, to where it was |
 
 **Outline: folding**
 
@@ -211,6 +148,7 @@ The keys are the same in leogui.
 | `gd` | go to the node defining the `<< section >>` on this line |
 | `K` | what the language server says of the symbol under the cursor |
 | `Ctrl-]` | go to its definition |
+| `gr` | clone every node using it under a `Found` node |
 | `]d` `[d` | next, previous diagnostic |
 
 `:reformat-paragraph` wraps the paragraph at the cursor to `@pagewidth`, as Leo's command of that name, and moves to the next paragraph.
@@ -238,6 +176,8 @@ Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. 
 | `Ctrl-w <` `Ctrl-w >` | narrow, widen the pane that has focus |
 | `Ctrl-Left` `Ctrl-Right` | give the body, the outline more room |
 | `:set syntax` `:set nosyntax` | colour the body, or leave it plain |
+| `:set semantic` `:set nosemantic` | colour by the language server's semantic tokens as well, or by tree-sitter alone |
+| `:set list` `:set guides` | mark spaces and tabs; draw indent guides (leogui) |
 | `Alt-g` | go to line N of the external file (`:goto-global-line N`) |
 | `F1` | help |
 | `q` | quit |
@@ -256,7 +196,7 @@ Every Leo command name, with Tab completion and Up/Down history, plus the vim sp
 
 `:refresh-from-disk` reads the `@<file>` node at or above the selection from disk again; `:read-at-file-nodes` reads every one at or under it. `:read-at-file-nodes` skips an `@clean` file unchanged since it was last read or written; `:refresh-from-disk` reads it anyway. Both ask before discarding unwritten edits, and both clear the undo history, as in Leo. When the terminal regains focus, the status line names any external file changed on disk, and a write asks before overwriting it.
 
-`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leo-rs/settings.toml`.
+`:set` takes several options at once, as vim does: `:set search=all|headlines split=N wrap number syntax semantic list guides colors=true|256|16|none`. `name:value` works as `name=value`, and `:set name?` or `:set` alone shows values. `:set split=N` sets the outline's width in percent, and saves it as `split-ratio` in `~/.config/leo-rs/settings.toml`.
 
 `/` searches every headline and body in outline order, whichever pane has focus, and lands on the match: a headline in the outline, body text under the body's cursor. The pattern is a Rust `regex`, with smartcase. Matches stay highlighted until `:noh`, and `:set search=headlines` leaves bodies out.
 
@@ -333,6 +273,8 @@ What the window adds to leotui:
 | Find panel | Cmd-Shift-F: find and replace, regex, whole word and case, over the outline, a subtree or the marked nodes; Find All, Replace All and Clone Find All. |
 | External files | An `@<file>` row is badged unread, changed on disk, never read, or unwritten. A bar above the body offers Reload or Keep for a file changed on disk. |
 | Clones and hoists | A cloned row shows its clone count, and its context menu lists the clones. A hoisted node is named above the outline, with a De-hoist button. |
+| Several nodes | Cmd-click (Ctrl-click off macOS) adds a row, Shift-click the rows from the current one. Delete and Mark then act on every chosen row, and dragging one moves them all, each as one undo step; any other command acts on the current row alone and unchooses the rest. |
+| The body | The bracket at the cursor and its match are shaded (`ui.cursor.match`). An `@pagewidth` directive draws a ruler at its column (`ui.virtual.ruler`). Indent guides mark each indent level (`ui.virtual.indent-guide`, `:set noguides`); `:set list` marks spaces and tabs (`ui.virtual.whitespace`). |
 | Drag and drop | Dropping a `.leo` file opens it; dropping any other file imports it as `@auto`. |
 | Language servers | Completion under the cursor, Cmd-. for code actions, and the Body menu for hover, definition, rename and problems. The status bar's LSP dot opens View > Language Servers. See [Language servers](#language-servers). |
 | Bottom panel | View > Problems (the body's diagnostics), Log (the status messages), Find, and Language Servers (each server's state and log). |
@@ -413,6 +355,10 @@ A `rust-analyzer` installed by rustup is a stub until `rustup component add rust
 | Diagnostics | underlined in the body; the cursor line's on the status line. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's | Body > Next Problem, Previous Problem; View > Problems |
 | Hover | `K` | Body > Hover |
 | Go to definition | `Ctrl-]` | Body > Go to Definition |
+| Semantic colouring | automatic, where the server offers semantic tokens: parameters, variables, macros, namespaces and the like, which tree-sitter cannot tell apart, take their theme colours; `:set nosemantic` turns it off. Not while a change is typed | the same |
+| Find references | `gr`: the nodes using the symbol, cloned under `Found N:references to NAME`, as `clone-find-all` gathers matches; references in files the outline does not hold are counted | Body > Find References |
+| Signature help | in INSERT, after `(` or `,`: the call's signature, its parameter in brackets, on the status line; `:lsp-signature-help` | a popup above the cursor; Body > Signature Help |
+| Format document | `:lsp-format`, with the node's `@tabwidth` | Body > Format Document |
 | Rename | `:lsp-rename NAME`: every node at once, as one undo | Body > Rename Symbol... |
 | Completion | in INSERT, Tab after a word character or a dot, or Ctrl-n anywhere | the same |
 | Code actions | `:lsp-code-action`, then Up/Down or `j`/`k` and Enter, or a digit; `:lsp-code-action N` applies the Nth | Cmd-. or Body > Code Actions... |
@@ -420,7 +366,7 @@ A `rust-analyzer` installed by rustup is a stub until `rustup component add rust
 
 Completion: typing narrows the list, Up/Down or Ctrl-n/Ctrl-p select, Tab or Enter takes one, and Escape closes the list and stays in INSERT. Elsewhere Tab indents. With no server for the body, Tab after a word indents, and Tab after a dot says which setting is missing. At most 200 items are shown. Snippets are not asked for, and an item's additional edits, such as an auto-import, are not applied.
 
-A code action that replaces the whole file is applied to just the lines it changes. An edit that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
+A code action or a format that replaces the whole file is applied to just the lines it changes. An edit that would touch a sentinel line, a file the outline does not hold, or text changed since the request is refused whole.
 
 ### When nothing happens
 
@@ -430,9 +376,74 @@ A code action that replaces the whole file is applied to just the lines it chang
 
 - "language server: ..." on the status line: the server refused the request, often because it does not offer that feature.
 
-## Plugins (not in 0.7.0)
+## Plugins
 
-The workspace holds kinds Leo does not have, as plugins outside leolib: `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs)), and `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes). They are not in any release: they have not yet been used in earnest, so the 0.7.0 binaries do not register them, and their crates are not published. leolib keeps the extension API they use (`leolib::ext`); with no kind registered, it reads an outline as Leo does. What they do is in `docs/plugins.md`; the design is in `docs/dev/plugins.md`.
+The workspace holds kinds Leo does not have, as plugins outside leolib: `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs)), `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes), and `@wiki` (markdown pages linked by `[[...]]`, exported to one file). leotui and leogui register `@qmd`, `@rmd` and `@wiki` from the release after 0.7.0. `@entangled` is in no release: its crate is unpublished, and `make ... ENTANGLED=1` builds and tests it. leolib keeps the extension API they use (`leolib::ext`); with no kind registered, it reads an outline as Leo does. What they do is in `docs/plugins.md`; the design is in `docs/dev/plugins.md`.
+
+## Using leolib
+
+```rust
+let mut outline = leolib::open_outline("myfile.leo", true)?;
+for p in outline.all_unique_positions() {
+    println!("{}", p.h(&outline));
+}
+let root = outline.root_position().unwrap();
+outline.set_body(&root, "edited with no window in sight\n");
+let saved = leolib::save_all(&mut outline, "");   // the .leo file, then the dirty external files
+saved.leo?;
+```
+
+`leolib::save` writes only the `.leo` file and `leolib::write_external_files` only the external files; `save_all` does both, in that order, and reports each in `SaveResult`.
+
+`leolib::Document` adds an undo history and the structural commands (insert, delete, clone, copy, paste, move, mark) on top of an `Outline`.
+
+Every fallible call answers with `leolib::Error`, whose variants are the distinctions a caller acts on: `NotFound`, `NotUtf8`, `UnsupportedEncoding`, `RefusedOverwrite`, `ChangedOnDisk`, `Import`, `Write`. Reading and writing the external files reports per file rather than failing the outline, in `ReadResult` and `WriteResult`.
+
+### A `.leo` file names the paths it writes
+
+An `@<file>` headline and an `@path` directive can name any path: an absolute one, or one that climbs out with `..`, with `~` expanded. So opening an outline and writing its external files can write anywhere the user can write, and a `.leo` file from someone else is as dangerous as a Makefile from someone else. Leo behaves the same way.
+
+Three guards narrow this without closing it:
+
+- `Outline::may_overwrite` refuses a file the outline has not read.
+
+- A write refuses a file changed on disk since the outline read or wrote it (`Error::ChangedOnDisk`).
+
+- A write refuses a directory that does not exist, unless `Config::create_nonexistent_directories` is set. Leo's default is the same.
+
+None of them stops a new file in an existing directory. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
+
+## Status
+
+Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor `e3b3841f64`. The two `@auto` rows come from an earlier checkout and have not been re-measured since.
+
+| check | result |
+|---|---|
+| nodes read from the `.leo` file | 538, identical gnx/headline/body to Python `leolib` |
+| nodes read with all external files | 11,596, identical to Python `leolib` |
+| `.leo` file rewritten | byte-identical to the file read |
+| external files written | 383 of 383 byte-identical to the files on disk |
+| `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
+| `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
+
+Those figures come from runs against a leo-editor checkout. What `cargo test` checks every time is the conformance corpus in `demo/`: each outline there has an expected file written by Python Leo (`scripts/make_corpus.py`), and leo-editor checks Python Leo against a copy of the same files. One case per feature, indexed in `demo/README.md`. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
+
+## Layout
+
+```text
+crates/leolib         the model: Leo's, with an API for kinds Leo lacks. No view, ever.
+crates/leolsp         language servers, with their positions mapped to nodes.
+crates/leoapp         a front end's state and commands, with no renderer.
+crates/leo-markdown   @qmd and @rmd, and their markdown scanner and writer.
+crates/leo-entangled  @entangled, and its :entangled-* commands. Unpublished.
+crates/leo-wiki       @wiki: markdown pages linked by [[wikilinks]], exported to one file.
+crates/leo-plugins    registers the plugins in leotui and leogui.
+crates/leotui         the terminal front end: leoapp drawn with ratatui.
+crates/leogui         the desktop front end: leoapp drawn with egui.
+crates/leomcp         an MCP server on localhost, serving the open outline.
+```
+
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`, and `egui_commonmark`, `egui_extras` and `image` for the rendered view.
 
 ## `@auto`
 
@@ -458,7 +469,7 @@ An extension with no importer is read whole into the node's body, as in Leo. `@a
 
 - **Unknown attributes are opaque.** Leo pickles them. They round-trip as the hex strings the file spells, and are written back unchanged.
 
-- **Encodings other than UTF-8.** Leo decodes an external file with the encoding its `@encoding` directive or `@+leo` header names, and encodes it with the same one on the way out. This port reads and writes UTF-8 only, so a file in any other encoding is reported unread and is never written: writing it would replace its bytes with UTF-8 and lose every character the two encodings spell differently. The node keeps whatever the `.leo` file said. A `.leo` file that is not UTF-8 is refused outright, since there is no part of it to keep.
+- **Encodings other than UTF-8.** Leo decodes an external file with the encoding its `@encoding` directive or `@+leo` header names, and encodes it with the same one on the way out. This port reads and writes UTF-8 only, by design, so a file in any other encoding is reported unread and is never written: writing it would replace its bytes with UTF-8 and lose every character the two encodings spell differently. The node keeps whatever the `.leo` file said. A `.leo` file that is not UTF-8 is refused outright, since there is no part of it to keep.
 
 - **`.leojs`** (the JSON outline format).
 
@@ -467,11 +478,11 @@ See `docs/dev/porting-notes.md` for the places this port deliberately differs fr
 ## Building
 
 ```text
-make build      # cargo build --workspace
+make build      # cargo build --workspace, less leo-entangled; ENTANGLED=1 adds it
 make release    # the same, optimised
 make run FILE=FILE.leo    # leotui
 make gui FILE=FILE.leo    # leogui, release build
-make test       # cargo test --workspace
+make test       # cargo test, likewise
 make bench      # leolib's load times; LEO_EDITOR=... adds leo-editor's own outline
 make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Python Leo
 make lint       # rustfmt --check and clippy -D warnings

@@ -14,5 +14,8 @@
    "h": "function: f",
    "b": "def f():\n    return 1\n"
   }
- ]
+ ],
+ "auto_written": {
+  "@auto auto.py": "import os\n\n\ndef f():\n    return 1\n"
+ }
 }

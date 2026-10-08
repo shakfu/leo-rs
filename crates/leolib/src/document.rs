@@ -193,14 +193,14 @@ impl Document {
         p: &Position,
         new_headline: &str,
     ) -> std::result::Result<Option<crate::ext::Rename>, String> {
-        // The registered kind p is under, if any, plans the rename.
-        let Some(kind) = crate::ext::kind_at(&self.outline, p) else {
-            return Ok(None);
+        // The registered kind p is under, if any, plans the rename: a file
+        // kind, else a tree kind.
+        let planned = match crate::ext::kind_at(&self.outline, p) {
+            Some(kind) => kind.plan_rename(&self.outline, p, new_headline),
+            None => crate::ext::tree_at(&self.outline, p)
+                .and_then(|(kind, root)| kind.plan_rename(&self.outline, &root, p, new_headline)),
         };
-        let Some(plan) = kind
-            .plan_rename(&self.outline, p, new_headline)
-            .transpose()?
-        else {
+        let Some(plan) = planned.transpose()? else {
             return Ok(None);
         };
         self.begin_group("rename-block");
@@ -290,9 +290,13 @@ impl Document {
         new
     }
 
-    /// Delete p. Returns the position to select next.
+    /// Delete p. Returns the position to select next; None, with nothing
+    /// deleted, if p is the only top-level node, as Leo refuses.
     pub fn delete_node(&mut self, p: &Position) -> Option<Position> {
         let parent = p.parent_vnode(&self.outline);
+        if parent == self.outline.hidden_root && self.outline.node(parent).children.len() == 1 {
+            return None;
+        }
         // The node a reader would land on: the previous *visible* one, so
         // deleting a node next to a folded tree does not jump into it.
         let next = p
@@ -365,12 +369,18 @@ impl Document {
     /// Make all of p's following siblings its children.
     ///
     /// The mirror of `promote`. Leo expands p afterwards, because the nodes
-    /// would otherwise appear to have been deleted.
+    /// would otherwise appear to have been deleted. False, as Leo's
+    /// `checkMoveWithParentWithWarning` refuses, if a sibling is a clone of
+    /// p or holds one: p would be inside itself.
     pub fn demote(&mut self, p: &Position) -> bool {
         let parent_v = p.parent_vnode(&self.outline);
         let following: Vec<VnodeId> =
             self.outline.node(parent_v).children[p.child_index + 1..].to_vec();
-        if following.is_empty() {
+        if following.is_empty()
+            || following
+                .iter()
+                .any(|&v| v == p.v || self.outline.is_below(p.v, v))
+        {
             return false;
         }
         self.undoer.begin_group("demote");
@@ -902,9 +912,13 @@ impl Document {
         Some(self.move_to(p, grandparent, parent.child_index + 1))
     }
 
-    /// Make p the last child of its previous sibling.
+    /// Make p the last child of its previous sibling. None if that sibling
+    /// is p's clone or holds one.
     pub fn move_right(&mut self, p: &Position) -> Option<Position> {
         let back = p.back(&self.outline)?;
+        if back.v == p.v || self.outline.is_below(back.v, p.v) {
+            return None;
+        }
         let n = back.num_children(&self.outline);
         Some(self.move_to(p, back.v, n))
     }
@@ -921,6 +935,91 @@ impl Document {
             return None;
         }
         Some(self.move_to(p, parent, index))
+    }
+
+    /// Of positions `ps`, those not inside another of them, in outline order,
+    /// as links: (node, parent). A link stays valid while others move.
+    fn top_links(&self, ps: &[Position]) -> Vec<(VnodeId, VnodeId)> {
+        let o = &self.outline;
+        let mut links = Vec::new();
+        for p in o.all_positions() {
+            let chosen = ps.contains(&p);
+            let inside = p.parents(o).iter().any(|a| ps.contains(a));
+            let link = (p.v, p.parent_vnode(o));
+            if chosen && !inside && !links.contains(&link) {
+                links.push(link);
+            }
+        }
+        links
+    }
+
+    /// The position of link (v, parent), if it still exists.
+    fn position_of_link(&self, (v, parent): (VnodeId, VnodeId)) -> Option<Position> {
+        let o = &self.outline;
+        o.all_positions()
+            .into_iter()
+            .find(|p| p.v == v && p.parent_vnode(o) == parent)
+    }
+
+    /// Move the nodes at `ps` to `place` beside or into `target`, in outline
+    /// order, as one undo step. A node inside another of them moves with it.
+    /// None, with nothing moved, if `target`'s place is inside one of them.
+    pub fn move_nodes(
+        &mut self,
+        ps: &[Position],
+        target: &Position,
+        place: Place,
+    ) -> Option<Vec<Position>> {
+        let links = self.top_links(ps);
+        let parent = match place {
+            Place::Inside => target.v,
+            _ => target.parent_vnode(&self.outline),
+        };
+        if links
+            .iter()
+            .any(|&(v, _)| parent == v || self.outline.is_below(parent, v) || target.v == v)
+        {
+            return None;
+        }
+        self.undoer.begin_group("move-nodes");
+        let mut moved: Vec<Position> = Vec::new();
+        for link in links {
+            let Some(p) = self.position_of_link(link) else {
+                continue;
+            };
+            // The first lands at the place asked; the rest follow it in order.
+            let q = match moved.last() {
+                None => self.move_node(&p, target, place),
+                Some(last) => {
+                    let last = last.clone();
+                    self.move_node(&p, &last, Place::After)
+                }
+            };
+            moved.extend(q);
+        }
+        self.end_group();
+        Some(moved)
+    }
+
+    /// Delete the nodes at `ps`, with their trees, as one undo step. The last
+    /// top-level node is kept, as `delete_node` keeps it. Returns how many
+    /// were deleted, and the position to select.
+    pub fn delete_nodes(&mut self, ps: &[Position]) -> (usize, Option<Position>) {
+        let links = self.top_links(ps);
+        self.undoer.begin_group("delete-nodes");
+        let (mut n, mut next) = (0, None);
+        // Last first, so the selection lands before the deleted run.
+        for link in links.into_iter().rev() {
+            let Some(p) = self.position_of_link(link) else {
+                continue;
+            };
+            if let Some(q) = self.delete_node(&p) {
+                n += 1;
+                next = Some(q);
+            }
+        }
+        self.end_group();
+        (n, next.filter(|q| self.outline.position_exists(q)))
     }
 
     /// Unlink p and relink it as `parent`'s nth child.
@@ -985,6 +1084,12 @@ impl Document {
     }
 
     // --- Files ------------------------------------------------------------
+
+    /// Write a recovery copy of every node to `path`. See
+    /// [`crate::leofile::write_recovery`].
+    pub fn write_recovery(&mut self, path: &str, headline: &str) -> Result<String> {
+        crate::leofile::write_recovery(&mut self.outline, path, headline)
+    }
 
     /// Write the `.leo` file only. [`Document::save_all`] also writes the external files.
     pub fn save(&mut self, path: &str) -> Result<String> {

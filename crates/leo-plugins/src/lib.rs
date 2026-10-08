@@ -13,14 +13,14 @@ use leolib::ext::Kinds;
 pub fn kinds() -> Kinds {
     #[allow(unused_mut)]
     let mut kinds = Kinds::empty();
-    #[cfg(feature = "entangled")]
-    {
-        kinds = kinds.with(leo_entangled::Entangled).expect("not Leo's");
-    }
     #[cfg(feature = "markdown")]
     {
         kinds = kinds.with(leo_markdown::QMD).expect("not Leo's");
         kinds = kinds.with(leo_markdown::RMD).expect("not Leo's");
+    }
+    #[cfg(feature = "wiki")]
+    {
+        kinds = kinds.with_tree(leo_wiki::Wiki).expect("not Leo's");
     }
     kinds
 }
@@ -28,8 +28,8 @@ pub fn kinds() -> Kinds {
 /// The leoapp plugins this build offers.
 pub fn app_plugins() -> Vec<&'static dyn AppPlugin> {
     let plugins: &[&'static dyn AppPlugin] = &[
-        #[cfg(feature = "entangled")]
-        &leo_entangled::app::Entangled,
+        #[cfg(feature = "wiki")]
+        &leo_wiki::app::WikiPlugin,
     ];
     plugins.to_vec()
 }

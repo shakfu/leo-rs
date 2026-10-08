@@ -49,6 +49,41 @@ pub enum Request {
     CodeActions,
     /// What could be typed at the position.
     Completion,
+    /// The signature of the call the position is in, while its arguments
+    /// are typed.
+    SignatureHelp,
+    /// Every place the symbol at the position is used, its definition too.
+    References,
+    /// Format the whole document, with these indent settings.
+    Format {
+        tab_size: u32,
+        insert_spaces: bool,
+    },
+    /// The whole document's semantic tokens. [`Lsp::semantic_tokens`] asks.
+    #[doc(hidden)]
+    SemanticTokens,
+}
+
+/// A semantic token in a body: what the server says a stretch of a row is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BodyToken {
+    pub row: usize,
+    /// Characters of the row, start and end.
+    pub start: usize,
+    pub end: usize,
+    /// The legend's type, `parameter`, `macro`.
+    pub kind: String,
+    /// The legend's modifiers, `readonly`, `defaultLibrary`.
+    pub modifiers: Vec<String>,
+}
+
+/// A call's signature, as a server describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signature {
+    pub label: String,
+    /// The parameter being typed, as a byte range of `label`.
+    pub active: Option<std::ops::Range<usize>>,
+    pub documentation: Option<String>,
 }
 
 /// Something a server offers to type at a position.
@@ -146,6 +181,12 @@ pub enum Event {
     CodeActions(Vec<CodeAction>),
     /// The completions on offer, best first.
     Completions(Vec<Completion>),
+    /// The call's signature, or None when the position is in no call.
+    Signature(Option<Signature>),
+    /// Where the symbol is used: bodies, and files the outline does not hold.
+    References(Vec<Target>),
+    /// A document's semantic tokens arrived: the bodies in it may recolour.
+    Tokens,
     /// An edit a server asks to make, as a command it ran asks; its label.
     Edit(String, Result<Vec<BodyEdit>, String>),
     /// A server's message, or why one could not start or answer.
@@ -213,6 +254,10 @@ pub struct Lsp {
     executing: HashSet<(String, i64)>,
     /// The outline generation the open documents were last brought up to.
     synced: Option<u64>,
+    /// By document key: the version the tokens are for, and them by node.
+    tokens: HashMap<String, (i32, HashMap<String, Vec<BodyToken>>)>,
+    /// Documents whose tokens are asked for and not yet answered.
+    tokens_asked: HashSet<String>,
 }
 
 /// The key a URI is filed under. A server may spell a path's URI otherwise
@@ -345,6 +390,8 @@ impl Lsp {
             diagnostics: HashMap::new(),
             pending: HashMap::new(),
             executing: HashSet::new(),
+            tokens: HashMap::new(),
+            tokens_asked: HashSet::new(),
             synced: None,
         }
     }
@@ -552,6 +599,25 @@ impl Lsp {
                 "textDocument/rename"
             }
             Request::Completion => "textDocument/completion",
+            Request::SignatureHelp => "textDocument/signatureHelp",
+            Request::SemanticTokens => {
+                params = json!({"textDocument": {"uri": open.uri}});
+                "textDocument/semanticTokens/full"
+            }
+            Request::References => {
+                params["context"] = json!({"includeDeclaration": true});
+                "textDocument/references"
+            }
+            Request::Format {
+                tab_size,
+                insert_spaces,
+            } => {
+                params = json!({
+                    "textDocument": {"uri": open.uri},
+                    "options": {"tabSize": tab_size, "insertSpaces": insert_spaces},
+                });
+                "textDocument/formatting"
+            }
             Request::CodeActions => {
                 let here = params["position"].clone();
                 let on_line: Vec<&Diagnostic> = self
@@ -594,6 +660,94 @@ impl Lsp {
             }
         }
         events
+    }
+
+    /// The semantic tokens of node `gnx`'s body, for the text the server
+    /// last saw. Asks for them when the document has changed since; the
+    /// answer arrives from `poll` as `Event::Tokens`. Empty when the server
+    /// has none, or none yet.
+    pub fn semantic_tokens(&mut self, gnx: &str) -> &[BodyToken] {
+        let Some(key) = self.node_docs.get(gnx).cloned() else {
+            return &[];
+        };
+        let Some(open) = self.docs.get(&key) else {
+            return &[];
+        };
+        let ready = self
+            .servers
+            .get(&open.language)
+            .is_some_and(|s| s.initialized && !s.token_types.is_empty());
+        let current = self
+            .tokens
+            .get(&key)
+            .is_some_and(|(v, _)| *v == open.version);
+        if ready && !current && !self.tokens_asked.contains(&key) {
+            let server = self.servers.get_mut(&open.language).expect("ready");
+            let id = server.request(
+                "textDocument/semanticTokens/full",
+                json!({"textDocument": {"uri": open.uri}}),
+            );
+            let pending = Pending {
+                request: Request::SemanticTokens,
+                key: key.clone(),
+                version: open.version,
+            };
+            self.pending.insert((open.language.clone(), id), pending);
+            self.tokens_asked.insert(key.clone());
+        }
+        match self.tokens.get(&key) {
+            Some((v, by_node)) if *v == open.version => {
+                by_node.get(gnx).map_or(&[], |t| t.as_slice())
+            }
+            _ => &[],
+        }
+    }
+
+    /// Decode a `semanticTokens/full` answer into tokens by node.
+    fn store_tokens(&mut self, language: &str, pending: &Pending, value: &Value) {
+        self.tokens_asked.remove(&pending.key);
+        let (Some(open), Some(server)) = (self.docs.get(&pending.key), self.servers.get(language))
+        else {
+            return;
+        };
+        let data: Vec<u32> = value["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_u64().map(|n| n as u32))
+            .collect();
+        let enc = server.encoding;
+        let mut by_node: HashMap<String, Vec<BodyToken>> = HashMap::new();
+        let (mut line, mut start) = (0u32, 0u32);
+        for &[dl, ds, len, kind, mods] in data.as_chunks::<5>().0 {
+            start = if dl == 0 { start + ds } else { ds };
+            line += dl;
+            let Some(kind) = server.token_types.get(kind as usize) else {
+                continue;
+            };
+            let (Some(a), Some(b)) = (
+                open.doc.to_body(line, start, enc),
+                open.doc.to_body(line, start + len, enc),
+            ) else {
+                continue;
+            };
+            if a.gnx != b.gnx || a.row != b.row {
+                continue;
+            }
+            let modifiers = (0..server.token_modifiers.len())
+                .filter(|i| mods & (1 << i) != 0)
+                .map(|i| server.token_modifiers[i].clone())
+                .collect();
+            by_node.entry(a.gnx).or_default().push(BodyToken {
+                row: a.row,
+                start: a.col,
+                end: b.col,
+                kind: kind.clone(),
+                modifiers,
+            });
+        }
+        self.tokens
+            .insert(pending.key.clone(), (pending.version, by_node));
     }
 
     /// Run a code action's command on the server of node `gnx`'s document.
@@ -652,6 +806,14 @@ impl Lsp {
                         let Some(pending) = self.pending.remove(&(language.clone(), id)) else {
                             continue;
                         };
+                        if pending.request == Request::SemanticTokens {
+                            match &result {
+                                Ok(value) => self.store_tokens(&language, &pending, value),
+                                Err(_) => {
+                                    self.tokens_asked.remove(&pending.key);
+                                }
+                            }
+                        }
                         events.push(match result {
                             Ok(value) => self.response(o, pending, value, encoding),
                             Err(e) => Event::Message(format!("language server: {e}")),
@@ -853,6 +1015,40 @@ impl Lsp {
                     .collect();
                 Event::CodeActions(actions)
             }
+            Request::SemanticTokens => Event::Tokens,
+            Request::References => {
+                let found: Option<Vec<lsp_types::Location>> =
+                    serde_json::from_value(value).unwrap_or(None);
+                Event::References(
+                    found
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|l| self.target(o, l.uri.as_str(), l.range.start, enc))
+                        .collect(),
+                )
+            }
+            Request::SignatureHelp => {
+                let help: Option<lsp_types::SignatureHelp> =
+                    serde_json::from_value(value).unwrap_or(None);
+                Event::Signature(help.and_then(signature))
+            }
+            Request::Format { .. } => {
+                let label = "format document".to_string();
+                if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
+                    return Event::Edit(
+                        label,
+                        Err("the text changed while the server worked; format again".into()),
+                    );
+                }
+                let edits: Option<Vec<lsp_types::TextEdit>> =
+                    serde_json::from_value(value).unwrap_or(None);
+                let uri = self
+                    .docs
+                    .get(&pending.key)
+                    .map(|d| d.uri.clone())
+                    .unwrap_or_default();
+                Event::Edit(label, self.text_edits(&uri, edits.unwrap_or_default(), enc))
+            }
             Request::Rename(_) => {
                 if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
                     return Event::Rename(Err(
@@ -927,7 +1123,21 @@ impl Lsp {
         }
         let mut out = Vec::new();
         for (uri, edits) in by_uri {
-            let open = self.docs.get(&key_of(&uri)).ok_or_else(|| {
+            out.extend(self.text_edits(&uri, edits, enc)?);
+        }
+        Ok(out)
+    }
+
+    /// One document's text edits as body edits, all or none.
+    fn text_edits(
+        &self,
+        uri: &str,
+        edits: Vec<lsp_types::TextEdit>,
+        enc: Encoding,
+    ) -> Result<Vec<BodyEdit>, String> {
+        let mut out = Vec::new();
+        {
+            let open = self.docs.get(&key_of(uri)).ok_or_else(|| {
                 format!("the edit reaches a file this outline does not hold: {uri}")
             })?;
             for e in edits {
@@ -1018,3 +1228,36 @@ fn hover_lines(contents: HoverContents) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+/// The active signature of a server's help, its active parameter located in
+/// its label.
+fn signature(help: lsp_types::SignatureHelp) -> Option<Signature> {
+    let n = help.active_signature.unwrap_or(0) as usize;
+    let sig = help.signatures.into_iter().nth(n)?;
+    let param = sig
+        .active_parameter
+        .or(help.active_parameter)
+        .map(|p| p as usize);
+    let active = param
+        .and_then(|p| sig.parameters.as_ref()?.get(p).cloned())
+        .and_then(|p| match p.label {
+            lsp_types::ParameterLabel::Simple(name) => {
+                let at = sig.label.find(&name)?;
+                Some(at..at + name.len())
+            }
+            // Offsets count UTF-16 units of the label.
+            lsp_types::ParameterLabel::LabelOffsets([a, b]) => {
+                let byte = |n: u32| Encoding::Utf16.byte(&sig.label, n as usize);
+                Some(byte(a)..byte(b))
+            }
+        });
+    let documentation = sig.documentation.map(|d| match d {
+        lsp_types::Documentation::String(s) => s,
+        lsp_types::Documentation::MarkupContent(m) => m.value,
+    });
+    Some(Signature {
+        label: sig.label,
+        active,
+        documentation,
+    })
+}

@@ -99,16 +99,11 @@ const MD: &str = "# Notes\n\n```python #helper\ndef f(): pass\n```\n\n\
 
 #[test]
 fn every_sample_document_is_written_back_byte_for_byte() {
-    let base = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files: Vec<std::path::PathBuf> =
-        fs::read_dir(base.join("../leo-entangled/tests/data/entangled"))
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect();
-    for doc in ["README.md", "tests.md"] {
-        files.push(base.join("../../demo/entangled").join(doc));
-    }
-    for path in files {
+    // Copies of leo-entangled's samples and demo/entangled's documents, so
+    // the published crate's tests need nothing outside it.
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+    for entry in fs::read_dir(data).unwrap() {
+        let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let contents = fs::read_to_string(&path).unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -473,4 +468,305 @@ fn a_labelled_cell_keeps_its_gnx_and_an_unnamed_one_is_not_saved() {
         find(again.outline(), "<< load >>").gnx(again.outline()),
         load
     );
+}
+
+#[test]
+fn a_body_edited_without_a_final_newline_keeps_the_next_heading_on_its_own_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = outline_over(
+        dir.path(),
+        "@qmd",
+        "a.qmd",
+        "intro\n\n# A\n\ntext\n\n## B\n\nmore\n",
+    );
+    let mut d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+    let r = root(d.outline());
+    d.set_body(&r, "intro");
+    let a = find(d.outline(), "A");
+    d.set_body(&a, "\ntext");
+    let saved = d.save_all(&leo);
+    assert!(saved.files.errors.is_empty(), "{:?}", saved.files.errors);
+    let disk = fs::read_to_string(dir.path().join("a.qmd")).unwrap();
+    assert_eq!(disk, "intro\n# A\n\ntext\n## B\n\nmore\n");
+    let (o, _) = leolib::open_outline_with_kinds(&leo, true, kinds()).unwrap();
+    assert_eq!(shape(&o), ["A", "  B"]);
+}
+
+#[test]
+fn a_file_with_bare_cr_line_endings_is_refused_and_written_back_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    for text in ["# A\r```{python}\rx\r```\r", "# A\r\n\r\nx = 'a\rb'\r\n"] {
+        let leo = outline_over(dir.path(), "@qmd", "cr.qmd", text);
+        let (mut o, report) = leolib::open_outline_with_kinds(&leo, true, kinds()).unwrap();
+        let why = report.errors[0].error.to_string();
+        assert!(why.contains("CR alone"), "{why}");
+        assert_eq!(root(&o).b(&o), text);
+        let result = external::write_external_files(&mut o, false);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(
+            fs::read(dir.path().join("cr.qmd")).unwrap(),
+            text.as_bytes()
+        );
+    }
+}
+
+#[test]
+fn a_read_reports_the_crlf_and_byte_order_mark_it_drops() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = outline_over(dir.path(), "@qmd", "w.qmd", "\u{feff}# A\r\n\r\ntext\r\n");
+    let (o, report) = leolib::open_outline_with_kinds(&leo, true, kinds()).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(shape(&o), ["A"]);
+    let notes = format!("{:?}", report.warnings);
+    assert!(notes.contains("CRLF"), "{notes}");
+    assert!(notes.contains("byte-order mark"), "{notes}");
+}
+
+#[test]
+fn a_refused_read_keeps_the_saved_cell_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = outline_over(dir.path(), "@rmd", "x.Rmd", "```{r a}\n1\n```\n");
+    let mut d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+    d.save(&leo).unwrap();
+    assert!(fs::read_to_string(&leo)
+        .unwrap()
+        .contains("leo-rs-cell-ids"));
+    // Another program gives two cells one label: the read is refused.
+    fs::write(
+        dir.path().join("x.Rmd"),
+        "```{r a}\n1\n```\n```{r a}\n2\n```\n",
+    )
+    .unwrap();
+    let mut d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+    d.save(&leo).unwrap();
+    assert!(fs::read_to_string(&leo)
+        .unwrap()
+        .contains("leo-rs-cell-ids"));
+}
+
+#[test]
+fn a_refused_file_is_saved_as_its_body_holds_it() {
+    // A display fence whose first line is a reference reads as a cell's
+    // fence, so the read is refused; the file must still be saveable.
+    let dir = tempfile::tempdir().unwrap();
+    let text = "Leo's syntax:\n\n```\n<< foo >>\n```\n";
+    let leo = outline_over(dir.path(), "@qmd", "n.qmd", text);
+    let mut d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+    let r = root(d.outline());
+    assert_eq!(r.b(d.outline()), text);
+    d.set_body(&r, &format!("{text}edited\n"));
+    let saved = d.save_all(&leo);
+    assert!(saved.files.errors.is_empty(), "{:?}", saved.files.errors);
+    let disk = fs::read_to_string(dir.path().join("n.qmd")).unwrap();
+    assert_eq!(disk, format!("{text}edited\n"));
+}
+
+#[test]
+fn a_fence_opener_ending_the_file_without_a_newline_is_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "# A\n\n```{r x}";
+    let o = open(dir.path(), "x.Rmd", text);
+    assert_eq!(shape(&o), ["A"]);
+    assert_eq!(written(&o), text);
+}
+
+/// Markdown made of `n` fragments chosen by `seed`, with unique labels.
+fn generated(seed: u64, n: usize, rmd: bool) -> String {
+    const FRAGMENTS: &[&str] = &[
+        "# One\n",
+        "## Two\n",
+        "### Three\n",
+        "Title\n=====\n",
+        "Sub\n---\n",
+        "prose line\n",
+        "\n",
+        "- item\n",
+        "> quote\n",
+        "```{python}\nx = 1\n```\n",
+        "```{python}\n#| label: cell{N}\ny = 2\n```\n",
+        "```{r chunk{N}}\nz <- 3\n```\n",
+        "```python\nprint(1)\n```\n",
+        "~~~\ntilde\n~~~\n",
+        "````\n```\nnested\n```\n````\n",
+        "::: {.callout-note}\n## In a div\n:::\n",
+        "  ```{python}\n  indented\n  ```\n",
+        "<!-- a comment -->\n",
+        "text with `code` and \u{e9}\n",
+    ];
+    let mut state = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let mut next = || {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (state >> 33) as usize
+    };
+    let mut out = String::new();
+    if next() % 4 == 0 {
+        out.push_str("---\ntitle: x\n# a YAML comment\n---\n");
+    }
+    for k in 0..n {
+        let f = FRAGMENTS[next() % FRAGMENTS.len()];
+        // A knitr label in a Quarto file, or a Quarto label in R Markdown,
+        // is the other tool's syntax: keep each file to its own.
+        let f = match (rmd, f.starts_with("```{r chunk"), f.contains("#| label")) {
+            (false, true, _) | (true, _, true) => "prose line\n",
+            _ => f,
+        };
+        out.push_str(&f.replace("{N}", &k.to_string()));
+    }
+    if next() % 3 == 0 {
+        out.pop();
+    }
+    out
+}
+
+#[test]
+fn generated_documents_are_written_back_byte_for_byte() {
+    let mut refused = Vec::new();
+    for seed in 0..400u64 {
+        for (name, rmd) in [("g.qmd", false), ("g.Rmd", true)] {
+            let text = generated(seed, 1 + (seed as usize % 9), rmd);
+            let dir = tempfile::tempdir().unwrap();
+            let leo = outline_over(dir.path(), kind_for(name), name, &text);
+            let (mut o, report) = leolib::open_outline_with_kinds(&leo, true, kinds()).unwrap();
+            if !report.errors.is_empty() {
+                refused.push((text.clone(), format!("{:?}", report.errors)));
+            }
+            let result = external::write_external_files(&mut o, false);
+            assert!(result.errors.is_empty(), "{text:?}: {:?}", result.errors);
+            assert_eq!(fs::read_to_string(dir.path().join(name)).unwrap(), text);
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "{} refused, first: {:?}",
+        refused.len(),
+        refused[0]
+    );
+}
+
+#[test]
+fn generated_documents_keep_their_shape_when_bodies_lose_their_final_newline() {
+    for seed in 0..200u64 {
+        let text = generated(seed, 2 + (seed as usize % 8), false);
+        let dir = tempfile::tempdir().unwrap();
+        let leo = outline_over(dir.path(), "@qmd", "g.qmd", &text);
+        let mut d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+        let before = shape(d.outline());
+        for p in d.outline().all_positions() {
+            let body = p.b(d.outline()).to_string();
+            if let Some(cut) = body.strip_suffix('\n') {
+                d.set_body(&p, cut);
+            }
+        }
+        let saved = d.save_all(&leo);
+        assert!(
+            saved.files.errors.is_empty(),
+            "{text:?}: {:?}",
+            saved.files.errors
+        );
+        let (o, report) = leolib::open_outline_with_kinds(&leo, true, kinds()).unwrap();
+        assert!(report.errors.is_empty(), "{text:?}: {:?}", report.errors);
+        assert_eq!(shape(&o), before, "{text:?}");
+    }
+}
+
+#[test]
+fn a_label_holding_a_space_is_renamed_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "```{python}\n#| label: \"b c\"\nx = 1\n```\n";
+    let mut d = doc(dir.path(), "q.qmd", text);
+    let cell = find(d.outline(), "<< b c >>");
+    d.rename_block(&cell, "<< bc >>").unwrap().unwrap();
+    assert_eq!(
+        written(d.outline()),
+        "```{python}\n#| label: \"bc\"\nx = 1\n```\n"
+    );
+}
+
+#[test]
+fn a_quoted_knitr_label_is_one_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "```{r label='x y'}\n1\n```\n";
+    let mut d = doc(dir.path(), "p.Rmd", text);
+    let cell = find(d.outline(), "<< x y >>");
+    d.rename_block(&cell, "<< z >>").unwrap().unwrap();
+    assert_eq!(written(d.outline()), "```{r label='z'}\n1\n```\n");
+}
+
+#[test]
+fn a_quarto_label_named_label_renames_its_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "```{python}\n#| label: label\nx = 1\n```\n";
+    let mut d = doc(dir.path(), "q.qmd", text);
+    let cell = find(d.outline(), "<< label >>");
+    d.rename_block(&cell, "<< tag >>").unwrap().unwrap();
+    assert_eq!(
+        written(d.outline()),
+        "```{python}\n#| label: tag\nx = 1\n```\n"
+    );
+}
+
+#[test]
+fn a_label_holding_a_space_keeps_its_gnx_and_an_unnamed_cell_does_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "```{python}\n#| label: \"b c\"\nx = 1\n```\n\n```{python}\ny\n```\n";
+    let leo = outline_over(dir.path(), "@qmd", "q.qmd", text);
+    let mut d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+    let gnx = find(d.outline(), "<< b c >>").gnx(d.outline()).to_string();
+    d.save(&leo).unwrap();
+    let xml = fs::read_to_string(&leo).unwrap();
+    assert!(xml.contains(&format!("b c {gnx}")), "{xml}");
+    assert!(!xml.contains("python cell"), "{xml}");
+    let d = leolib::Document::open_with(&leo, true, kinds()).unwrap();
+    assert_eq!(find(d.outline(), "<< b c >>").gnx(d.outline()), gnx);
+}
+
+#[test]
+fn an_indented_cell_with_a_line_of_just_its_indent_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "- step\n\n  ```{python}\n  x = 1\n  \n  y = 2\n  ```\n";
+    let o = open(dir.path(), "i.qmd", text);
+    assert_eq!(shape(&o), ["<< python cell 1 >>"]);
+    assert_eq!(written(&o), text);
+}
+
+#[test]
+fn a_heading_in_a_comment_spanning_lines_stays_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "# A\n\n<!--\n# hidden\n-->\n\n`<!--` inline\n\n## B\n";
+    let o = open(dir.path(), "c.qmd", text);
+    assert_eq!(shape(&o), ["A", "  B"]);
+    assert_eq!(written(&o), text);
+}
+
+#[test]
+fn an_underlined_heading_renamed_to_a_list_item_is_written_with_hashes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = doc(dir.path(), "u.qmd", "Title\n-----\n\ntext\n");
+    let p = find(d.outline(), "Title");
+    d.set_headline(&p, "- todo");
+    assert_eq!(written(d.outline()), "## - todo\n\ntext\n");
+}
+
+#[test]
+fn edits_that_would_change_the_tree_on_reread_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = doc(dir.path(), "e.qmd", "# A\n\n```{python}\nx\n```\n");
+    let cell = find(d.outline(), "<< python cell 1 >>");
+    d.set_body(&cell, "x\n```\ny\n");
+    let r = root(d.outline());
+    let err = leo_markdown::write_string(d.outline(), &r)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("would close its fence"), "{err}");
+    d.set_body(&cell, "x\n");
+    let a = find(d.outline(), "A");
+    d.set_headline(&a, "  ");
+    let err = leo_markdown::write_string(d.outline(), &r)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("needs a headline"), "{err}");
 }

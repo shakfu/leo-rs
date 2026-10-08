@@ -20,5 +20,10 @@
    "h": "@auto c.unknown",
    "b": "x\n"
   }
- ]
+ ],
+ "auto_written": {
+  "@auto a.txt": "Plain text.\n",
+  "@auto b.json": "{\"a\": 1}\n",
+  "@auto c.unknown": "x\n"
+ }
 }

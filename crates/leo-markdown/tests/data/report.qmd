@@ -1,0 +1,269 @@
+---
+title: "Penguin Morphology Analysis"
+author: "Literate Data Science with Entangled"
+format: html
+---
+
+## Introduction
+
+This report analyses the Palmer Penguins dataset—a popular alternative to
+Iris for teaching data science. We explore how body mass, flipper length, and
+bill dimensions vary across three penguin species (Ad&eacute;lie, Chinstrap,
+Gentoo) collected from islands in the Palmer Archipelago, Antarctica.
+
+The analysis is written as a **Quarto literate program**. Entangled extracts
+the code blocks into standalone Python scripts that can be run independently
+of the notebook, while the `.qmd` file remains the single source of truth.
+
+## Setup
+
+We rely on the Python data-science stack: `pandas` for data manipulation,
+`matplotlib` and `seaborn` for visualisation, and `scipy` for statistics.
+
+```{python}
+#| label: imports
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+from pathlib import Path
+```
+
+Configure plot aesthetics once so every figure is consistent:
+
+```{python}
+#| label: plot-config
+sns.set_theme(style="whitegrid", palette="colorblind")
+plt.rcParams.update({
+    "figure.figsize": (8, 5),
+    "figure.dpi": 150,
+    "savefig.bbox": "tight",
+})
+
+OUTPUT_DIR = Path("figures")
+OUTPUT_DIR.mkdir(exist_ok=True)
+```
+
+## Loading the data
+
+The dataset ships with seaborn, so loading is trivial. We drop rows with
+missing measurements to keep downstream code simple.
+
+```{python}
+#| label: load-data
+#| file: load_data.py
+<<imports>>
+<<plot-config>>
+
+def load_penguins() -> pd.DataFrame:
+    """Load the Palmer Penguins dataset, dropping incomplete rows."""
+    df = sns.load_dataset("penguins").dropna()
+    print(f"Loaded {len(df)} complete observations across "
+          f"{df['species'].nunique()} species")
+    return df
+
+if __name__ == "__main__":
+    df = load_penguins()
+    print(df.describe())
+```
+
+## Exploratory analysis
+
+### Species distribution
+
+How many penguins of each species were measured on each island?
+
+```{python}
+#| label: species-counts
+def plot_species_counts(df: pd.DataFrame) -> None:
+    """Bar chart of species counts per island."""
+    fig, ax = plt.subplots()
+    ct = df.groupby(["island", "species"]).size().unstack(fill_value=0)
+    ct.plot.bar(ax=ax, edgecolor="white", linewidth=0.5)
+    ax.set_ylabel("Count")
+    ax.set_title("Penguin counts by island and species")
+    ax.legend(title="Species")
+    plt.xticks(rotation=0)
+    fig.savefig(OUTPUT_DIR / "species_counts.png")
+    plt.close(fig)
+```
+
+### Body mass vs. flipper length
+
+A scatter plot coloured by species reveals clear clustering:
+
+```{python}
+#| label: mass-flipper-scatter
+def plot_mass_vs_flipper(df: pd.DataFrame) -> None:
+    """Scatter plot of body mass against flipper length."""
+    fig, ax = plt.subplots()
+    for species, grp in df.groupby("species"):
+        ax.scatter(grp["flipper_length_mm"], grp["body_mass_g"],
+                   label=species, alpha=0.7, edgecolors="white", linewidth=0.3)
+    ax.set_xlabel("Flipper length (mm)")
+    ax.set_ylabel("Body mass (g)")
+    ax.set_title("Body mass vs. flipper length")
+    ax.legend(title="Species")
+    fig.savefig(OUTPUT_DIR / "mass_vs_flipper.png")
+    plt.close(fig)
+```
+
+### Bill dimensions
+
+Bill length and depth together can almost perfectly separate the three
+species. This is the most diagnostic pair of features.
+
+```{python}
+#| label: bill-scatter
+def plot_bill_dimensions(df: pd.DataFrame) -> None:
+    """Scatter plot of bill length vs. bill depth."""
+    fig, ax = plt.subplots()
+    for species, grp in df.groupby("species"):
+        ax.scatter(grp["bill_length_mm"], grp["bill_depth_mm"],
+                   label=species, alpha=0.7, edgecolors="white", linewidth=0.3)
+    ax.set_xlabel("Bill length (mm)")
+    ax.set_ylabel("Bill depth (mm)")
+    ax.set_title("Bill length vs. bill depth")
+    ax.legend(title="Species")
+    fig.savefig(OUTPUT_DIR / "bill_dimensions.png")
+    plt.close(fig)
+```
+
+### Distribution of body mass
+
+A box plot shows both central tendency and spread:
+
+```{python}
+#| label: mass-boxplot
+def plot_mass_boxplot(df: pd.DataFrame) -> None:
+    """Box plot of body mass by species."""
+    fig, ax = plt.subplots()
+    sns.boxplot(data=df, x="species", y="body_mass_g", ax=ax)
+    ax.set_ylabel("Body mass (g)")
+    ax.set_title("Body mass distribution by species")
+    fig.savefig(OUTPUT_DIR / "mass_boxplot.png")
+    plt.close(fig)
+```
+
+## Statistical tests
+
+### ANOVA: body mass across species
+
+We use a one-way ANOVA to test whether mean body mass differs significantly
+across the three species.
+
+```{python}
+#| label: anova-test
+def anova_body_mass(df: pd.DataFrame) -> dict:
+    """One-way ANOVA of body mass across species."""
+    groups = [grp["body_mass_g"].values for _, grp in df.groupby("species")]
+    f_stat, p_value = stats.f_oneway(*groups)
+    result = {"F": round(f_stat, 2), "p": f"{p_value:.2e}"}
+    print(f"ANOVA — F = {result['F']}, p = {result['p']}")
+    return result
+```
+
+### Pairwise t-tests
+
+If the ANOVA is significant we follow up with pairwise comparisons using
+Welch's t-test (which does not assume equal variances):
+
+```{python}
+#| label: pairwise-tests
+from itertools import combinations
+
+def pairwise_ttests(df: pd.DataFrame) -> pd.DataFrame:
+    """Pairwise Welch t-tests on body mass between species."""
+    species = df["species"].unique()
+    rows = []
+    for a, b in combinations(species, 2):
+        ga = df.loc[df["species"] == a, "body_mass_g"]
+        gb = df.loc[df["species"] == b, "body_mass_g"]
+        t_stat, p_val = stats.ttest_ind(ga, gb, equal_var=False)
+        rows.append({"species_a": a, "species_b": b,
+                      "t": round(t_stat, 2), "p": f"{p_val:.2e}"})
+    result = pd.DataFrame(rows)
+    print(result.to_string(index=False))
+    return result
+```
+
+## Summary statistics
+
+A compact summary table rounded for presentation:
+
+```{python}
+#| label: summary-table
+def summary_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-species summary of key measurements."""
+    agg = df.groupby("species").agg(
+        n=("body_mass_g", "size"),
+        mass_mean=("body_mass_g", "mean"),
+        mass_std=("body_mass_g", "std"),
+        flipper_mean=("flipper_length_mm", "mean"),
+        bill_len_mean=("bill_length_mm", "mean"),
+        bill_dep_mean=("bill_depth_mm", "mean"),
+    ).round(1)
+    print(agg.to_string())
+    return agg
+```
+
+## Putting it all together
+
+The `analysis.py` script ties every step into a single pipeline that can be
+run from the command line:
+
+```{python}
+#| label: main
+#| file: analysis.py
+<<imports>>
+<<plot-config>>
+
+from load_data import load_penguins
+
+<<species-counts>>
+
+<<mass-flipper-scatter>>
+
+<<bill-scatter>>
+
+<<mass-boxplot>>
+
+<<anova-test>>
+
+<<pairwise-tests>>
+
+<<summary-table>>
+
+def main():
+    df = load_penguins()
+
+    # Exploratory plots
+    plot_species_counts(df)
+    plot_mass_vs_flipper(df)
+    plot_bill_dimensions(df)
+    plot_mass_boxplot(df)
+
+    # Statistical analysis
+    anova_body_mass(df)
+    pairwise_ttests(df)
+
+    # Summary
+    summary_table(df)
+
+    print(f"\nFigures saved to {OUTPUT_DIR}/")
+
+if __name__ == "__main__":
+    main()
+```
+
+## Conclusion
+
+Even with only four morphological measurements the three penguin species
+separate cleanly. Gentoo penguins are noticeably larger (higher body mass and
+longer flippers), while Ad&eacute;lie and Chinstrap overlap in mass but
+differ in bill shape. The ANOVA and pairwise t-tests confirm that these
+visual differences are statistically significant.
+
+Because this document is managed by Entangled, you can edit `analysis.py` or
+`load_data.py` in your IDE and run `make stitch` to propagate changes back
+into this Quarto report—keeping narrative and code in perfect sync.

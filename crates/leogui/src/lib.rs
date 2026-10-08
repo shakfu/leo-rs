@@ -69,6 +69,13 @@ struct Args {
 /// Parse the command line and run the window, drawn by `renderer`.
 /// `name` is the program's, for messages and the window system.
 pub fn run(name: &'static str, renderer: eframe::Renderer) -> eframe::Result {
+    // Leo's myLeoSettings.leo, beneath each outline's own @settings.
+    leolib::settings::use_user_settings(&leolib::settings::user_settings_path());
+    if !leo_plugins::register() {
+        eprintln!(
+            "{name}: plugins were looked up before they were registered; @qmd and @rmd are off"
+        );
+    }
     let matches = Args::command().name(name).get_matches();
     let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let (mut app, settings) = match app::launch(

@@ -98,10 +98,13 @@ impl Tree {
                     .allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click_and_drag());
                 let painter = ui.painter_at(rect);
                 let selected = i == current;
-                if selected {
-                    let fill = match focused {
-                        true => colours.selection,
-                        false => colours.selection.gamma_multiply(0.55),
+                let chosen = app.selection.contains(&row.position);
+                if selected || chosen {
+                    let fill = match (selected && focused, selected) {
+                        (true, _) => colours.selection,
+                        (false, true) => colours.selection.gamma_multiply(0.55),
+                        // Chosen with Ctrl- or Shift-click, not current.
+                        (false, false) => colours.selection.gamma_multiply(0.75),
                     };
                     painter.rect_filled(rect, 3.0, fill);
                 } else if response.hovered() {
@@ -216,7 +219,10 @@ impl Tree {
                     fold = Some(row.position.clone());
                 } else if response.double_clicked() {
                     click = Some((row.position.clone(), true));
-                } else if response.clicked() || response.secondary_clicked() {
+                } else if response.clicked() {
+                    click = Some((row.position.clone(), false));
+                } else if response.secondary_clicked() && !chosen {
+                    // A right-click on a chosen row keeps the choice for its menu.
                     click = Some((row.position.clone(), false));
                 }
                 response.context_menu(|ui| {
@@ -263,8 +269,15 @@ impl Tree {
             app.toggle_fold(&p);
         }
         if let Some((p, double)) = click {
+            // Cmd on macOS, Ctrl elsewhere, adds a row; Shift adds a run.
+            let mods = ui.input(|i| i.modifiers);
+            let extend = match (mods.command, mods.shift) {
+                (true, _) => leoapp::app::Extend::Toggle,
+                (false, true) => leoapp::app::Extend::Range,
+                _ => leoapp::app::Extend::No,
+            };
             if app.run_chosen("") {
-                app.click_node(&p);
+                app.click_node_with(&p, extend);
                 if double {
                     tabs.pin(p.gnx(app.outline()));
                     app.focus = Focus::Body;
@@ -278,7 +291,9 @@ impl Tree {
         }
         if let Some((command, p)) = run {
             if app.run_chosen("") {
-                app.click_node(&p);
+                if !app.selection.contains(&p) {
+                    app.click_node(&p);
+                }
                 app.run_chosen(command);
             }
         }
@@ -312,6 +327,18 @@ impl Tree {
             .layout_no_wrap(before, font.clone(), colours.fg)
             .size()
             .x;
+        // A selected text, which typing replaces, behind a selection colour.
+        if mini.selected_all {
+            let width = painter
+                .layout_no_wrap(mini.buffer.clone(), font.clone(), colours.fg)
+                .size()
+                .x;
+            let band = egui::Rect::from_min_max(
+                pos2(x, field.shrink(3.0).top()),
+                pos2(x + width, field.shrink(3.0).bottom()),
+            );
+            painter.rect_filled(band, 2.0, colours.selection);
+        }
         painter.text(
             pos2(x, rect.center().y),
             Align2::LEFT_CENTER,

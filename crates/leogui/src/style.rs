@@ -50,8 +50,14 @@ pub struct Palette {
     pub selection: Color32,
     pub line: Color32,
     pub border: Color32,
-    /// The outline's indent guides.
+    /// The outline's and the body's indent guides.
     pub guide: Color32,
+    /// Behind a bracket and its match: `ui.cursor.match`.
+    pub bracket: Color32,
+    /// The `@pagewidth` ruler: `ui.virtual.ruler`.
+    pub ruler: Color32,
+    /// `:set list`'s marks for spaces and tabs: `ui.virtual.whitespace`.
+    pub whitespace: Color32,
     /// An `@<file>` node's icon: a neutral tone a step brighter than a
     /// plain node's, its shape saying it is a file. A theme's accent or
     /// directory colour is a strong red or green in some themes.
@@ -218,6 +224,9 @@ impl Palette {
             line: bg_of(face("ui.cursorline.primary")).unwrap_or(mix(bg, toward, 0.05)),
             border,
             guide: fg_of(face("ui.virtual.indent-guide")).unwrap_or(border),
+            bracket: bg_of(face("ui.cursor.match")).unwrap_or(mix(bg, toward, 0.25)),
+            ruler: bg_of(face("ui.virtual.ruler")).unwrap_or(mix(bg, toward, 0.08)),
+            whitespace: fg_of(face("ui.virtual.whitespace")).unwrap_or(mix(fg, bg, 0.7)),
             file: mix(fg, bg, 0.3),
             warning: fg_of(face("warning")).unwrap_or(ansi(11)),
             gutter: bg_of(face("ui.gutter")).unwrap_or(bg),

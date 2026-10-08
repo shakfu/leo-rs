@@ -63,8 +63,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "leo-markdown"
+version = "0.7.0"
+dependencies = [
+ "leolib",
+ "regex",
+]
+
+[[package]]
 name = "leolib"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "once_cell",
  "quick-xml",
@@ -75,6 +83,7 @@ dependencies = [
 name = "leolib-fuzz"
 version = "0.0.0"
 dependencies = [
+ "leo-markdown",
  "leolib",
  "libfuzzer-sys",
 ]

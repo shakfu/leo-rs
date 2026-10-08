@@ -141,9 +141,10 @@ pub trait AppPlugin: Sync {
 - **Kind-level behaviour** goes through `leolib::ext::kind_at`. These are
   the read-only guard (`FileKind::read_only`), the rendered view
   (`FileKind::node_markdown`), and the rename message (`Rename::note`).
-- **The `entangled` cargo feature** builds the plugin, and is on by
-  default. With it off, leoapp builds and tests with no entangled command
-  or setting.
+- **leo-entangled's `leoapp` cargo feature** builds the plugin. leo-plugins
+  leaves leo-entangled out until it is published: crates.io refuses an
+  unpublished dependency, even an optional one. `make ... ENTANGLED=1`
+  builds and tests it.
 
 **One plugin list per process (kept 2026-10-08).** `plugins::all()` is a `OnceLock`,
 filled from the cargo features unless `plugins::register` ran first.
@@ -155,7 +156,7 @@ passed to `App::new` and to every lookup that has no `App` today:
 a test binary holds one set, and nothing needs different sets per window.
 The hazard is order: the list is fixed on first use, so a lookup before
 `register()` leaves the app silently without plugins. leotui and leogui
-`debug_assert!` that `register()` succeeded.
+print to stderr if `register()` fails.
 
 ## Crates
 
@@ -163,10 +164,12 @@ The hazard is order: the list is fixed on first use, so a lookup before
 leolib          Leo + leolib::ext
 leo-markdown    scanner and writer + @qmd, @rmd       -> leolib
 leo-entangled   @entangled (+ AppPlugin, feature)     -> leolib, leo-markdown
-leo-wiki        @wiki, later                          -> leolib
+leo-wiki        @wiki, a TreeKind (+ AppPlugin, feature) -> leolib
 leoapp          AppPlugin; no plugin crates
 leotui, leogui  depend on the plugin crates they offer, and register them
 ```
+
+**A tree kind (`@wiki`, 2026-10-08).** `leolib::ext::TreeKind` is a directive whose subtree is not a file: the `.leo` file stores it as any tree, where a `FileKind`'s children are never stored. It can fix its tree's language (`language_at` asks it first) and plan renames (`rename_block` asks it when no file kind does). leoapp's `AppPlugin` gained `open_url`, `complete` and `violations`; an edit that adds a violation is undone (`App::check_rules`), keyed on `Undoer::version` so nothing is checked while nothing is edited.
 
 **Registration moves to the binaries (found in phase 2).** A plugin crate
 that implements leoapp's `AppPlugin` depends on leoapp. leoapp then cannot
@@ -230,7 +233,8 @@ All tests pass after each phase, with none edited.
      leogui call `register()` first. Its `tests/integration.rs` holds the
      tests that need the app and the real kinds: rename and read-only
      through keys, the rendered view, settings, and opening through
-     `open_or_new`.
+     `open_or_new`. The `@entangled` ones are now in leo-entangled's
+     `tests/app.rs`, since leo-plugins no longer depends on it.
    - leolib opens with `Kinds::empty()` by default and has no
      `@entangled` or `@auto-cells` code or names. Its extension API gained
      `Outline::set_kinds`, `add_import_warning`,

@@ -1,6 +1,13 @@
 # `@wiki`: wikilinks in a markdown subtree
 
-Status: **proposed**. Nothing here is implemented. Leo has no equivalent; `@wiki` is a leo-rs extension. Revised 2026-10-07 for leoapp: keys and commands checked against `crates/leoapp/src/bindings.rs`.
+Status: **implemented** (2026-10-08) in `crates/leo-wiki`, a `leolib::ext::TreeKind` and a leoapp plugin, registered by `leo-plugins`. Leo has no equivalent; `@wiki` is a leo-rs extension.
+
+Decided: GitHub-style anchors (Q1); a page deeper than six is refused at export (Q3); `[[...]]` is not live outside a wiki (Q5). Where the build differs from the design below:
+
+- A link naming several pages is not offered as a list in the editor: following it says how many and asks for a parent, `[[Parent/Page]]`.
+- Edits that break a rule are undone after the fact, by leoapp's rule guard, rather than refused one operation at a time. The effect is the same: the edit does not stand, and the message names the rule.
+- Only ATX headings in a page body move down at export; an underlined heading is copied as it is.
+- `[[` completion offers the pages of the wiki the cursor is in, not other wikis'.
 
 ## 0. Summary
 
@@ -159,7 +166,7 @@ This command rewrites one wiki's links as Leo links, for outlines shared with Le
 
 ---
 
-## 7. Open questions
+## 7. Open questions (Q1, Q3 and Q5 are decided; see the status above)
 
 - **Q1. Anchors.** GitHub-style heading anchors, or `<a id="...">` made from the gnx? GitHub-style anchors read well and match GitHub and pandoc's `gfm_auto_identifiers`, but not MkDocs' `toc`. `<a id>` anchors work in every renderer but put raw HTML in the output.
 

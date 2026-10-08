@@ -106,11 +106,19 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool> 
     if !std::path::Path::new(&path).exists() {
         return Err(Error::NotFound { path });
     }
+    // The tree matches the file even when nothing is read below, so the file
+    // is the outline's to write, and a later edit by another program shows.
+    let stamp = util::file_stamp(&path);
+    let seen = |o: &mut Outline| {
+        o.remember_read_path(root, &path);
+        o.record_file_stamp(&path, stamp);
+    };
     // #4385: do nothing if the file has not changed since we last saw it.
     let new_mod_time = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     let gnx = root.gnx(o).to_string();
     if let (Some(old), Some(new)) = (o.mod_time_cache.get(&gnx).copied(), new_mod_time) {
         if old >= new {
+            seen(o);
             return Ok(false);
         }
     }
@@ -127,14 +135,17 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool> 
     if old_public_lines.is_empty() {
         // Nothing to thread sentinels through: the file becomes one node.
         o.set_body(root, &new_public_lines.concat());
+        seen(o);
         return Ok(true);
     }
     let new_private_lines = propagate_changed_lines(&new_public_lines, &old_private_lines, &marker);
     if new_private_lines == old_private_lines {
+        seen(o);
         return Ok(false);
     }
     let text = new_private_lines.concat();
     atfile_read::read_into_root(o, &text, &path, root)?;
+    seen(o);
     Ok(true)
 }
 

@@ -12,9 +12,10 @@
 //! back unchanged goes out unchanged. A value this module cannot read leaves
 //! the blob where it was: see `Outline::invalidate_descendent_uas`.
 //!
-//! Every opcode in the 79 blobs of a leo-editor checkout is here. Floats,
-//! tuples, sets and pickled class instances are not, because none of them
-//! appeared; the caller falls back rather than guesses.
+//! Every opcode in the 79 blobs of a leo-editor checkout is here, and floats
+//! and tuples besides. Sets, bytes and class instances are not: protocol 1
+//! pickles them as calls to a global, which this module does not make; the
+//! caller falls back rather than guesses.
 
 /// A Python value from a uA blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +27,9 @@ pub enum Value {
     List(Vec<Value>),
     /// Insertion-ordered, as Python's dict is: the order decides the bytes.
     Dict(Vec<(Value, Value)>),
+    /// A float, by its bits, so values compare and a NaN keeps its payload.
+    Float(u64),
+    Tuple(Vec<Value>),
 }
 
 impl Value {
@@ -126,6 +130,33 @@ pub fn loads(bytes: &[u8]) -> Result<Value> {
             b'}' => stack.push(Value::Dict(Vec::new())),
             b']' => stack.push(Value::List(Vec::new())),
             b'N' => stack.push(Value::None),
+            b')' => stack.push(Value::Tuple(Vec::new())),
+            b't' => {
+                let items = pop_mark(&mut stack, &mut marks, "TUPLE")?;
+                stack.push(Value::Tuple(items));
+            }
+            // TUPLE1 to TUPLE3, from protocol 2.
+            0x85..=0x87 => {
+                let n = (op - 0x84) as usize;
+                if stack.len() < n {
+                    return Err(oops("TUPLE past the stack"));
+                }
+                let items = stack.split_off(stack.len() - n);
+                stack.push(Value::Tuple(items));
+            }
+            b'G' => {
+                let raw = take(bytes, &mut i, 8)?;
+                let bits = u64::from_be_bytes(raw.try_into().expect("eight bytes"));
+                stack.push(Value::Float(bits));
+            }
+            b'F' => {
+                let line = take_line(bytes, &mut i)?;
+                let f: f64 = line
+                    .trim()
+                    .parse()
+                    .map_err(|_| oops("a FLOAT that is not one"))?;
+                stack.push(Value::Float(f.to_bits()));
+            }
             0x88 => stack.push(Value::Bool(true)),
             0x89 => stack.push(Value::Bool(false)),
             0x80 => {
@@ -251,7 +282,7 @@ fn size(v: &Value) -> usize {
     while let Some(v) = todo.pop() {
         n += 1;
         match v {
-            Value::List(items) => todo.extend(items),
+            Value::List(items) | Value::Tuple(items) => todo.extend(items),
             Value::Dict(items) => todo.extend(items.iter().flat_map(|(k, v)| [k, v])),
             _ => {}
         }
@@ -344,6 +375,21 @@ fn save(out: &mut Vec<u8>, memo: &mut usize, v: &Value) {
         // Protocol 1 has no NEWTRUE: a bool goes out as an INT line.
         Value::Bool(b) => out.extend_from_slice(if *b { b"I01\n" } else { b"I00\n" }),
         Value::Int(n) => save_int(out, *n),
+        Value::Float(bits) => {
+            out.push(b'G');
+            out.extend_from_slice(&bits.to_be_bytes());
+        }
+        // CPython's protocol 1: EMPTY_TUPLE unmemoized, else MARK, the items,
+        // TUPLE, and then the memo.
+        Value::Tuple(items) if items.is_empty() => out.push(b')'),
+        Value::Tuple(items) => {
+            out.push(b'(');
+            for item in items {
+                save(out, memo, item);
+            }
+            out.push(b't');
+            save_memo(out, memo);
+        }
         Value::Str(s) => {
             out.push(b'X');
             out.extend_from_slice(&(s.len() as u32).to_le_bytes());
@@ -473,6 +519,32 @@ mod tests {
             items[0].1.get("__bookmarks").unwrap().get("is_dupe"),
             Some(&Value::Bool(false))
         );
+    }
+
+    #[test]
+    fn floats_and_tuples_are_read_and_written_as_cpython_writes_them() {
+        // `pickle.dumps(v, protocol=1)` in CPython 3, for
+        // {'a': (1, 2.5, ()), 'b': [(3,)]}, (('x', 'y'), -0.0, 1e300) and [(), ((),)].
+        for hex in [
+            "7d7100285801000000617101284b014740040000000000002974710258010000006271035d7104284b0374710561752e",
+            "282858010000007871005801000000797101747102478000000000000000477e37e43c8800759c7471032e",
+            "5d710028292829747101652e",
+        ] {
+            let value = unhexlify_loads(hex).unwrap();
+            let again: String = dumps(&value).iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(again, hex);
+        }
+        let v = unhexlify_loads("5d710028292829747101652e").unwrap();
+        assert_eq!(
+            v,
+            Value::List(vec![
+                Value::Tuple(vec![]),
+                Value::Tuple(vec![Value::Tuple(vec![])])
+            ])
+        );
+        // Protocol 2's TUPLE2 reads as a tuple too.
+        let v = loads(&[0x80, 2, b'K', 1, b'K', 2, 0x86, b'.']).unwrap();
+        assert_eq!(v, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
     }
 
     #[test]

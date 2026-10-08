@@ -66,6 +66,15 @@ pub struct BodyView {
     /// while a change is typed, rows no longer match what the server saw.
     pub diagnostics: Vec<BodyDiagnostic>,
     hlsearch: Option<Regex>,
+    /// The bracket at or before the cursor and its match, as vim's
+    /// matchparen shows them.
+    pub brackets: Option<(Pos, Pos)>,
+    /// The display column of the `@pagewidth` in effect, if a directive sets one.
+    pub ruler: Option<usize>,
+    /// `:set list`: mark spaces and tabs.
+    pub list: bool,
+    /// `:set guides`: a line at each indent level.
+    pub guides: bool,
 }
 
 /// One screen row of the body: which line, and its first screen column.
@@ -122,6 +131,40 @@ impl BodyView {
 
     /// The cursor's screen row and column within the pane, line numbers
     /// included in the column.
+    /// Where line `row`, character `col` is on screen, if it is.
+    pub fn screen_of(&self, row: usize, col: usize) -> Option<(usize, usize)> {
+        if row < self.top {
+            return None;
+        }
+        let at = display_col(self.lines.get(row)?, col, self.tab);
+        let (dy, dx) = match self.wrap {
+            true => (at / self.text_width, at % self.text_width),
+            false if at < self.hscroll || at >= self.hscroll + self.text_width => return None,
+            false => (0, at - self.hscroll),
+        };
+        let y = (self.top..row).map(|i| self.screen_rows(i)).sum::<usize>() + dy;
+        (y < self.height).then_some((y, self.number_width + dx))
+    }
+
+    /// The indent guides of line `i`: the display columns of the indent
+    /// levels inside its leading whitespace. A blank line takes the guides
+    /// of the line above it, so a block's guides do not break at a gap.
+    pub fn indent_guides(&self, i: usize) -> Vec<usize> {
+        let indent = |line: &str| display_col(line, line.len() - line.trim_start().len(), self.tab);
+        let blank = |line: &str| line.trim().is_empty();
+        let width = match self.lines.get(i) {
+            Some(l) if !blank(l) => indent(l),
+            Some(_) => (0..i)
+                .rev()
+                .map(|k| &self.lines[k])
+                .find(|l| !blank(l))
+                .map_or(0, |l| indent(l)),
+            None => 0,
+        };
+        let step = self.tab.max(1);
+        (0..).map(|k| k * step).take_while(|c| *c < width).collect()
+    }
+
     pub fn cursor_screen(&self) -> Option<(usize, usize)> {
         let ((row, _), col) = (self.cursor?, self.cursor_col?);
         let (dy, dx) = match self.wrap {
@@ -262,7 +305,23 @@ impl App {
                 Some(_) => Vec::new(),
             },
             hlsearch: self.hlsearch.clone(),
+            brackets: None,
+            ruler: self
+                .outline()
+                .page_width_directive(&self.current)
+                .filter(|w| *w > 0)
+                .map(|w| w as usize),
+            list: self.options.list,
+            guides: self.options.guides,
         };
+        view.brackets = cursor.and_then(|(row, col)| {
+            let typing = self.mode == crate::app::Mode::Insert;
+            // While typing, the cursor sits after the bracket just typed.
+            let at = [Some(col), typing.then(|| col.checked_sub(1)).flatten()];
+            at.into_iter()
+                .flatten()
+                .find_map(|c| matching_bracket(&view.lines, row, c).map(|m| ((row, c), m)))
+        });
 
         let max_top = view.lines.len().saturating_sub(1);
         let mut top = match cursor {
@@ -304,13 +363,71 @@ impl App {
             let node = self.current.gnx(self.doc.outline());
             let visible = top..top + v.rows;
             view.spans = self.colouring.of(node, &view.lines, &language, visible);
+            view.spans = self.with_semantic_tokens(view.spans.clone(), &view.lines);
         }
         view
     }
 
+    /// `spans` with the language server's semantic tokens laid over them,
+    /// while the body is the text the server saw: not while a change is
+    /// typed. Cached until the spans or the tokens change.
+    fn with_semantic_tokens(
+        &mut self,
+        spans: Rc<Vec<Vec<highlight::Span>>>,
+        lines: &[String],
+    ) -> Rc<Vec<Vec<highlight::Span>>> {
+        if self.buffer.is_some() || !self.options.semantic {
+            return spans;
+        }
+        let gnx = self.current.gnx(self.doc.outline()).to_string();
+        let Some(lsp) = self.lsp.as_mut() else {
+            return spans;
+        };
+        let tokens = lsp.semantic_tokens(&gnx);
+        if tokens.is_empty() {
+            return spans;
+        }
+        let key = (
+            gnx,
+            Rc::as_ptr(&spans) as usize,
+            tokens.as_ptr() as usize,
+            tokens.len(),
+        );
+        if let Some((k, cached)) = &self.semantic_cache {
+            if *k == key {
+                return Rc::clone(cached);
+            }
+        }
+        let mut by_row: std::collections::BTreeMap<usize, Vec<highlight::Span>> =
+            Default::default();
+        for t in tokens {
+            let (Some(class), Some(line)) = (
+                highlight::semantic_class(&t.kind, &t.modifiers),
+                lines.get(t.row),
+            ) else {
+                continue;
+            };
+            let byte = |c: usize| line.char_indices().nth(c).map_or(line.len(), |(i, _)| i);
+            by_row.entry(t.row).or_default().push(highlight::Span {
+                start: byte(t.start),
+                end: byte(t.end),
+                class,
+            });
+        }
+        let mut all = (*spans).clone();
+        all.resize(all.len().max(lines.len()), Vec::new());
+        for (row, mut tokens) in by_row {
+            tokens.sort_by_key(|t| t.start);
+            all[row] = highlight::overlay(&all[row], &tokens);
+        }
+        let all = Rc::new(all);
+        self.semantic_cache = Some((key, Rc::clone(&all)));
+        all
+    }
+
     /// The help overlay's lines that fit in `rows`: the overlay's own, or the
-    /// bindings of the focused pane.
-    pub fn help_view(&mut self, rows: usize) -> HelpView {
+    /// bindings of the focused pane, wrapped at `width` characters.
+    pub fn help_view(&mut self, rows: usize, width: usize) -> HelpView {
         let (name, lines) = match &self.overlay {
             Some((name, lines)) => (name.clone(), lines.clone()),
             None => {
@@ -320,6 +437,20 @@ impl App {
                 };
                 (format!("keys: {pane} pane"), help_lines(self.focus))
             }
+        };
+        // Wrapped, so a long message keeps its end; 0 leaves lines whole.
+        let lines: Vec<String> = match width {
+            0 => lines,
+            w => lines
+                .iter()
+                .flat_map(|l| {
+                    let chars: Vec<char> = l.chars().collect();
+                    match chars.is_empty() {
+                        true => vec![String::new()],
+                        false => chars.chunks(w).map(|c| c.iter().collect()).collect(),
+                    }
+                })
+                .collect(),
         };
         self.help_scroll = self.help_scroll.min(lines.len().saturating_sub(rows));
         HelpView {
@@ -339,6 +470,9 @@ impl App {
     pub fn status_text(&mut self) -> String {
         if !self.message.is_empty() {
             return self.message.clone();
+        }
+        if let (Mode::Insert, Some(sig)) = (self.mode, &self.signature) {
+            return crate::app::signature_line(sig);
         }
         let hint = self.status_hint();
         format!("{}  {hint}", self.status())
@@ -397,12 +531,64 @@ impl App {
 
     /// A click on node p in an outline the front end lays out itself.
     pub fn click_node(&mut self, p: &leolib::Position) {
+        self.click_node_with(p, crate::app::Extend::No);
+    }
+
+    /// A click on node p, choosing it alone, with the rows already chosen,
+    /// or with every row from the current one.
+    pub fn click_node_with(&mut self, p: &leolib::Position, extend: crate::app::Extend) {
+        use crate::app::Extend;
         if self.mode != Mode::Normal {
             return;
         }
         self.message.clear();
         self.focus = Focus::Tree;
+        match extend {
+            Extend::No => self.selection.clear(),
+            Extend::Toggle => {
+                if self.selection.is_empty() {
+                    self.selection.push(self.current.clone());
+                }
+                match self.selection.iter().position(|q| q == p) {
+                    Some(i) => {
+                        self.selection.remove(i);
+                        // The current row moves to one still chosen.
+                        if let Some(last) = self.selection.last().cloned() {
+                            self.select(last);
+                        }
+                        if self.selection.len() < 2 {
+                            self.selection.clear();
+                        }
+                        return;
+                    }
+                    None => self.selection.push(p.clone()),
+                }
+            }
+            Extend::Range => {
+                let rows: Vec<leolib::Position> =
+                    self.rows().into_iter().map(|r| r.position).collect();
+                let (Some(a), Some(b)) = (
+                    rows.iter().position(|q| *q == self.current),
+                    rows.iter().position(|q| q == p),
+                ) else {
+                    return;
+                };
+                let (a, b) = (a.min(b), a.max(b));
+                self.selection = rows[a..=b].to_vec();
+            }
+        }
         self.select(p.clone());
+        if self.selection.len() > 1 {
+            self.message = format!("{} nodes chosen", self.selection.len());
+        }
+    }
+
+    /// The rows a command acts on: every chosen row, else the current one.
+    pub fn chosen(&self) -> Vec<leolib::Position> {
+        match self.selection.len() > 1 {
+            true => self.selection.clone(),
+            false => vec![self.current.clone()],
+        }
     }
 
     /// A click at screen row `y`, column `x` of the last `body_view`.
@@ -493,6 +679,27 @@ impl App {
         if self.mode != Mode::Normal || from == onto {
             return;
         }
+        // A chosen row dragged takes the others with it.
+        if self.selection.len() > 1 && self.selection.contains(from) {
+            let chosen = std::mem::take(&mut self.selection);
+            match self.doc.move_nodes(&chosen, onto, place) {
+                Some(moved) => {
+                    if place == leolib::Place::Inside {
+                        self.doc.outline_mut_untracked().expand(onto);
+                    }
+                    self.message = format!("moved {} nodes", moved.len());
+                    if let Some(first) = moved.first().cloned() {
+                        self.select(first);
+                    }
+                    self.selection = moved;
+                }
+                None => {
+                    self.selection = chosen;
+                    self.message = "nodes cannot move into their own trees".into();
+                }
+            }
+            return;
+        }
         match self.doc.move_node(from, onto, place) {
             Some(p) => {
                 if place == leolib::Place::Inside {
@@ -502,6 +709,7 @@ impl App {
             }
             None => self.message = "a node cannot move into its own tree".into(),
         }
+        self.check_rules(true);
     }
 
     /// The wheel over a pane, in lines, down positive. The outline moves its
@@ -585,6 +793,12 @@ pub const SCOPES: &[(Class, &str)] = &[
     (Class::Type, "type"),
     (Class::Property, "variable.other.member"),
     (Class::Attribute, "attribute"),
+    (Class::Parameter, "variable.parameter"),
+    (Class::Variable, "variable"),
+    (Class::Constant, "constant"),
+    (Class::Macro, "function.macro"),
+    (Class::Namespace, "namespace"),
+    (Class::EnumMember, "type.enum.variant"),
 ];
 
 /// The cells a character takes. A control character takes none.
@@ -738,6 +952,44 @@ pub fn split_line<'a>(line: &'a str, spans: &[highlight::Span]) -> Vec<(&'a str,
     out
 }
 
+/// The bracket matching the one at line `row`, character `col`, if there is
+/// one there: the same kind, counted by nesting, within 5,000 lines.
+pub fn matching_bracket(lines: &[String], row: usize, col: usize) -> Option<Pos> {
+    const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+    let ch = lines.get(row)?.chars().nth(col)?;
+    let (open, close, forward) = PAIRS.iter().find_map(|&(o, c)| match ch {
+        x if x == o => Some((o, c, true)),
+        x if x == c => Some((o, c, false)),
+        _ => None,
+    })?;
+    let mut depth = 0usize;
+    let rows: Box<dyn Iterator<Item = usize>> = match forward {
+        true => Box::new(row..lines.len().min(row + 5000)),
+        false => Box::new((row.saturating_sub(5000)..=row).rev()),
+    };
+    for r in rows {
+        let chars: Vec<char> = lines[r].chars().collect();
+        let cols: Box<dyn Iterator<Item = usize>> = match (forward, r == row) {
+            (true, true) => Box::new(col..chars.len()),
+            (true, false) => Box::new(0..chars.len()),
+            (false, true) => Box::new((0..=col).rev()),
+            (false, false) => Box::new((0..chars.len()).rev()),
+        };
+        for c in cols {
+            let x = chars[c];
+            if x == if forward { open } else { close } {
+                depth += 1;
+            } else if x == if forward { close } else { open } {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((r, c));
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +1002,52 @@ mod tests {
         let mut app = App::new(doc);
         app.focus = Focus::Body;
         app
+    }
+
+    #[test]
+    fn a_bracket_finds_its_match_across_lines_and_nesting() {
+        let lines: Vec<String> = ["f(a[1], (b)) {\n", "  x\n", "}\n"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(matching_bracket(&lines, 0, 1), Some((0, 11)));
+        assert_eq!(matching_bracket(&lines, 0, 11), Some((0, 1)));
+        assert_eq!(matching_bracket(&lines, 0, 3), Some((0, 5)));
+        assert_eq!(matching_bracket(&lines, 0, 13), Some((2, 0)));
+        assert_eq!(matching_bracket(&lines, 2, 0), Some((0, 13)));
+        assert_eq!(matching_bracket(&lines, 0, 0), None);
+        let open: Vec<String> = vec!["(\n".into()];
+        assert_eq!(matching_bracket(&open, 0, 0), None);
+    }
+
+    #[test]
+    fn the_body_view_has_brackets_guides_and_a_ruler() {
+        let mut app = app_with_body("@pagewidth 40\nif x:\n\tf(1)\n\n\ty\n");
+        app.editor.cursor = (2, 2);
+        let view = app.body_view(Viewport { rows: 10, cols: 80 });
+        assert_eq!(view.brackets, Some(((2, 2), (2, 4))));
+        assert_eq!(view.ruler, Some(40));
+        // A tab of width 4 under `\t`: one guide level, kept over the blank line.
+        let tab = view.tab;
+        assert_eq!(view.indent_guides(2), [0]);
+        assert_eq!(
+            view.indent_guides(3),
+            [0],
+            "a blank line keeps the guides above"
+        );
+        assert_eq!(view.indent_guides(1), Vec::<usize>::new());
+        assert_eq!(view.screen_of(2, 1), Some((2, tab)));
+        let deeper =
+            app_with_body("a\n        b\n\n        c\n").body_view(Viewport { rows: 10, cols: 80 });
+        let step = deeper.tab;
+        assert_eq!(
+            deeper.indent_guides(1),
+            (0..)
+                .map(|k| k * step)
+                .take_while(|c| *c < 8)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(deeper.indent_guides(2), deeper.indent_guides(1));
+        assert!(deeper.ruler.is_none());
     }
 
     #[test]
@@ -770,6 +1068,12 @@ mod tests {
             Class::Type,
             Class::Property,
             Class::Attribute,
+            Class::Parameter,
+            Class::Variable,
+            Class::Constant,
+            Class::Macro,
+            Class::Namespace,
+            Class::EnumMember,
         ] {
             assert!(
                 SCOPES.iter().any(|(c, _)| *c == class),
@@ -851,7 +1155,7 @@ mod tests {
         let mut app = app_with_body("");
         app.overlay = Some(("m".into(), (0..10).map(|i| i.to_string()).collect()));
         app.help_scroll = 50;
-        let help = app.help_view(4);
+        let help = app.help_view(4, 0);
         assert_eq!((help.first, help.total), (6, 10));
         assert_eq!(help.lines, ["6", "7", "8", "9"]);
     }

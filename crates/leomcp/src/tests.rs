@@ -132,3 +132,35 @@ fn hosts_and_tokens() {
     assert_eq!(a.len(), 32);
     assert_ne!(a, b);
 }
+
+/// Send `raw` and read the status line, or "" if the server closed first.
+fn send_raw(port: u16, raw: &[u8]) -> String {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let _ = s.write_all(raw);
+    let mut status = String::new();
+    let _ = BufReader::new(s).read_line(&mut status);
+    status.trim().to_string()
+}
+
+#[test]
+fn an_unauthorized_or_oversized_request_is_refused_and_the_server_keeps_answering() {
+    let server = Server::start(0, "secret", tools(), "test").unwrap();
+    let port = server.port();
+    // A huge body is never read without the token.
+    let status = send_raw(
+        port,
+        format!("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 16000000\r\n\r\n")
+            .as_bytes(),
+    );
+    assert!(status.contains("401"), "{status}");
+    // A line with no end is cut off.
+    let long = format!("GET /{} HTTP/1.1\r\n\r\n", "a".repeat(20_000));
+    assert_eq!(send_raw(port, long.as_bytes()), "");
+    // A body that is not JSON is a parse error.
+    let mut req = format!("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer secret\r\nContent-Length: 3\r\n\r\n").into_bytes();
+    req.extend_from_slice(b"{x}");
+    assert!(send_raw(port, &req).contains("400"));
+    let ping = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
+    let (status, _) = post(port, &as_refs(&auth(port)), &ping);
+    assert!(status.contains("200"), "{status}");
+}

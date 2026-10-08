@@ -55,7 +55,7 @@ impl App {
                         let leo = format!("wrote a copy: {}", leolib::util::short_file_name(&path));
                         self.report_save(leo, files);
                     }
-                    Err(e) => self.message = self.held_back(format!("save failed: {e}")),
+                    Err(e) => self.message = self.held_back(super::files::save_failed(&e)),
                 }
             }
             "save-as" | "save-to" if parsed.arg.is_empty() => {
@@ -72,7 +72,7 @@ impl App {
                         self.report_save(leo, result.files);
                         self.note_dropped_uas(result.dropped_descendent_uas);
                     }
-                    Err(e) => self.message = self.held_back(format!("save failed: {e}")),
+                    Err(e) => self.message = self.held_back(super::files::save_failed(&e)),
                 }
             }
             "open" if parsed.force && parsed.arg.is_empty() => self.revert(),
@@ -120,13 +120,13 @@ impl App {
                     let keys = crate::bindings::keys_for(c.name).join(" ");
                     self.message = format!("{}: {}  [{keys}]", c.name, c.summary);
                 }
-                None => self.message = format!("no such command: {}", parsed.arg),
+                None => self.message = unknown(&parsed.arg),
             },
             name => {
                 if commands::find(name).is_some() {
                     self.run(name, 1);
                 } else {
-                    self.message = format!("no such command: {name}");
+                    self.message = unknown(name);
                 }
             }
         }
@@ -385,6 +385,9 @@ impl App {
             "wrap" => flag(self.options.wrap, "wrap"),
             "number" | "nu" => flag(self.options.number, "number"),
             "syntax" => flag(self.options.syntax, "syntax"),
+            "list" => flag(self.options.list, "list"),
+            "guides" => flag(self.options.guides, "guides"),
+            "semantic" => flag(self.options.semantic, "semantic"),
             "colors" | "colours" => match self.depth {
                 crate::theme::Depth::True => "colors=true".to_string(),
                 crate::theme::Depth::Indexed => "colors=256".to_string(),
@@ -429,6 +432,12 @@ impl App {
             ("nonumber", None) | ("nonu", None) => self.options.number = false,
             ("syntax", None) => self.options.syntax = true,
             ("nosyntax", None) => self.options.syntax = false,
+            ("list", None) => self.options.list = true,
+            ("nolist", None) => self.options.list = false,
+            ("guides", None) => self.options.guides = true,
+            ("noguides", None) => self.options.guides = false,
+            ("semantic", None) => self.options.semantic = true,
+            ("nosemantic", None) => self.options.semantic = false,
             ("colors", Some(v)) | ("colours", Some(v)) => match crate::theme::Depth::parse(v) {
                 Some(depth) => self.depth = depth,
                 None => {
@@ -570,5 +579,15 @@ impl App {
                 false
             }
         }
+    }
+}
+
+/// "no such command", with the nearest name if one is close.
+fn unknown(name: &str) -> String {
+    match crate::minibuffer::suggestion(name) {
+        Some(near) => {
+            format!("no such command: {name}; did you mean {near}? :commands lists them all")
+        }
+        None => format!("no such command: {name}; :commands lists them all"),
     }
 }

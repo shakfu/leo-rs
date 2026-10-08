@@ -1,4 +1,5 @@
-# `make check` on every push, and the corpus against Python Leo.
+# `make check` on every push, the corpus against Python Leo, and a minute of
+# fuzzing per target.
 #
 # The corpus job pins a leo-editor commit: demo/'s expected files are Python
 # Leo's answers, so checking them needs the Python that produced them. Bump
@@ -25,8 +26,24 @@ jobs:
       # leogui's window libraries, as eframe's README lists them.
       - name: Install the GUI build libraries
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      # ENTANGLED=1 adds leo-entangled to everything `make check` covers.
       - name: make check
-        run: make check
+        run: make check ENTANGLED=1
+      - name: leo-plugins without its default features
+        run: cargo test -p leo-plugins --no-default-features
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly and cargo-fuzz
+        run: rustup toolchain install nightly --profile minimal && cargo install cargo-fuzz --locked
+      - name: Fuzz each target for a minute
+        working-directory: fuzz
+        run: |
+          for t in read_into_root pickle read_leo markdown; do
+            cargo +nightly fuzz run "$t" -- -max_total_time=60
+          done
 
   corpus:
     runs-on: ubuntu-latest

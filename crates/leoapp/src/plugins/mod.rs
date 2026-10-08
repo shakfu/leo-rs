@@ -50,6 +50,21 @@ pub trait AppPlugin: Sync {
     fn poll_after(&self, _app: &App) -> Option<Duration> {
         None
     }
+    /// Follow the link under the body cursor, if it is one of this plugin's.
+    /// True if it was.
+    fn open_url(&self, _app: &mut App) -> bool {
+        false
+    }
+    /// What completes at the body cursor while typing, if this plugin offers
+    /// anything there: the column the text starts at, and the candidates.
+    fn complete(&self, _app: &App) -> Option<(usize, Vec<String>)> {
+        None
+    }
+    /// The rules of this plugin's trees the outline breaks, one line each.
+    /// The app undoes an edit that adds one.
+    fn violations(&self, _o: &leolib::Outline) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 static PLUGINS: OnceLock<Vec<&'static dyn AppPlugin>> = OnceLock::new();
@@ -100,6 +115,21 @@ pub fn menu(menu: &str) -> impl Iterator<Item = &'static MenuEntry> + '_ {
         .iter()
         .flat_map(|p| p.menu())
         .filter(move |e| e.menu == menu)
+}
+
+/// Follow the link under the body cursor with the first plugin that knows it.
+pub fn open_url(app: &mut App) -> bool {
+    all().iter().any(|p| p.open_url(app))
+}
+
+/// What the first plugin with anything to offer completes at the cursor.
+pub fn complete(app: &App) -> Option<(usize, Vec<String>)> {
+    all().iter().find_map(|p| p.complete(app))
+}
+
+/// Every plugin's broken rules.
+pub fn violations(o: &leolib::Outline) -> Vec<String> {
+    all().iter().flat_map(|p| p.violations(o)).collect()
 }
 
 #[cfg(test)]

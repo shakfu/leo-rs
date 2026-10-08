@@ -27,6 +27,7 @@ impl Prompts {
             Mode::Confirm => confirm(ctx, app),
             Mode::Help => self.help(ctx, app, colours, hover_at),
             Mode::Insert if app.completion.is_some() => completions(ctx, app, colours, hover_at),
+            Mode::Insert if app.signature.is_some() => signature(ctx, app, colours, hover_at),
             _ => self.help_pane = None,
         }
     }
@@ -131,6 +132,41 @@ impl Prompts {
 
 /// The completions on offer, as a menu under the body cursor. The keys go
 /// to the app; a click accepts one.
+/// The signature of the call being typed, above the cursor, its active
+/// parameter in bold.
+fn signature(ctx: &egui::Context, app: &App, colours: &Palette, at: Option<Pos2>) {
+    let Some(sig) = &app.signature else { return };
+    let at = at.unwrap_or(ctx.content_rect().center());
+    egui::Area::new(egui::Id::new("signature"))
+        .fixed_pos(at - egui::vec2(0.0, 30.0))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(colours.popup)
+                .show(ui, |ui| {
+                    ui.set_max_width(640.0);
+                    let range = sig.active.clone().unwrap_or(0..0);
+                    let mut job = egui::text::LayoutJob::default();
+                    let font = egui::FontId::monospace(13.0);
+                    for (text, strong) in [
+                        (&sig.label[..range.start], false),
+                        (&sig.label[range.clone()], true),
+                        (&sig.label[range.end..], false),
+                    ] {
+                        let colour = if strong { colours.accent } else { colours.fg };
+                        job.append(text, 0.0, egui::TextFormat::simple(font.clone(), colour));
+                    }
+                    ui.label(job);
+                    if let Some(doc) = &sig.documentation {
+                        let first: String =
+                            doc.lines().next().unwrap_or("").chars().take(120).collect();
+                        ui.label(RichText::new(first).size(12.0).color(colours.dim));
+                    }
+                });
+        });
+}
+
 fn completions(ctx: &egui::Context, app: &mut App, colours: &Palette, at: Option<Pos2>) {
     let Some(menu) = &app.completion else { return };
     let at = at.unwrap_or(ctx.content_rect().center());
@@ -308,25 +344,48 @@ fn quick_input(ctx: &egui::Context, app: &App, colours: &Palette) {
 
 /// A yes/no question as a dialog. Its buttons press the keys it waits for.
 fn confirm(ctx: &egui::Context, app: &mut App) {
-    let question = app.mini_label();
+    let quitting = app
+        .mini
+        .as_ref()
+        .is_some_and(|m| m.kind == leoapp::minibuffer::MiniKind::ConfirmQuit);
     // The app asks as a terminal would, "... (y/n)"; a dialog has buttons.
-    let question = question.trim().trim_end_matches("(y/n)").trim_end();
+    let question = match quitting {
+        true => format!("{}. Save before quitting?", app.unsaved_work()),
+        false => app
+            .mini_label()
+            .trim()
+            .trim_end_matches("(y/n)")
+            .trim_end()
+            .to_string(),
+    };
     let mut answer = None;
     egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
         ui.set_max_width(460.0);
         ui.label(RichText::new(question).size(14.5));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
+            if quitting {
+                if ui.button("Save (s)").clicked() {
+                    answer = Some('s');
+                }
+                if ui.button("Quit without saving (y)").clicked() {
+                    answer = Some('y');
+                }
+                if ui.button("Cancel (n)").clicked() {
+                    answer = Some('n');
+                }
+                return;
+            }
             if ui.button("Yes (y)").clicked() {
-                answer = Some(true);
+                answer = Some('y');
             }
             if ui.button("No (n)").clicked() {
-                answer = Some(false);
+                answer = Some('n');
             }
         });
     });
-    if let Some(yes) = answer {
-        app.answer(yes);
+    if let Some(key) = answer {
+        app.answer_key(key);
         app.log_message();
     }
 }

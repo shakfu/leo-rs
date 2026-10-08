@@ -80,7 +80,9 @@ fn skip_string(delim: &str, mut i: usize, line: &str) -> (String, usize) {
     while i < line.len() {
         let ch = line[i..].chars().next().unwrap();
         if ch == '\\' {
-            i += 2;
+            // The escaped character may be more than one byte.
+            i += 1;
+            i += line[i..].chars().next().map_or(0, char::len_utf8);
             continue;
         }
         if line[i.min(line.len())..].starts_with(delim) {

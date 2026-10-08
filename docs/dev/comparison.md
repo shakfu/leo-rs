@@ -16,7 +16,7 @@ A comparison of leo-rs (`leolib` and `leotui`) with the Qt-based leo-editor.
 | tests | 442 | 975 unit tests |
 | commands | 114 | 936 distinct names |
 | scripting (`@button`, `@command`, `execute-script`) | none | central |
-| settings | `config.toml`, two keys | `@settings` trees, `myLeoSettings.leo` |
+| settings | `settings.toml` for the apps; `@settings` and `myLeoSettings.leo` for seven file settings | `@settings` trees, `myLeoSettings.leo` |
 | plugins | none | 98k lines |
 | load `LeoPyRef.leo` and its external files (2026-09-10) | 0.09s | 0.48s, of which 0.10s is Python and bridge startup |
 

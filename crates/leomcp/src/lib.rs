@@ -13,9 +13,9 @@
 //!
 //! [Model Context Protocol]: https://modelcontextprotocol.io
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -52,6 +52,14 @@ impl Call {
 /// How long a server thread waits for the app to answer a tool call. A
 /// front end polls every frame or tick, so this is reached only if it hangs.
 const ANSWER_WITHIN: Duration = Duration::from_secs(30);
+
+/// Connections served at once, across servers in this process.
+static OPEN: AtomicUsize = AtomicUsize::new(0);
+const MAX_CONNECTIONS: usize = 16;
+/// The longest request or header line, and the most headers, read before
+/// the request is authorized.
+const MAX_LINE: u64 = 8 << 10;
+const MAX_HEADERS: usize = 100;
 
 /// The protocol versions this server speaks, newest first.
 const VERSIONS: &[&str] = &["2025-06-18", "2025-03-26"];
@@ -95,9 +103,16 @@ impl Server {
                     break;
                 }
                 let Ok(stream) = stream else { continue };
+                // A client needs one or two; more is a local process
+                // spending the editor's threads and memory.
+                if OPEN.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                    OPEN.fetch_sub(1, Ordering::SeqCst);
+                    continue;
+                }
                 let shared = shared.clone();
                 std::thread::spawn(move || {
                     let _ = serve(stream, &shared);
+                    OPEN.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         });
@@ -151,10 +166,21 @@ impl Request {
     }
 }
 
-/// Read one request, or None at the end of the connection.
+/// One line of at most [`MAX_LINE`] bytes, or an error; 0 at the end.
+fn read_line(r: &mut impl BufRead, line: &mut String) -> io::Result<usize> {
+    let n = r.by_ref().take(MAX_LINE).read_line(line)?;
+    if n as u64 == MAX_LINE && !line.ends_with('\n') {
+        return Err(io::Error::other("line too long"));
+    }
+    Ok(n)
+}
+
+/// Read one request's line and headers, or None at the end of the
+/// connection. The body is read by [`read_body`], once the request is
+/// authorized.
 fn read_request(r: &mut impl BufRead) -> io::Result<Option<Request>> {
     let mut line = String::new();
-    if r.read_line(&mut line)? == 0 {
+    if read_line(r, &mut line)? == 0 {
         return Ok(None);
     }
     let mut parts = line.split_whitespace();
@@ -165,8 +191,11 @@ fn read_request(r: &mut impl BufRead) -> io::Result<Option<Request>> {
     let mut headers = Vec::new();
     loop {
         let mut h = String::new();
-        if r.read_line(&mut h)? == 0 {
+        if read_line(r, &mut h)? == 0 {
             return Ok(None);
+        }
+        if headers.len() == MAX_HEADERS {
+            return Err(io::Error::other("too many headers"));
         }
         let h = h.trim_end();
         if h.is_empty() {
@@ -176,23 +205,26 @@ fn read_request(r: &mut impl BufRead) -> io::Result<Option<Request>> {
             headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
     }
-    let length: usize = headers
-        .iter()
-        .find(|(k, _)| k == "content-length")
-        .and_then(|(_, v)| v.parse().ok())
+    Ok(Some(Request {
+        method,
+        path,
+        headers,
+        body: Vec::new(),
+    }))
+}
+
+/// Read the body `req`'s Content-Length gives.
+fn read_body(r: &mut impl BufRead, req: &mut Request) -> io::Result<()> {
+    let length: usize = req
+        .header("content-length")
+        .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     // A request this large is not an MCP message.
     if length > 16 << 20 {
         return Err(io::Error::other("request too large"));
     }
-    let mut body = vec![0; length];
-    r.read_exact(&mut body)?;
-    Ok(Some(Request {
-        method,
-        path,
-        headers,
-        body,
-    }))
+    req.body = vec![0; length];
+    r.read_exact(&mut req.body)
 }
 
 fn respond(w: &mut impl Write, status: &str, body: Option<&Value>) -> io::Result<()> {
@@ -236,7 +268,7 @@ fn serve(stream: TcpStream, shared: &Shared) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(300)))?;
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
-    while let Some(req) = read_request(&mut reader)? {
+    while let Some(mut req) = read_request(&mut reader)? {
         if shared.stop.load(Ordering::SeqCst) {
             break;
         }
@@ -246,9 +278,18 @@ fn serve(stream: TcpStream, shared: &Shared) -> io::Result<()> {
             .header("authorization")
             .and_then(|v| v.strip_prefix("Bearer "))
             .is_some_and(|t| same(t, &shared.token));
+        // Refused before its body is read, so the connection ends here.
+        if !local || !token {
+            let status = if local {
+                "401 Unauthorized"
+            } else {
+                "403 Forbidden"
+            };
+            respond(&mut writer, status, None)?;
+            break;
+        }
+        read_body(&mut reader, &mut req)?;
         match (local, token, req.method.as_str(), req.path.as_str()) {
-            (false, _, _, _) => respond(&mut writer, "403 Forbidden", None)?,
-            (_, false, _, _) => respond(&mut writer, "401 Unauthorized", None)?,
             (_, _, "POST", "/mcp") => {
                 let msg: Value = match serde_json::from_slice(&req.body) {
                     Ok(v) => v,

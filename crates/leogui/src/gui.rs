@@ -315,12 +315,10 @@ impl Gui {
             }
             for action in self.input.translate(event, held) {
                 match action {
-                    // A dialog answers to one key: `y` or `n`, no Enter.
+                    // A dialog answers to one key, no Enter.
                     Action::Text(text) if self.app.mode == Mode::Confirm => {
-                        match text.trim() {
-                            "y" | "Y" => self.app.answer(true),
-                            "n" | "N" => self.app.answer(false),
-                            _ => {}
+                        if let Some(c) = text.trim().chars().next() {
+                            self.app.answer_key(c);
                         }
                         self.app.log_message();
                     }
@@ -594,7 +592,7 @@ impl Gui {
         let text = path.to_string_lossy();
         let outline = path
             .extension()
-            .is_some_and(|e| ["leo", "leojs", "db"].contains(&e.to_string_lossy().as_ref()));
+            .is_some_and(|e| ["leo"].contains(&e.to_string_lossy().as_ref()));
         if outline {
             self.open_outline(Some(&text));
         } else if self.app.run_chosen("") {

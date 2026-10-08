@@ -58,11 +58,43 @@ pub fn new_gnx() -> String {
     ni.new_gnx()
 }
 
-/// The id a gnx starts with: the login name, as Leo's default.
+/// The id a gnx starts with, in Leo's order: the first line of
+/// `~/.leo/.leoID.txt`, then the login name.
 fn default_user_id() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "leo-rs".to_string())
+    let file = std::path::Path::new(&crate::util::home_dir())
+        .join(".leo")
+        .join(".leoID.txt");
+    id_from_file(&file)
+        .or_else(|| {
+            let login = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .ok()?;
+            clean(&login)
+        })
+        .unwrap_or_else(|| "leo-rs".to_string())
+}
+
+/// The id on the first line of a `.leoID.txt` file, if it holds a valid one.
+fn id_from_file(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    clean(text.lines().next()?)
+}
+
+/// Leo's `cleanLeoID`: no `.`, `,`, quotes or whitespace, which would make
+/// gnxs Leo never mints. None for an id under three characters, which Leo
+/// refuses.
+fn clean(id: &str) -> Option<String> {
+    let id: String = id
+        .chars()
+        .filter(|c| !matches!(c, '.' | ',' | '"' | '\'') && !c.is_whitespace())
+        .collect();
+    (id.chars().count() >= 3).then_some(id)
+}
+
+/// [`clean`], with this port's fallback.
+#[cfg(test)]
+fn clean_user_id(id: &str) -> String {
+    clean(id).unwrap_or_else(|| "leo-rs".to_string())
 }
 
 /// Allocates gnxs. [`new_gnx`] holds the one every outline uses.
@@ -138,6 +170,31 @@ impl NodeIndices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_login_name_is_cleaned_as_leo_cleans_it() {
+        assert_eq!(clean_user_id("Jane Q. Doe"), "JaneQDoe");
+        assert_eq!(clean_user_id("o'neil,\"x\""), "oneilx");
+        assert_eq!(clean_user_id("a b"), "leo-rs");
+        assert_eq!(clean_user_id(""), "leo-rs");
+    }
+
+    #[test]
+    fn a_leo_id_file_gives_its_first_line_cleaned() {
+        let dir = std::env::temp_dir().join(format!("leolib-leoid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(".leoID.txt");
+        std::fs::write(&file, "e.k.r\nsecond\n").unwrap();
+        assert_eq!(id_from_file(&file).as_deref(), Some("ekr"));
+        std::fs::write(&file, "ab\n").unwrap();
+        assert_eq!(
+            id_from_file(&file),
+            None,
+            "too short: the login name is next"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(id_from_file(&dir.join("none")), None);
+    }
 
     #[test]
     fn gnxs_are_unique_and_well_formed() {

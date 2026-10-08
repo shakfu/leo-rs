@@ -68,6 +68,13 @@ struct Args {
 }
 
 fn main() {
+    // Leo's myLeoSettings.leo, beneath each outline's own @settings.
+    leolib::settings::use_user_settings(&leolib::settings::user_settings_path());
+    if !leo_plugins::register() {
+        eprintln!(
+            "leotui: plugins were looked up before they were registered; @qmd and @rmd are off"
+        );
+    }
     let args = Args::parse();
     if args.list_keys {
         print_keys();
@@ -87,6 +94,12 @@ fn main() {
         Ok((app, _)) => app,
         Err(e) => {
             eprintln!("leotui: {e}");
+            // A source file named by mistake for its outline.
+            if matches!(e, leolib::Error::NotALeoFile { .. })
+                && !args.path.as_deref().is_some_and(|p| p.ends_with(".leo"))
+            {
+                eprintln!("leotui opens .leo outlines; to bring in another file, open an outline and use :import-at-file or :import-auto");
+            }
             std::process::exit(1);
         }
     };
@@ -211,6 +224,11 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
         previous_hook(info);
     }));
 
+    use std::io::IsTerminal;
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        eprintln!("leotui: needs a terminal; --dump draws one frame to stdout instead");
+        return 1;
+    }
     let guard = match TerminalGuard::new(kitty_keys) {
         Ok(guard) => guard,
         Err(e) => {
@@ -218,36 +236,84 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
             return 1;
         }
     };
-    let result = event_loop(app);
+    // A hangup (a dropped ssh session) or a kill ends the loop, not the
+    // process, so the work can be kept.
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(unix)]
+    for signal in [signal_hook::consts::SIGHUP, signal_hook::consts::SIGTERM] {
+        let _ = signal_hook::flag::register(signal, std::sync::Arc::clone(&ended));
+    }
+    // The handler replaces dying, so a loop stuck on a dead terminal would
+    // never end: once asked, the process goes within five seconds regardless.
+    let watched = std::sync::Arc::clone(&ended);
+    std::thread::spawn(move || {
+        while !watched.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::process::exit(1);
+    });
+    let result =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| event_loop(app, &ended))) {
+            Ok(result) => result,
+            // The hook has restored the terminal and printed the panic; keep what
+            // the outline holds, then go on dying.
+            Err(panic) => {
+                drop(guard);
+                if let Some(path) = app.write_recovery() {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        io::stderr(),
+                        "leotui: unsaved work written to {}",
+                        path.display()
+                    );
+                }
+                std::panic::resume_unwind(panic);
+            }
+        };
     drop(guard);
+    let lost = result.is_err() || ended.load(std::sync::atomic::Ordering::SeqCst);
+    if lost {
+        if let Some(path) = app.write_recovery() {
+            // After a hangup stderr may be gone; `eprintln!` would panic.
+            use std::io::Write;
+            let _ = writeln!(
+                io::stderr(),
+                "leotui: unsaved work written to {}",
+                path.display()
+            );
+        }
+    }
     match result {
-        Ok(()) => 0,
+        Ok(()) if !lost => 0,
+        Ok(()) => 1,
         Err(e) => {
-            eprintln!("leotui: {e}");
+            use std::io::Write;
+            let _ = writeln!(io::stderr(), "leotui: {e}");
             1
         }
     }
 }
 
-fn event_loop(app: &mut App) -> io::Result<()> {
+fn event_loop(app: &mut App, ended: &std::sync::atomic::AtomicBool) -> io::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     let mut redraw = true;
-    while !app.quit {
+    while !app.quit && !ended.load(std::sync::atomic::Ordering::SeqCst) {
         if redraw {
             terminal.draw(|f| ui::draw(f, app))?;
         }
         // Wake to hear from a language server, or when a colouring is due;
         // otherwise a key is the only thing that changes the screen.
+        // Never longer than half a second, to see a hangup.
+        let check = std::time::Duration::from_millis(500);
         let wake = match app.lsp.is_some() || app.mcp.is_some() {
-            true => Some(std::time::Duration::from_millis(50)),
-            false => app.poll_after(),
+            true => std::time::Duration::from_millis(50),
+            false => app.poll_after().map_or(check, |w| w.min(check)),
         };
-        if let Some(wait) = wake {
-            if !event::poll(wait)? {
-                redraw = app.poll();
-                continue;
-            }
+        if !event::poll(wake)? {
+            redraw = app.poll();
+            continue;
         }
         redraw = true;
         // Key *press* only: on Windows crossterm also reports releases, which

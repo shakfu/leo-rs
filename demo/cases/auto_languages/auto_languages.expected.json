@@ -80,5 +80,11 @@
    "h": "Sub",
    "b": "More.\n"
   }
- ]
+ ],
+ "auto_written": {
+  "@auto a.py": "import os\n\n\ndef f():\n    return 1\n\n\nclass C:\n    def m(self):\n        return 2\n",
+  "@auto b.js": "function f() {\n    return 1;\n}\n\nfunction g() {\n    return 2;\n}\n",
+  "@auto c.md": "# Title\n\nText.\n\n## Section\n\nMore text.\n",
+  "@auto d.org": "* Heading\nText.\n** Sub\nMore.\n"
+ }
 }

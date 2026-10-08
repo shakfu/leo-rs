@@ -61,9 +61,11 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BOTH, "Alt-Right", "expand-and-go-right"),
     b(Mode::Normal, BOTH, "Alt-Down", "goto-next-visible"),
     b(Mode::Normal, BOTH, "Alt-Up", "goto-prev-visible"),
-    // Leo leaves these unbound, and gives Ctrl-o, vim's jump back, to
-    // open-outline. H and L are back and forward in vim-keyed browsers.
+    // Leo leaves these unbound, and gives Ctrl-o to open-outline; here it is
+    // vim's jump back. H and L are back and forward in vim-keyed browsers.
     b(Mode::Normal, TREE, "H", "go-back"),
+    // vim's jump back, in both panes: following a link records a jump.
+    b(Mode::Normal, BOTH, "Ctrl-o", "go-back"),
     b(Mode::Normal, TREE, "L", "go-forward"),
     // --- Tree: structure --------------------------------------------------
     b(Mode::Normal, TREE, "o", "insert-node"),
@@ -173,6 +175,7 @@ pub static BINDINGS: &[Binding] = &[
     // Language servers, on neovim's keys: `K`, the tag jump, `]d` `[d`.
     b(Mode::Normal, BODY, "K", "lsp-hover"),
     b(Mode::Normal, BODY, "Ctrl-]", "lsp-definition"),
+    b(Mode::Normal, BODY, "gr", "lsp-references"),
     b(Mode::Normal, BODY, "]d", "lsp-next-diagnostic"),
     b(Mode::Normal, BODY, "[d", "lsp-prev-diagnostic"),
     b(Mode::Normal, BODY, "Escape", "focus-to-tree"),
@@ -328,6 +331,9 @@ mod tests {
         "extract",
         "reformat-paragraph",
         "messages",
+        "commands",
+        "lsp-signature-help",
+        "lsp-format",
         "clone-find-all",
         "clone-find-all-flattened",
     ];

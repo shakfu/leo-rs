@@ -29,7 +29,7 @@ mod find;
 mod hoist;
 mod lsp;
 mod mcp;
-pub use lsp::{diagnostic_line, CODE_ACTIONS};
+pub use lsp::{diagnostic_line, signature_line, CODE_ACTIONS};
 pub use mcp::Access;
 mod prompt;
 #[cfg(test)]
@@ -78,6 +78,20 @@ impl Mode {
     }
 }
 
+/// The commands that act on every row of a multiple selection.
+const MANY: &[&str] = &["delete-node", "mark"];
+
+/// How a click on a row changes the selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extend {
+    /// Choose that row alone.
+    No,
+    /// Add it, or take it out: Ctrl- or Cmd-click.
+    Toggle,
+    /// Choose the rows from the current one to it: Shift-click.
+    Range,
+}
+
 /// Options `:set` changes.
 #[derive(Clone)]
 pub struct Options {
@@ -85,6 +99,12 @@ pub struct Options {
     pub wrap: bool,
     pub number: bool,
     pub syntax: bool,
+    /// vim's `list`: mark spaces and tabs in the body.
+    pub list: bool,
+    /// A line at each indent level in the body.
+    pub guides: bool,
+    /// Colour by the language server's semantic tokens, over tree-sitter's.
+    pub semantic: bool,
 }
 
 impl Default for Options {
@@ -94,6 +114,9 @@ impl Default for Options {
             wrap: false,
             number: false,
             syntax: true,
+            list: false,
+            guides: true,
+            semantic: true,
         }
     }
 }
@@ -222,6 +245,21 @@ pub struct App {
     /// The completions on offer in INSERT, and the node and row a request
     /// waiting on the server was made at.
     pub completion: Option<CompletionMenu>,
+    /// The signature of the call being typed, as the server gave it.
+    pub signature: Option<leolsp::Signature>,
+    /// Rows chosen together by Ctrl- and Shift-click, the current one
+    /// among them; empty when only the current row is.
+    pub selection: Vec<leolib::Position>,
+    /// The plugins' broken rules as of an undo-history version: an edit
+    /// that adds one is undone. See [`App::check_rules`].
+    rules_seen: (u64, Vec<String>),
+    /// The last body's spans with semantic tokens laid over, by node and by
+    /// the spans and tokens they came from.
+    #[allow(clippy::type_complexity)]
+    pub(crate) semantic_cache: Option<(
+        (String, usize, usize, usize),
+        Rc<Vec<Vec<crate::highlight::Span>>>,
+    )>,
     completion_asked: Option<(String, usize)>,
     /// Each plugin's state, by type: [`App::plugin_data`].
     plugin_data: std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any>>,
@@ -268,10 +306,16 @@ pub fn read_report_message(report: &leolib::external::ReadResult) -> Option<Stri
             ),
         });
     }
-    let first = report.warnings.first()?;
-    Some(match report.warnings.len() {
-        1 => format!("{}: {}", first.headline, first.message),
-        n => format!("{n} external files will change on the next write; :messages lists them"),
+    if let Some(first) = report.warnings.first() {
+        return Some(match report.warnings.len() {
+            1 => format!("{}: {}", first.headline, first.message),
+            n => format!("{n} external files will change on the next write; :messages lists them"),
+        });
+    }
+    let first = report.settings.first()?;
+    Some(match report.settings.len() {
+        1 => format!("setting not used: {}: {}", first.headline, first.message),
+        n => format!("{n} settings not used; :messages lists them"),
     })
 }
 
@@ -312,26 +356,33 @@ pub fn launch(
     if let Some(percent) = settings.split_ratio {
         app.tree_percent = percent;
     }
-    if !app.set_theme(name) && !asked {
-        app.message.clear();
+    let theme_missing = !app.set_theme(name) && asked;
+    let theme_message = std::mem::take(&mut app.message);
+    // Every startup message, most urgent first. A file that could not be
+    // read comes first: its node is empty, and would otherwise pass for the
+    // file's contents.
+    let mut notes: Vec<String> = Vec::new();
+    notes.extend(read_report_message(&app.doc.read_report));
+    notes.extend(path.and_then(|p| files::recovery_notice(&leolib::util::finalize(p))));
+    if theme_missing {
+        notes.push(theme_message);
     }
-    if app.message.is_empty() {
-        if let Some(warning) = settings.warnings.first() {
-            app.message = warning.clone();
-        }
-    }
+    notes.extend(settings.warnings.iter().cloned());
     if new {
-        app.message = format!("new outline: {}", app.outline().file_name);
-    }
-    // A file that could not be read outranks a theme or a settings message:
-    // its node is empty, and would otherwise pass for the file's contents.
-    if let Some(report) = read_report_message(&app.doc.read_report) {
-        app.message = report;
+        notes.push(format!("new outline: {}", app.outline().file_name));
     }
     for line in read_report_lines(&app.doc.read_report) {
         app.log(line);
     }
-    app.log_message();
+    for note in &notes {
+        app.log(note.clone());
+    }
+    // The first, with a count of the rest: each would hide the one before.
+    app.message = match notes.len() {
+        0 => String::new(),
+        1 => notes[0].clone(),
+        n => format!("{} (+{} more: :messages)", notes[0], n - 1),
+    };
 
     if let Some(b) = settings.number {
         app.options.number = b;
@@ -392,7 +443,17 @@ pub fn read_report_lines(report: &leolib::external::ReadResult) -> Vec<String> {
         .warnings
         .iter()
         .map(|w| format!("{}: {}", w.headline, w.message));
-    errors.chain(conflicts).chain(warnings).collect()
+    let settings = report.settings.iter().map(|s| {
+        format!(
+            "setting not used: {} in {}: {}",
+            s.headline, s.path, s.message
+        )
+    });
+    errors
+        .chain(conflicts)
+        .chain(warnings)
+        .chain(settings)
+        .collect()
 }
 
 /// How many messages `:messages` keeps, as vim's default.
@@ -504,6 +565,10 @@ impl App {
             code_actions_at: 0,
             code_action_selected: 0,
             completion: None,
+            signature: None,
+            semantic_cache: None,
+            selection: Vec::new(),
+            rules_seen: (0, Vec::new()),
             completion_asked: None,
             plugin_data: std::collections::HashMap::new(),
             unread: Default::default(),
@@ -518,7 +583,39 @@ impl App {
             .collect();
         app.expand_ancestors();
         app.history.update(&app.current);
+        app.rules_seen = (
+            app.doc.undoer().version(),
+            crate::plugins::violations(app.outline()),
+        );
         app
+    }
+
+    /// The rules plugins' trees break now, as the outline was opened.
+    pub fn broken_rules(&self) -> &[String] {
+        &self.rules_seen.1
+    }
+
+    /// After an edit: undo it if it broke a plugin's rule the outline kept,
+    /// and say which. An undo or redo is never refused: it puts back what
+    /// was. Costs nothing while nothing is edited.
+    pub fn check_rules(&mut self, refuse: bool) {
+        let version = self.doc.undoer().version();
+        if version == self.rules_seen.0 {
+            return;
+        }
+        let now = crate::plugins::violations(self.outline());
+        let new = now.iter().find(|v| !self.rules_seen.1.contains(v)).cloned();
+        match new {
+            Some(rule) if refuse && self.doc.undoer().can_undo() => {
+                if let Some(p) = self.doc.undo() {
+                    self.select(p);
+                }
+                self.message = format!("refused: {rule}");
+                let after = crate::plugins::violations(self.outline());
+                self.rules_seen = (self.doc.undoer().version(), after);
+            }
+            _ => self.rules_seen = (version, now),
+        }
     }
 
     pub fn outline(&self) -> &Outline {
@@ -559,6 +656,7 @@ impl App {
                 Mode::Normal => self.command_key(event),
             }
         }
+        self.check_rules(true);
         self.log_message();
     }
 
@@ -626,6 +724,26 @@ impl App {
         self.messages.push(line);
         let over = self.messages.len().saturating_sub(MESSAGE_LOG);
         self.messages.drain(..over);
+    }
+
+    /// Every command, its keys and what it does, in the help overlay: the
+    /// ones no key runs are otherwise only found by name.
+    pub fn show_commands(&mut self) {
+        let mut commands: Vec<&crate::commands::Command> = crate::commands::all().collect();
+        commands.sort_by_key(|c| c.name);
+        let lines = commands
+            .iter()
+            .map(|c| {
+                let keys = crate::bindings::keys_for(c.name).join(" ");
+                match keys.is_empty() {
+                    true => format!("{}  {}", c.name, c.summary),
+                    false => format!("{}  {}  [{keys}]", c.name, c.summary),
+                }
+            })
+            .collect();
+        self.overlay = Some(("commands".to_string(), lines));
+        self.help_scroll = 0;
+        self.mode = Mode::Help;
     }
 
     /// vim's `:messages`: the message log, in the help overlay.
@@ -706,10 +824,15 @@ impl App {
 
     /// Run a command by name.
     pub fn run(&mut self, name: &str, count: usize) {
+        // Only these act on every chosen row; anything else is for one.
+        if !MANY.contains(&name) {
+            self.selection.clear();
+        }
         match commands::find(name) {
             Some(command) => (command.run)(self, count),
             None => self.message = format!("no such command: {name}"),
         }
+        self.check_rules(!matches!(name, "undo" | "redo"));
     }
 
     /// What has been typed towards a binding, for the status line. The body

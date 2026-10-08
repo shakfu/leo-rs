@@ -1,0 +1,23 @@
+[package]
+name = "leo-wiki"
+description = "The @wiki tree kind for leo-rs: markdown pages linked by [[wikilinks]], checked, renamed and exported to one markdown file."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["leo", "wiki", "markdown", "outliner"]
+categories = ["text-processing"]
+
+[features]
+# The editor's side: links followed, `[[` completed, rules kept, and the
+# `export-wiki` command, as a leoapp plugin.
+leoapp = ["dep:leoapp"]
+
+[dependencies]
+leolib.workspace = true
+leoapp = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3"

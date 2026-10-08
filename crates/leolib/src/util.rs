@@ -364,7 +364,48 @@ pub fn strip_path_cruft(path: &str) -> String {
     p.to_string()
 }
 
+/// Leo's `os_path_expanduser`: `~`, then `$NAME` and `${NAME}`.
 fn expand_user(path: &str) -> String {
+    expand_vars(&expand_home(path))
+}
+
+/// Python's `posixpath.expandvars`: `$NAME` and `${NAME}`, NAME being
+/// letters, digits and `_`. A variable that is not set is left as written.
+fn expand_vars(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut rest = path;
+    while let Some(i) = rest.find('$') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let (name, len) = match after.strip_prefix('{') {
+            Some(braced) => match braced.find('}') {
+                Some(j) => (&braced[..j], j + 2),
+                None => ("", 0),
+            },
+            None => {
+                let n = after
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(after.len());
+                (&after[..n], n)
+            }
+        };
+        let valid = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        match std::env::var(name).ok().filter(|_| valid) {
+            Some(value) => {
+                out.push_str(&value);
+                rest = &after[len..];
+            }
+            None => {
+                out.push('$');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn expand_home(path: &str) -> String {
     if path == "~" {
         return home_dir();
     }
@@ -525,6 +566,24 @@ pub fn xml_quoteattr(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn variables_in_a_path_are_expanded_as_python_expands_them() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(expand_vars("$HOME/x"), format!("{home}/x"));
+        assert_eq!(expand_vars("${HOME}y"), format!("{home}y"));
+        for kept in [
+            "$LEO_RS_UNSET_VAR/x",
+            "${LEO_RS_UNSET_VAR}",
+            "a$",
+            "${HOME",
+            "$-x",
+            "${A B}",
+        ] {
+            assert_eq!(expand_vars(kept), kept);
+        }
+        assert_eq!(finalize("$HOME/a/b.py"), format!("{home}/a/b.py"));
+    }
 
     #[test]
     fn remove_leading_whitespace_counts_columns_and_takes_a_tab_whole() {

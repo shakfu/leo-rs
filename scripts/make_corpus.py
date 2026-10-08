@@ -192,6 +192,19 @@ def build_doc_parts(o, add, case):
     return {}
 
 
+def build_doc_parts_twice(o, add, case):
+    """Two doc parts in a row: each `@` starts its own."""
+    add('@file twice.py', '@\nfirst doc\n@\nsecond doc\n@c\nx = 1\n')
+    return {}
+
+
+def build_leo_crlf(o, add, case):
+    """A .leo file with CRLF line endings, as a Windows checkout gives it;
+    `create` rewrites it so. Bodies read with LF, as XML says."""
+    add('plain', 'line one\nline two\n')
+    return {}
+
+
 def build_uas(o, add, case):
     """Unknown attributes: a text one and a pickled one, a node each.
 
@@ -265,6 +278,35 @@ def build_auto_languages(o, add, case):
     return sources
 
 
+def build_auto_block_languages(o, add, case):
+    """@auto in the block languages the other cases leave out."""
+    sources = {
+        'a.rs': 'use std::fs;\n\nfn f() -> i32 {\n    1\n}\n\nimpl S {\n    fn m(&self) {}\n}\n',
+        'b.java': 'class A {\n    int f() {\n        return 1;\n    }\n}\n',
+        'd.lua': 'local x = 1\n\nfunction f()\n    return 1\nend\n',
+        'e.php': '<?php\nfunction f() {\n    return 1;\n}\n?>\n',
+        'f.c': '#include <stdio.h>\n\nint f(void) {\n    return 1;\n}\n',
+    }
+    for name in sources:
+        add(f'@auto {name}', '')
+    return sources
+
+
+def build_auto_typescript(o, add, case):
+    """@auto on TypeScript, whose headlines Leo builds from a pattern's group number."""
+    add('@auto c.ts', '')
+    return {'c.ts': 'function f(): number {\n    return 1;\n}\n\nclass C {\n    m() {}\n}\n'}
+
+
+def build_clean_merge(o, add, case):
+    """@clean edited outside Leo: the read threads the new lines into the tree."""
+    p = add('@clean merge.py', '@others\n')
+    child(p, 'f', 'def f():\n    return 1\n')
+    child(p, 'g', 'def g():\n    return 2\n')
+    # Another program changes g and adds a line after f.
+    return {'merge.py': 'def f():\n    return 1\n# added\ndef g():\n    return 20\n'}
+
+
 def build_empty_auto(o, add, case):
     """An @auto file with nothing in it, beside one with something.
 
@@ -320,6 +362,9 @@ def build_unreadable(o, add, case):
 
 # One case per feature, named for it. The cases after the blank line cover a
 # feature no single directive names: how the readers and writers behave.
+# Cases whose .leo file is rewritten with CRLF line endings after the save.
+CRLF_CASES = {'leo_crlf'}
+
 BUILDERS = {
     'at_file': build_at_file,
     'at_thin': build_at_thin,
@@ -343,11 +388,16 @@ BUILDERS = {
     'at_encoding': build_encoding,
     'at_lineending': build_line_endings,
     'doc_parts': build_doc_parts,
+    'doc_parts_twice': build_doc_parts_twice,
+    'leo_crlf': build_leo_crlf,
     'uas': build_uas,
 
     'clones': build_clones,
     'sentinel_lookalikes': build_sentinel_lookalikes,
     'auto_languages': build_auto_languages,
+    'auto_block_languages': build_auto_block_languages,
+    'auto_typescript': build_auto_typescript,
+    'clean_merge': build_clean_merge,
     'unreadable': build_unreadable,
     'empty_auto': build_empty_auto,
     'at_verbatim': build_at_verbatim,
@@ -401,6 +451,9 @@ def create(leolib, name, build):
     for filename, text in sources.items():
         (case / filename).write_text(text, encoding='utf-8', newline='')
     leolib.save(o)
+    if name in CRLF_CASES:
+        leo = case / f'{name}.leo'
+        leo.write_bytes(leo.read_bytes().replace(b'\n', b'\r\n'))
 
 
 # --- the expected files -----------------------------------------------------
@@ -424,11 +477,23 @@ def describe(leolib, leo_path):
             'h': p.h,
             'b': p.b,
         })
-    return {
+    data = {
         'read_external': read_external,
         'unread': sorted(e.headline for e in report.errors),
         'positions': positions,
     }
+    # What Leo writes back for each @auto node it read: the importer's tree
+    # written without sentinels. Kept only where there is one, so the other
+    # expected files are as they were.
+    unread = set(data['unread'])
+    written = {}
+    if read_external:
+        for p in all_positions(o):
+            if p.isAtAutoNode() and p.h not in unread and p.h not in written:
+                written[p.h] = o.atFileCommands.atAutoToString(p)
+    if written:
+        data['auto_written'] = written
+    return data
 
 
 def dump(data):

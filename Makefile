@@ -6,10 +6,17 @@
 #
 #     make corpus LEO_EDITOR=~/projects/leo-editor
 
+# leo-entangled is left out unless ENTANGLED=1, e.g. `make test ENTANGLED=1`.
+ifeq ($(ENTANGLED),1)
+WS := --workspace --features leo-entangled/leoapp
+else
+WS := --workspace --exclude leo-entangled
+endif
+
 .PHONY: test corpus bench build release fmt lint audit check run gui gui-glow dump clean
 
 test:
-	cargo test --workspace
+	cargo test $(WS)
 
 corpus:
 	@test -n "$(LEO_EDITOR)" || { echo "set LEO_EDITOR to a leo-editor checkout"; exit 1; }
@@ -20,10 +27,10 @@ bench:
 	LEO_EDITOR=$(LEO_EDITOR) cargo bench -p leolib
 
 build:
-	cargo build --workspace
+	cargo build $(WS)
 
 release:
-	cargo build --workspace --release
+	cargo build $(WS) --release
 
 fmt:
 	cargo fmt --all
@@ -32,7 +39,7 @@ fmt:
 lint:
 	@for d in crates/*/; do cmp -s LICENSE "$${d}LICENSE" || { echo "$${d}LICENSE differs from LICENSE or is missing: cp LICENSE $$d"; exit 1; }; done
 	cargo fmt --all -- --check
-	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy $(WS) --all-targets -- -D warnings
 
 # Kept out of `check`: it fetches the RustSec advisory database.
 audit:

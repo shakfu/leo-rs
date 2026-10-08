@@ -174,9 +174,10 @@ pub fn is_global_directive(name: &str) -> bool {
 }
 
 /// Compile a Python `re` pattern used with `.match()`, which anchors at the
-/// start of the string but not at its end.
+/// start of the string but not at its end. Multi-line mode gives `$` Python's
+/// meaning on a line that keeps its newline: the end, or just before `\n`.
 fn compile(pattern: &str) -> Regex {
-    Regex::new(&format!("^(?:{pattern})")).unwrap_or_else(|e| panic!("{pattern}: {e}"))
+    Regex::new(&format!("(?m)^(?:{pattern})")).unwrap_or_else(|e| panic!("{pattern}: {e}"))
 }
 
 /// Every language this crate can import.
@@ -543,5 +544,15 @@ mod tests {
                 .language,
             "md"
         );
+    }
+
+    #[test]
+    fn a_python_escape_before_a_multibyte_character_imports() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@auto a.py");
+        let text = "y = \"\\\u{e9}\"\ndef f():\n    return '\\\u{2603}'\n";
+        import_string(&mut o, &root, text, "a.py").unwrap();
+        assert_eq!(write_string(&o, &root, "a.py").unwrap(), text);
     }
 }

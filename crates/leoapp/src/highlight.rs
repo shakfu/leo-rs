@@ -62,6 +62,77 @@ pub enum Class {
     Property,
     /// A decorator or annotation: `@property`, `#[derive(Debug)]`.
     Attribute,
+    /// A function's parameter. Only a language server tells these from
+    /// other names, as the rest of these classes.
+    Parameter,
+    /// A variable.
+    Variable,
+    /// A variable that is never assigned again.
+    Constant,
+    /// A macro: `vec!`, `#define`.
+    Macro,
+    /// A module or namespace.
+    Namespace,
+    /// A member of an enum.
+    EnumMember,
+}
+
+/// The class of a language server's semantic token, from its type and
+/// modifiers, or None for one tree-sitter colours as well: an operator.
+pub fn semantic_class(kind: &str, modifiers: &[String]) -> Option<Class> {
+    let readonly = modifiers.iter().any(|m| m == "readonly");
+    let library = modifiers.iter().any(|m| m == "defaultLibrary");
+    Some(match kind {
+        "namespace" => Class::Namespace,
+        "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" => match library {
+            true => Class::BuiltinType,
+            false => Class::Type,
+        },
+        "parameter" => Class::Parameter,
+        "variable" if readonly => Class::Constant,
+        "variable" => Class::Variable,
+        "property" | "event" => Class::Property,
+        "enumMember" => Class::EnumMember,
+        "function" | "method" if library => Class::BuiltinFunction,
+        "function" | "method" => Class::Function,
+        "macro" => Class::Macro,
+        "keyword" | "modifier" => Class::Keyword,
+        "comment" => Class::Comment,
+        "string" | "regexp" => Class::Str,
+        "number" => Class::Number,
+        "decorator" => Class::Attribute,
+        _ => return None,
+    })
+}
+
+/// `spans` with `tokens` laid over them: a token replaces whatever the
+/// spans say of its bytes. Both are byte ranges of one line, in order.
+pub fn overlay(spans: &[Span], tokens: &[Span]) -> Vec<Span> {
+    let mut out: Vec<Span> = Vec::new();
+    for s in spans {
+        // The parts of s no token covers.
+        let mut from = s.start;
+        for t in tokens.iter().filter(|t| t.start < s.end && t.end > s.start) {
+            if t.start > from {
+                out.push(Span {
+                    start: from,
+                    end: t.start,
+                    class: s.class,
+                });
+            }
+            from = from.max(t.end);
+        }
+        if from < s.end {
+            out.push(Span {
+                start: from,
+                end: s.end,
+                class: s.class,
+            });
+        }
+    }
+    out.extend_from_slice(tokens);
+    out.sort_by_key(|s| s.start);
+    out
 }
 
 /// A run of one class, as byte offsets into its line.
@@ -1657,5 +1728,47 @@ mod tests {
             classes(&src[0], &out[0])[0],
             ("print", Class::BuiltinFunction)
         );
+    }
+}
+
+#[cfg(test)]
+mod semantic_tests {
+    use super::*;
+
+    fn span(start: usize, end: usize, class: Class) -> Span {
+        Span { start, end, class }
+    }
+
+    #[test]
+    fn a_token_replaces_what_it_covers_of_the_spans() {
+        let spans = [span(0, 3, Class::Keyword), span(4, 12, Class::Function)];
+        let tokens = [span(6, 8, Class::Parameter)];
+        assert_eq!(
+            overlay(&spans, &tokens),
+            [
+                span(0, 3, Class::Keyword),
+                span(4, 6, Class::Function),
+                span(6, 8, Class::Parameter),
+                span(8, 12, Class::Function),
+            ]
+        );
+        // A token where tree-sitter coloured nothing is added.
+        assert_eq!(overlay(&[], &tokens), tokens);
+    }
+
+    #[test]
+    fn token_types_and_modifiers_choose_a_class() {
+        let none: Vec<String> = Vec::new();
+        let readonly = vec!["readonly".to_string()];
+        let library = vec!["defaultLibrary".to_string()];
+        assert_eq!(semantic_class("parameter", &none), Some(Class::Parameter));
+        assert_eq!(semantic_class("variable", &readonly), Some(Class::Constant));
+        assert_eq!(
+            semantic_class("function", &library),
+            Some(Class::BuiltinFunction)
+        );
+        assert_eq!(semantic_class("struct", &none), Some(Class::Type));
+        assert_eq!(semantic_class("macro", &none), Some(Class::Macro));
+        assert_eq!(semantic_class("operator", &none), None);
     }
 }

@@ -36,6 +36,12 @@ const KNOWN: &[(&str, &str)] = &[
          this port keeps the delimiters the file spells",
     ),
     (
+        "cases/auto_typescript/auto_typescript.leo",
+        "Leo's TypeScript patterns are (group number, regex) pairs, which the base \
+         importer reads as (kind, regex), so it heads each node `1 f`; this port \
+         heads it with the pattern's name group",
+    ),
+    (
         "cases/auto_rst/auto_rst.leo",
         "Leo splits reStructuredText at its headings with leo_rst.py; this port has \
          no rst importer and reports both files unread",
@@ -165,7 +171,10 @@ fn the_leo_writer_reproduces_every_outline() {
         // Without the external files: reading them fills in bodies that the
         // .leo file does not store, and writing those back would not match.
         let mut o = leolib::open_outline(&case.to_string_lossy(), false).unwrap();
-        let original = std::fs::read_to_string(&case).unwrap();
+        // A CRLF file (`leo_crlf`) is written with LF, as Leo writes it.
+        let original = std::fs::read_to_string(&case)
+            .unwrap()
+            .replace("\r\n", "\n");
         assert!(
             leolib::to_xml(&mut o) == original,
             "{} is not rewritten unchanged",
@@ -397,4 +406,58 @@ fn the_at_ignore_case_reaches_neither_the_reader_nor_the_writer() {
     // ignored either: only an `@ignore` node that is itself an `@<file>` node
     // reaches those lists.
     assert!(!case.with_file_name("ignored.py").exists());
+}
+
+/// `@auto` nodes this port writes back differently from Python Leo, and why.
+/// As with KNOWN, an entry that no longer differs fails the test.
+const KNOWN_AUTO: &[(&str, &str)] = &[];
+
+#[test]
+fn every_at_auto_node_writes_back_as_python_leo_writes_it() {
+    let mut checked = 0;
+    let mut differ: Vec<String> = Vec::new();
+    for case in cases() {
+        let want = expected(&case);
+        let Some(written) = want["auto_written"].as_object() else {
+            continue;
+        };
+        let read_external = want["read_external"].as_bool().unwrap();
+        let (o, report) =
+            leolib::open_outline_with_report(&case.to_string_lossy(), read_external).unwrap();
+        for (headline, leo) in written {
+            // A file this port leaves unread (`@auto-rst`) is in KNOWN already.
+            if report.errors.iter().any(|e| &e.headline == headline) {
+                continue;
+            }
+            let p = o
+                .all_positions()
+                .into_iter()
+                .find(|p| p.h(&o) == headline)
+                .unwrap_or_else(|| panic!("{}: no {headline}", name(&case)));
+            checked += 1;
+            let ours = external::file_contents(&o, &p).map(|(text, _, _)| text);
+            let leo = leo.as_str().unwrap().replace("\r\n", "\n");
+            if ours.as_deref().ok() != Some(leo.as_str()) {
+                differ.push(format!("{}: {headline}", name(&case)));
+            }
+        }
+    }
+    assert!(checked > 10, "only {checked} @auto nodes compared");
+    let unexpected: Vec<&String> = differ
+        .iter()
+        .filter(|d| !KNOWN_AUTO.iter().any(|(k, _)| k == d))
+        .collect();
+    let stale: Vec<&str> = KNOWN_AUTO
+        .iter()
+        .map(|(k, _)| *k)
+        .filter(|k| !differ.iter().any(|d| d == k))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "written back differently from Python Leo: {unexpected:#?}"
+    );
+    assert!(
+        stale.is_empty(),
+        "listed in KNOWN_AUTO but no longer differ: {stale:?}"
+    );
 }

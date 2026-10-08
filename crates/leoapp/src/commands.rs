@@ -106,8 +106,8 @@ pub static COMMANDS: &[Command] = &[
     ),
     c(
         "open-url-under-cursor",
-        "go to the section a << reference >> names",
-        |app, _| app.goto_section_definition(),
+        "follow the link under the cursor: a gnx: or unl: link, a plugin's, or a << section >>",
+        |app, _| app.open_url_under_cursor(),
     ),
     c("hoist", "show only this node and its subtree", |app, _| {
         app.hoist()
@@ -166,15 +166,28 @@ pub static COMMANDS: &[Command] = &[
             app.begin_headline_edit();
         },
     ),
-    c("delete-node", "delete this node", |app, n| {
-        repeat(app, n, |app| {
-            let p = app.current.clone();
-            match app.doc.delete_node(&p) {
-                Some(next) => app.select(next),
-                None => app.message = "cannot delete the last node".to_string(),
+    c(
+        "delete-node",
+        "delete this node, or every chosen one",
+        |app, n| {
+            if app.selection.len() > 1 {
+                let chosen = std::mem::take(&mut app.selection);
+                let (deleted, next) = app.doc.delete_nodes(&chosen);
+                if let Some(next) = next.or_else(|| app.outline().root_position()) {
+                    app.select(next);
+                }
+                app.message = format!("deleted {deleted} nodes");
+                return;
             }
-        })
-    }),
+            repeat(app, n, |app| {
+                let p = app.current.clone();
+                match app.doc.delete_node(&p) {
+                    Some(next) => app.select(next),
+                    None => app.message = "cannot delete the last node".to_string(),
+                }
+            })
+        },
+    ),
     c("cut-node", "copy this node, then delete it", |app, _| {
         let p = app.current.clone();
         app.doc.copy_node(&p);
@@ -209,10 +222,22 @@ pub static COMMANDS: &[Command] = &[
         let new = app.doc.clone_node(&p);
         app.select(new);
     }),
-    c("mark", "mark or unmark this node", |app, _| {
-        let p = app.current.clone();
-        app.doc.toggle_marked(&p);
-    }),
+    c(
+        "mark",
+        "mark or unmark this node, or every chosen one",
+        |app, _| {
+            let chosen = app.chosen();
+            // Several: mark them all, unless all are marked already.
+            let all_marked = chosen.iter().all(|p| p.is_marked(app.outline()));
+            app.doc.begin_group("mark");
+            for p in &chosen {
+                if chosen.len() == 1 || p.is_marked(app.outline()) == all_marked {
+                    app.doc.toggle_marked(p);
+                }
+            }
+            app.doc.end_group();
+        },
+    ),
     c("mark-subheads", "mark this node's children", |app, _| {
         let p = app.current.clone();
         let n = app.doc.mark_subheads(&p);
@@ -710,6 +735,28 @@ pub static COMMANDS: &[Command] = &[
         |app, _| app.lsp_request(leolsp::Request::CodeActions),
     ),
     c(
+        "lsp-references",
+        "clone the nodes using the symbol under the cursor under a Found node",
+        |app, _| app.lsp_request(leolsp::Request::References),
+    ),
+    c(
+        "lsp-signature-help",
+        "the signature of the call the cursor is in",
+        |app, _| app.lsp_request(leolsp::Request::SignatureHelp),
+    ),
+    c(
+        "lsp-format",
+        "format this node's file with its language server",
+        |app, _| {
+            // Leo's sign: a negative @tabwidth indents with blanks.
+            let width = app.outline().get_tab_width(&app.current);
+            app.lsp_request(leolsp::Request::Format {
+                tab_size: width.unsigned_abs().max(1),
+                insert_spaces: width < 0,
+            })
+        },
+    ),
+    c(
         "lsp-rename",
         "rename the symbol under the cursor everywhere (:lsp-rename NAME)",
         |app, _| app.open_mini(MiniKind::Command, "lsp-rename ".to_string()),
@@ -742,6 +789,11 @@ pub static COMMANDS: &[Command] = &[
     c("messages", "list the messages shown so far", |app, _| {
         app.show_messages()
     }),
+    c(
+        "commands",
+        "list every command, with its keys if it has any",
+        |app, _| app.show_commands(),
+    ),
     c("scroll-help-down", "scroll the help down", |app, n| {
         app.help_scroll += n
     }),

@@ -28,14 +28,22 @@ impl App {
                 let name = self.pending_read.0[0].h(self.outline()).to_string();
                 format!("discard edits not written to {name}? (y/n) ")
             }
-            (MiniKind::ConfirmQuit, _) => format!("{}. quit anyway? (y/n) ", self.unsaved_work()),
+            (MiniKind::ConfirmQuit, _) => format!(
+                "{}. s saves and quits, y quits without saving, n stays (s/y/n) ",
+                self.unsaved_work()
+            ),
             (kind, _) => kind.label().to_string(),
         }
     }
 
     pub fn begin_headline_edit(&mut self) {
         let text = self.current.h(self.outline()).to_string();
+        // Leo selects a new node's placeholder, so typing replaces it.
+        let placeholder = text == "newHeadline";
         self.open_mini(MiniKind::Headline, text);
+        if let Some(mini) = self.mini.as_mut() {
+            mini.selected_all = placeholder;
+        }
     }
 
     /// Open the line at the bottom of the screen, and enter its mode.
@@ -68,6 +76,11 @@ impl App {
 
     /// Every mode whose keys are text: the headline, `:` and `/`.
     pub(super) fn mini_key(&mut self, event: KeyEvent) {
+        // A question answers to one key, as a dialog does: no Enter.
+        if let (Mode::Confirm, KeyCode::Char(c)) = (self.mode, event.code) {
+            self.answer_key(c);
+            return;
+        }
         let Some(mini) = self.mini.as_mut() else {
             self.mode = Mode::Normal;
             return;
@@ -316,14 +329,29 @@ impl App {
     /// Answer the yes/no question on the line, as typing `y` or `n` and
     /// Enter would. A dialog's buttons and keys answer with one press.
     pub fn answer(&mut self, yes: bool) {
+        self.answer_key(if yes { 'y' } else { 'n' });
+    }
+
+    /// Answer the open question with one key: `y` or `n`, and `s` to save
+    /// first when quitting. False, and nothing done, for any other key.
+    pub fn answer_key(&mut self, key: char) -> bool {
         if self.mode != Mode::Confirm {
-            return;
+            return false;
+        }
+        let quitting = self
+            .mini
+            .as_ref()
+            .is_some_and(|m| m.kind == MiniKind::ConfirmQuit);
+        let key = key.to_ascii_lowercase();
+        if !(key == 'y' || key == 'n' || (key == 's' && quitting)) {
+            return false;
         }
         if let Some(mini) = self.mini.as_mut() {
-            mini.buffer = if yes { "y" } else { "n" }.to_string();
+            mini.buffer = key.to_string();
             mini.cursor = 1;
         }
         self.finish_mini(true);
+        true
     }
 
     pub fn finish_mini(&mut self, accepted: bool) {
@@ -390,11 +418,15 @@ impl App {
             // An existing file is refused as `:saveas` refuses it, which the
             // message names.
             MiniKind::SaveAs => self.run_command_line(&format!("saveas {text}")),
-            MiniKind::ConfirmQuit => {
-                if text.trim().eq_ignore_ascii_case("y") {
-                    self.quit = true;
+            MiniKind::ConfirmQuit => match text.trim().to_ascii_lowercase().as_str() {
+                "y" => self.quit = true,
+                // Quit only once nothing is left: a refused file asks again.
+                "s" => {
+                    self.save_now(true);
+                    self.quit = self.mode != Mode::Confirm && self.unsaved_work().is_empty();
                 }
-            }
+                _ => {}
+            },
             MiniKind::ConfirmSave => {
                 if approved {
                     self.save_now(true);

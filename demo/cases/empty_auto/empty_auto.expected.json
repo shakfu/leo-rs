@@ -16,5 +16,8 @@
    "h": "@auto one.py",
    "b": "x = 1\n@language python\n@tabwidth -4\n"
   }
- ]
+ ],
+ "auto_written": {
+  "@auto one.py": "x = 1\n"
+ }
 }

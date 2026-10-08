@@ -61,6 +61,9 @@ pub struct ReadResult {
     /// File nodes a kind kept unsaved after the read, as `@entangled` keeps
     /// one whose `include=` fences took new text: the next save writes it.
     pub refilled: Vec<Position>,
+    /// `@settings` nodes whose value is not valid; the setting keeps its
+    /// default. See [`crate::settings`].
+    pub settings: Vec<FileNote>,
 }
 
 /// A cloned node to which two external files gave different text.
@@ -191,7 +194,12 @@ pub fn read_files(o: &mut Outline, mut files: Vec<Position>) -> ReadResult {
     files.sort_by_key(|p| !kinds.find(p.h(o)).is_some_and(|(k, _)| k.read_first()));
     let mut seen: HashMap<VnodeId, NodeText> = HashMap::new();
     for p in files {
-        match read_file_at_position(o, &p) {
+        let read = read_file_at_position(o, &p);
+        match read.is_ok() {
+            true => o.failed_reads.remove(&p.v),
+            false => o.failed_reads.insert(p.v),
+        };
+        match read {
             Ok(read) => {
                 if read {
                     // The tree now matches the file; an `@clean` merge set bits.
@@ -839,8 +847,8 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     let at = atfile_write::AtWrite::new(o, p);
     let newline = at.output_newline.clone();
     let encoding = at.encoding().to_string();
-    // The read refuses these, but `@nosent` is never read and `@clean` is
-    // exempt from `may_overwrite`, so the write needs its own guard: writing
+    // The read refuses these, but `@nosent` and `@asis` are never read, so
+    // the write needs its own guard: writing
     // UTF-8 over a file the directive says is not UTF-8 changes its bytes.
     if !encoding_is_supported(&encoding) {
         return Err(Error::UnsupportedEncoding { encoding });
@@ -981,8 +989,8 @@ pub fn replace_file(path: &str, contents: &str, ignore_line_endings: bool) -> Re
             return Ok(false);
         }
         // The last guard, for the paths that reach here without a read:
-        // `@clean` and `@nosent` are exempt from `may_overwrite`, and a front
-        // end can approve an overwrite. Replacing bytes this port cannot
+        // `@nosent` and `@asis` are never read, and a front end can approve
+        // an overwrite. Replacing bytes this port cannot
         // decode with UTF-8 loses every character the two spell differently.
         if let Err(e) = std::str::from_utf8(&old) {
             return Err(Error::not_utf8(path, &e));
@@ -1000,24 +1008,96 @@ pub fn replace_file(path: &str, contents: &str, ignore_line_endings: bool) -> Re
             .map(|()| true)
             .map_err(|e| Error::io(path, e));
     }
-    let tmp = format!("{path}.leo-rs-tmp");
-    std::fs::write(&tmp, contents.as_bytes()).map_err(|e| Error::io(&tmp, e))?;
-    let finish = || -> Result<()> {
+    let (tmp, mut file) = create_temp_beside(path).map_err(|e| Error::io(path, e))?;
+    let mut finish = || -> std::io::Result<()> {
+        use std::io::Write;
+        file.write_all(contents.as_bytes())?;
         if let Ok(meta) = std::fs::metadata(path) {
-            std::fs::set_permissions(&tmp, meta.permissions()).map_err(|e| Error::io(&tmp, e))?;
+            file.set_permissions(meta.permissions())?;
         }
-        std::fs::rename(&tmp, path).map_err(|e| Error::io(path, e))
+        // On disk before the rename, so a crash leaves the old file or the
+        // new one, not an empty one.
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        sync_dir_of(path);
+        Ok(())
     };
     if let Err(e) = finish() {
         let _ = std::fs::remove_file(&tmp);
-        return Err(e);
+        return Err(Error::io(path, e));
     }
     Ok(true)
+}
+
+/// A new file in `path`'s directory to write before renaming over `path`,
+/// named for this process so two writers never share one.
+fn create_temp_beside(path: &str) -> std::io::Result<(std::path::PathBuf, std::fs::File)> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let target = std::path::Path::new(path);
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = target.with_file_name(format!(".{name}.{}-{n}.leo-rs-tmp", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Make a rename in `path`'s directory durable. Best effort: not every
+/// platform can open a directory.
+fn sync_dir_of(path: &str) {
+    #[cfg(unix)]
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        let dir = if dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            dir
+        };
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_file_leaves_no_temp_file_and_an_error_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt").to_string_lossy().to_string();
+        std::fs::write(&path, "old\n").unwrap();
+        assert!(replace_file(&path, "new\n", false).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["a.txt"]);
+        let missing = dir
+            .path()
+            .join("no/such/b.txt")
+            .to_string_lossy()
+            .to_string();
+        let err = replace_file(&missing, "x\n", false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("b.txt") && !err.contains("leo-rs-tmp"),
+            "{err}"
+        );
+    }
 
     #[test]
     fn the_utf8_aliases_are_supported_and_nothing_else_is() {

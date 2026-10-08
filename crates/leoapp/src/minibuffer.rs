@@ -29,7 +29,9 @@ impl MiniKind {
             MiniKind::SearchBackward => "?",
             MiniKind::Headline => "headline: ",
             MiniKind::SaveAs => "save as: ",
-            MiniKind::ConfirmQuit => "unsaved changes. quit anyway? (y/n) ",
+            MiniKind::ConfirmQuit => {
+                "unsaved changes. s saves and quits, y quits without saving, n stays (s/y/n) "
+            }
             MiniKind::ConfirmOverwrite => "overwrite files this outline has not read? (y/n) ",
             MiniKind::ConfirmSave => "the .leo file changed on disk. overwrite it? (y/n) ",
             MiniKind::ConfirmRead => "discard edits not written to these files? (y/n) ",
@@ -50,6 +52,9 @@ pub struct Minibuffer {
     completion: Option<Completion>,
     /// Where history browsing is, counting back from the newest entry.
     history_index: Option<usize>,
+    /// The whole text is selected, as Leo selects a new node's headline:
+    /// typing replaces it, and moving the cursor drops the selection.
+    pub selected_all: bool,
 }
 
 struct Completion {
@@ -68,15 +73,19 @@ pub struct Menu {
     pub selected: Option<usize>,
     /// Where in the line the items replace. Zero means a command name.
     pub at: usize,
+    /// Tab has started a completion.
+    pub completing: bool,
 }
 
 impl Menu {
     /// True when there is a drop-down on screen.
     ///
-    /// A command name completes in place, so only an argument opens one, and
-    /// the arrow keys move through exactly what the eye can see.
+    /// An argument's candidates show as it is typed. A command name's show
+    /// once Tab leaves more than one, as vim's wildmenu does; on every `:`
+    /// the whole command table would cover the outline. The arrow keys move
+    /// through exactly what the eye can see.
     pub fn is_open(&self) -> bool {
-        self.at > 0 && !self.items.is_empty()
+        !self.items.is_empty() && (self.at > 0 || (self.completing && self.items.len() > 1))
     }
 }
 
@@ -88,10 +97,20 @@ impl Minibuffer {
             buffer,
             completion: None,
             history_index: None,
+            selected_all: false,
+        }
+    }
+
+    /// Typing or deleting replaces a selected text.
+    fn take_selection(&mut self) {
+        if std::mem::take(&mut self.selected_all) {
+            self.buffer.clear();
+            self.cursor = 0;
         }
     }
 
     pub fn insert(&mut self, ch: char) {
+        self.take_selection();
         let i = char_index(&self.buffer, self.cursor);
         self.buffer.insert(i, ch);
         self.cursor += 1;
@@ -99,6 +118,9 @@ impl Minibuffer {
     }
 
     pub fn backspace(&mut self) {
+        if self.selected_all {
+            return self.take_selection();
+        }
         if self.cursor > 0 {
             let i = char_index(&self.buffer, self.cursor - 1);
             self.buffer.remove(i);
@@ -108,6 +130,9 @@ impl Minibuffer {
     }
 
     pub fn delete(&mut self) {
+        if self.selected_all {
+            return self.take_selection();
+        }
         if self.cursor < self.buffer.chars().count() {
             let i = char_index(&self.buffer, self.cursor);
             self.buffer.remove(i);
@@ -116,15 +141,18 @@ impl Minibuffer {
     }
 
     pub fn move_cursor(&mut self, delta: i32) {
+        self.selected_all = false;
         let n = self.buffer.chars().count() as i32;
         self.cursor = (self.cursor as i32 + delta).clamp(0, n) as usize;
     }
 
     pub fn home(&mut self) {
+        self.selected_all = false;
         self.cursor = 0;
     }
 
     pub fn end(&mut self) {
+        self.selected_all = false;
         self.cursor = self.buffer.chars().count();
     }
 
@@ -235,6 +263,7 @@ impl Minibuffer {
                 items: Vec::new(),
                 selected: None,
                 at: 0,
+                completing: false,
             };
         }
         match self.completion.as_ref() {
@@ -242,6 +271,7 @@ impl Minibuffer {
                 items: c.matches.clone(),
                 selected: (c.index < c.matches.len()).then_some(c.index),
                 at: c.at,
+                completing: true,
             },
             None => {
                 let Candidates { at, items } = candidates(&self.buffer, themes);
@@ -249,6 +279,7 @@ impl Minibuffer {
                     items,
                     selected: None,
                     at,
+                    completing: false,
                 }
             }
         }
@@ -381,7 +412,45 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("edit", "open"),
     ("cfa", "clone-find-all"),
     ("cff", "clone-find-all-flattened"),
+    // Leo's names where this port's differ.
+    ("save-file", "save"),
+    ("save-file-as", "save-as"),
+    ("save-file-to", "save-to"),
+    ("exit-leo", "quit"),
+    ("open-outline", "open"),
+    ("help-for-command", "help"),
 ];
+
+/// The command name nearest to `name`, for "did you mean": within a third of
+/// its length in edits, and at least two.
+pub fn suggestion(name: &str) -> Option<String> {
+    let names = crate::commands::all()
+        .map(|c| c.name)
+        .chain(ALIASES.iter().map(|(a, _)| *a))
+        .filter(|n| n.len() > 1);
+    let limit = (name.chars().count() / 3).max(2);
+    names
+        .map(|n| (distance(name, n), n))
+        .filter(|(d, _)| *d <= limit)
+        .min()
+        .map(|(_, n)| n.to_string())
+}
+
+/// Levenshtein distance, in characters.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
 
 /// One parsed command line.
 pub struct ParsedCommand {

@@ -10,7 +10,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use leo_markdown::{get, headline_name, is_fence_node, Policy, Style, FENCE_OPEN};
+use leo_markdown::{get, headline_name, is_fence_node, Policy, Style};
 use leolib::ext::{FileKind, Rename};
 use leolib::{util, Outline, Position, Result};
 
@@ -111,10 +111,10 @@ fn mark_includes(o: &mut Outline, p: &Position, style: Style) {
         let Some(line) = leo_markdown::fence_line(o, &f) else {
             continue;
         };
-        let Some(open) = FENCE_OPEN.captures(&line) else {
+        let Some(info) = leo_markdown::fence_opener_info(&line) else {
             continue;
         };
-        let info = leo_markdown::fence_info(open[3].trim(), &[], style);
+        let info = leo_markdown::fence_info(info, &[], style);
         if let Some(target) = info.include {
             leo_markdown::set(o, f.v, INCLUDE, &target);
         }

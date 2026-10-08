@@ -38,5 +38,9 @@
    "h": "Section",
    "b": "\nMore.\n"
   }
- ]
+ ],
+ "auto_written": {
+  "@auto-rst a.txt": "Title\n=====\n\nText.\n\nSection\n-------\n\nMore.\n\n",
+  "@auto b.rst": "Title\n=====\n\nText.\n\nSection\n-------\n\nMore.\n\n"
+ }
 }

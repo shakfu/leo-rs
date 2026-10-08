@@ -74,5 +74,10 @@
    "h": ": body of child",
    "b": ""
   }
- ]
+ ],
+ "auto_written": {
+  "@auto-otl a.txt": "top\n: body of top\n\tchild\n\t: body of child\n",
+  "@auto-vim-outline b.txt": "top\n: body of top\n\tchild\n\t: body of child\n",
+  "@auto c.otl": "top\n: body of top\n\tchild\n\t: body of child\n"
+ }
 }

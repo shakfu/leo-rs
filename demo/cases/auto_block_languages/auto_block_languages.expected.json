@@ -1,0 +1,79 @@
+{
+ "read_external": true,
+ "unread": [],
+ "positions": [
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.1",
+   "h": "@auto a.rs",
+   "b": "use std::fs;\n\n@others\n@language rust\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "fn f",
+   "b": "fn f() -> i32 {\n    1\n}\n\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "impl S",
+   "b": "impl S {\n    fn m(&self) {}\n}\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.2",
+   "h": "@auto b.java",
+   "b": "@others\n@language java\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "class A",
+   "b": "class A {\n    @others\n}\n"
+  },
+  {
+   "level": 2,
+   "gnx": null,
+   "h": "int f",
+   "b": "int f() {\n    return 1;\n}\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.3",
+   "h": "@auto d.lua",
+   "b": "@others\n@language lua\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "function f",
+   "b": "local x = 1\n\nfunction f()\n    return 1\nend\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.4",
+   "h": "@auto e.php",
+   "b": "<?php\nfunction f() {\n    return 1;\n}\n?>\n@language php\n@tabwidth -4\n"
+  },
+  {
+   "level": 0,
+   "gnx": "corpus.20260911000000.5",
+   "h": "@auto f.c",
+   "b": "@others\n@language c\n@tabwidth -4\n"
+  },
+  {
+   "level": 1,
+   "gnx": null,
+   "h": "func f",
+   "b": "#include <stdio.h>\n\nint f(void) {\n    return 1;\n}\n"
+  }
+ ],
+ "auto_written": {
+  "@auto a.rs": "use std::fs;\n\nfn f() -> i32 {\n    1\n}\n\nimpl S {\n    fn m(&self) {}\n}\n",
+  "@auto b.java": "class A {\n    int f() {\n        return 1;\n    }\n}\n",
+  "@auto d.lua": "local x = 1\n\nfunction f()\n    return 1\nend\n",
+  "@auto e.php": "<?php\nfunction f() {\n    return 1;\n}\n?>\n",
+  "@auto f.c": "#include <stdio.h>\n\nint f(void) {\n    return 1;\n}\n"
+ }
+}

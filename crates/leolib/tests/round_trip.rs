@@ -202,6 +202,176 @@ fn writing_refuses_to_overwrite_a_file_the_outline_never_read() {
     );
 }
 
+/// An outline at `dir/x.leo` with one node, `headline`, saved and reopened.
+fn saved_outline(dir: &std::path::Path, headline: &str, body: &str, read: bool) -> Document {
+    let leo = dir.join("x.leo").to_string_lossy().to_string();
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, headline);
+    o.set_body(&root, body);
+    leolib::save(&mut o, "").unwrap();
+    Document::open(&leo, read).unwrap()
+}
+
+#[test]
+fn a_new_clean_or_nosent_node_does_not_overwrite_a_file_it_never_read() {
+    for kind in ["@clean", "@nosent", "@asis"] {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("b.py");
+        fs::write(&file, "x = 1\ny = 2\n").unwrap();
+        let mut o = leolib::new_outline(&dir.path().join("x.leo").to_string_lossy());
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, &format!("{kind} b.py"));
+        let result = external::write_external_files(&mut o, false);
+        assert!(result.written.is_empty(), "{kind}: {:?}", result.written);
+        assert!(
+            matches!(result.errors[0].error, Error::RefusedOverwrite { .. }),
+            "{kind}: {:?}",
+            result.errors
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "x = 1\ny = 2\n",
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn a_write_only_node_the_leo_file_had_is_written_on_the_next_open() {
+    for kind in ["@nosent", "@asis"] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("w.txt"), "old\n").unwrap();
+        let mut doc = saved_outline(dir.path(), &format!("{kind} w.txt"), "new\n", true);
+        let root = doc.outline().root_position().unwrap();
+        doc.set_body(&root, "newer\n");
+        let result = doc.write_external_files(false);
+        assert!(result.errors.is_empty(), "{kind}: {:?}", result.errors);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("w.txt")).unwrap(),
+            "newer\n"
+        );
+    }
+}
+
+#[test]
+fn an_edit_to_an_unchanged_clean_file_is_seen_and_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("c.txt");
+    fs::write(&file, "line\n").unwrap();
+    let mut doc = saved_outline(dir.path(), "@clean c.txt", "line\n", true);
+    let path = file.to_string_lossy().to_string();
+    // Another program appends; the size alone changes the stamp.
+    fs::write(&file, "line\nTHEIRS\n").unwrap();
+    assert_eq!(doc.outline().changed_files(), [path]);
+    let root = doc.outline().root_position().unwrap();
+    doc.set_body(&root, "line\nours\n");
+    let result = doc.write_external_files(true);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "line\nTHEIRS\n");
+}
+
+#[test]
+fn a_clean_file_not_read_at_open_is_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("c.txt");
+    fs::write(&file, "old line\n").unwrap();
+    let mut doc = saved_outline(dir.path(), "@clean c.txt", "old line\n", true);
+    drop(doc);
+    fs::write(&file, "old line\nEXTERNAL EDIT\n").unwrap();
+    doc = Document::open(&dir.path().join("x.leo").to_string_lossy(), false).unwrap();
+    let root = doc.outline().root_position().unwrap();
+    doc.set_body(&root, "old line\nours\n");
+    let result = doc.write_external_files(true);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "old line\nEXTERNAL EDIT\n"
+    );
+}
+
+#[test]
+fn an_at_file_cut_short_before_its_end_sentinel_is_not_read_or_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = saved_outline(dir.path(), "@file a.py", "import os\nprint(1)\n", false);
+    doc.write_external_files(false);
+    let file = dir.path().join("a.py");
+    let full = fs::read_to_string(&file).unwrap();
+    let cut: String = full
+        .lines()
+        .take_while(|l| !l.contains("@-leo"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_ne!(cut, full);
+    fs::write(&file, &cut).unwrap();
+    let mut doc = Document::open(&dir.path().join("x.leo").to_string_lossy(), true).unwrap();
+    let report = format!("{:?}", doc.read_report.errors);
+    assert!(report.contains("no @-leo line"), "{report}");
+    let root = doc.outline().root_position().unwrap();
+    doc.set_body(&root, "# added\n");
+    let result = doc.write_external_files(false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(fs::read_to_string(&file).unwrap(), cut);
+}
+
+#[test]
+fn a_file_that_fails_to_read_keeps_its_descendants_uas() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("x.leo").to_string_lossy().to_string();
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@file x.py");
+    o.set_body(&root, "@others\n");
+    let child = o.insert_as_last_child(&root);
+    o.set_headline(&child, "f");
+    o.set_body(&child, "def f(): pass\n");
+    o.node_mut(child.v)
+        .uas
+        .insert("str_tag".into(), leolib::node::Ua::Text("kept".into()));
+    external::write_external_files(&mut o, false);
+    leolib::save(&mut o, "").unwrap();
+    let py = dir.path().join("x.py");
+    let good = fs::read(&py).unwrap();
+    // The file becomes unreadable; the outline is opened and saved.
+    fs::write(&py, b"caf\xe9\n").unwrap();
+    let mut doc = Document::open(&leo, true).unwrap();
+    assert_eq!(doc.read_report.errors.len(), 1);
+    doc.save(&leo).unwrap();
+    // With the file back, the child has its uA again.
+    fs::write(&py, good).unwrap();
+    let doc = Document::open(&leo, true).unwrap();
+    let o = doc.outline();
+    let f = o
+        .all_positions()
+        .into_iter()
+        .find(|p| p.h(o) == "f")
+        .unwrap();
+    assert_eq!(
+        o.node(f.v).uas.get("str_tag"),
+        Some(&leolib::node::Ua::Text("kept".into()))
+    );
+}
+
+#[test]
+fn an_outlines_settings_shape_what_it_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("x.leo").to_string_lossy().to_string();
+    let mut o = leolib::new_outline(&leo);
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@settings");
+    let s = o.insert_as_last_child(&root);
+    o.set_headline(&s, "@string output-newline = crlf");
+    let f = o.insert_after(&root);
+    o.set_headline(&f, "@nosent n.py");
+    o.set_body(&f, "x = 1\n");
+    leolib::save(&mut o, "").unwrap();
+    let mut doc = Document::open(&leo, true).unwrap();
+    assert_eq!(doc.outline().config.output_newline, "crlf");
+    let result = doc.write_external_files(false);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(fs::read(dir.path().join("n.py")).unwrap(), b"x = 1\r\n");
+}
+
 #[test]
 fn an_at_auto_tree_round_trips_through_disk() {
     // An @auto file has no sentinels: the tree is the only record of its
@@ -660,8 +830,8 @@ fn a_file_that_is_not_utf8_is_reported_unread_and_never_rewritten() {
 
 #[test]
 fn an_at_nosent_node_declaring_another_encoding_is_not_written() {
-    // @nosent is never read and is exempt from `may_overwrite`, so the write
-    // needs its own guard. @clean takes the same path.
+    // @nosent is never read, so once the user approves the overwrite the
+    // write needs its own guard.
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("nosent.py");
     fs::write(&file, "old = 1\n").unwrap();
@@ -671,6 +841,8 @@ fn an_at_nosent_node_declaring_another_encoding_is_not_written() {
     o.set_headline(&root, "@nosent nosent.py");
     o.set_body(&root, "@encoding latin-1\nname = 'caf\u{e9}'\n");
     o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    // The user approves overwriting the file the outline never read.
+    o.remember_read_path(&root, &o.full_path(&root));
 
     let result = external::write_external_files(&mut o, false);
     assert!(result.written.is_empty(), "{:?}", result.written);
@@ -898,6 +1070,8 @@ fn an_encoding_this_port_cannot_write_is_refused_whatever_its_name() {
     o.set_headline(&root, "@nosent nosent.py");
     o.set_body(&root, "@encoding cp1252\nname = 'caf\u{e9}'\n");
     o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    // The user approves overwriting the file the outline never read.
+    o.remember_read_path(&root, &o.full_path(&root));
 
     let result = external::write_external_files(&mut o, false);
     assert!(result.written.is_empty(), "{:?}", result.written);

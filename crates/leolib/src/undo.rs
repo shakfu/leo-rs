@@ -103,6 +103,8 @@ pub struct Undoer {
     limit: usize,
     /// Beads dropped since the vnodes they named were last freed.
     dropped: usize,
+    /// Counts every operation recorded, undone, redone or cleared.
+    version: u64,
 }
 
 impl Default for Undoer {
@@ -113,6 +115,7 @@ impl Default for Undoer {
             open_groups: Vec::new(),
             limit: DEFAULT_LIMIT,
             dropped: 0,
+            version: 0,
         }
     }
 }
@@ -172,6 +175,13 @@ impl Undoer {
         out
     }
 
+    /// A number that changes whenever the history does: an operation
+    /// recorded, undone, redone, or the history cleared. A caller that saw
+    /// one value knows the outline has not been edited since.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
     /// True if there is an operation to undo.
     pub fn can_undo(&self) -> bool {
         self.index > 0
@@ -219,6 +229,7 @@ impl Undoer {
         self.beads.truncate(self.index);
         self.beads.push((name.to_string(), bead));
         self.index = self.beads.len();
+        self.version += 1;
         self.trim();
     }
 
@@ -228,6 +239,7 @@ impl Undoer {
         self.beads.clear();
         self.index = 0;
         self.open_groups.clear();
+        self.version += 1;
     }
 
     /// Undo one operation. Returns the node to select, if it still exists.
@@ -236,6 +248,7 @@ impl Undoer {
             return None;
         }
         self.index -= 1;
+        self.version += 1;
         let bead = self.beads[self.index].1.clone();
         apply(o, &bead, true)
     }
@@ -247,6 +260,7 @@ impl Undoer {
         }
         let bead = self.beads[self.index].1.clone();
         self.index += 1;
+        self.version += 1;
         apply(o, &bead, false)
     }
 }

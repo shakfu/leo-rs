@@ -26,6 +26,7 @@ doc = false
 [dependencies]
 leolib.workspace = true
 leoapp.workspace = true
+leo-plugins.workspace = true
 leolsp.workspace = true
 leomcp.workspace = true
 # wgpu is eframe's default renderer; glow is for `leogui-glow`.

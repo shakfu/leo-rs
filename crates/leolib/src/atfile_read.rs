@@ -171,11 +171,20 @@ pub fn read_into_root(o: &mut Outline, contents: &str, path: &str, root: &Positi
     // Leo clears only the root's children, which leaves a re-read adding a
     // second parent link to every node below.
     o.detach_subtree(root.v);
-    let warnings = {
+    let (ended, warnings) = {
         let mut scanner = Scanner::new(o, root, path);
-        scanner.scan_lines(&header, &lines);
-        std::mem::take(&mut scanner.warnings)
+        let ended = scanner.scan_lines(&header, &lines);
+        (ended, std::mem::take(&mut scanner.warnings))
     };
+    // Leo's reader stops at `@-leo`. Without it the scan built nodes but no
+    // bodies; kept, they would be written over the file's code.
+    if !ended {
+        o.detach_subtree(root.v);
+        return Err(Error::Import {
+            path: util::short_file_name(path),
+            detail: "no @-leo line: the file is cut short".to_string(),
+        });
+    }
     // The scan's own notes, on the channel the importers already use: a
     // front end reads them from `ReadResult::warnings`. They were collected
     // and dropped, so a file with a line the reader kept but did not
@@ -211,7 +220,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_lines(&mut self, header: &Header, lines: &[String]) {
+    /// False if the file has no `@-leo` line: it was cut short.
+    fn scan_lines(&mut self, header: &Header, lines: &[String]) -> bool {
         // A python file's sentinels carry a space between the delimiter and
         // the `@`, and the `@+leo` line is the only place the reader can
         // learn that. Keep it for a delimiter a later `@comment` or `@delims`
@@ -609,7 +619,7 @@ impl<'a> Scanner<'a> {
         }
 
         if !saw_at_leo {
-            return; // No @-leo sentinel: not a Leo file after all.
+            return false;
         }
         if !stack.is_empty() {
             self.warnings
@@ -643,6 +653,7 @@ impl<'a> Scanner<'a> {
             }
         }
         self.o.generation += 1;
+        true
     }
 }
 

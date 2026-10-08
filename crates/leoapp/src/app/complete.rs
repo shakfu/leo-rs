@@ -86,9 +86,56 @@ impl App {
     /// Ask the server what could be typed at the cursor, after sending it
     /// the working copy. The answer opens the menu from `poll`.
     pub fn request_completion(&mut self) {
+        let gnx = self.current.gnx(self.doc.outline()).to_string();
+        let row = self.editor.cursor.0;
+        match self.ask_with_working_copy(leolsp::Request::Completion) {
+            Ok(()) => self.completion_asked = Some((gnx, row)),
+            Err(e) => self.message = e,
+        }
+    }
+
+    /// Open the menu with what a plugin completes at the cursor, if one
+    /// offers anything there. True if one did.
+    pub(super) fn offer_plugin_completion(&mut self) -> bool {
+        let Some((start, names)) = crate::plugins::complete(self) else {
+            return false;
+        };
+        if names.is_empty() {
+            self.message = "nothing to complete".into();
+            return true;
+        }
+        let items = names
+            .into_iter()
+            .map(|name| Completion {
+                label: name.clone(),
+                detail: None,
+                kind: None,
+                text: name,
+                range: None,
+            })
+            .collect();
+        self.completion = Some(CompletionMenu {
+            items,
+            shown: Vec::new(),
+            selected: 0,
+            start: (self.editor.cursor.0, start),
+        });
+        self.refilter_completion();
+        true
+    }
+
+    /// Ask for the signature of the call being typed, after `(` or `,`.
+    pub fn request_signature(&mut self) {
+        if let Err(e) = self.ask_with_working_copy(leolsp::Request::SignatureHelp) {
+            self.message = e;
+        }
+    }
+
+    /// Send the server the working copy, then ask `request` at the cursor.
+    /// The answer arrives from `poll`.
+    fn ask_with_working_copy(&mut self, request: leolsp::Request) -> Result<(), String> {
         if self.lsp.is_none() {
-            self.message = "no language server: name one in the settings".into();
-            return;
+            return Err("no language server: name one in the settings".into());
         }
         let lines = self.body_buffer();
         let v = self.current.v;
@@ -106,10 +153,14 @@ impl App {
         let gnx = self.current.gnx(self.doc.outline()).to_string();
         let (row, col) = self.editor.cursor;
         let lsp = self.lsp.as_mut().expect("checked");
-        match lsp.request(&gnx, row, col, leolsp::Request::Completion) {
-            Ok(()) => self.completion_asked = Some((gnx, row)),
-            Err(e) => self.message = e,
-        }
+        lsp.request(&gnx, row, col, request)
+    }
+
+    /// Whether a language server has this body.
+    pub(super) fn served(&self) -> bool {
+        self.lsp
+            .as_ref()
+            .is_some_and(|l| l.serves(self.current.gnx(self.outline())))
     }
 
     /// The server's answer: a menu, if the word is still being typed where

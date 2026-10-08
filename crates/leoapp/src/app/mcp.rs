@@ -297,6 +297,10 @@ impl App {
             | "select_node" => {
                 self.may_edit()?;
                 let result = self.mcp_edit(name, args)?;
+                self.check_rules(true);
+                if self.message.starts_with("refused: ") {
+                    return Err(self.message.clone());
+                }
                 self.message = format!("MCP: {name}");
                 self.log_message();
                 Ok(result)
@@ -459,6 +463,29 @@ mod tests {
         assert!(app.by_gnx(new["gnx"].as_str().unwrap()).is_err());
         let err = app.mcp_tool("save", &json!({})).unwrap_err();
         assert!(err.contains("mcp-save"));
+    }
+
+    #[test]
+    fn save_writes_the_outline_and_its_files_when_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let leo = dir.path().join("s.leo").to_string_lossy().to_string();
+        let mut doc = Document::new_empty(&leo);
+        let root = doc.outline().root_position().unwrap();
+        doc.set_headline(&root, "@file a.py");
+        doc.set_body(&root, "x = 1\n");
+        let mut app = App::new(doc);
+        app.mcp_access = Access {
+            edit: true,
+            save: true,
+        };
+        let reply = app.mcp_tool("save", &json!({})).unwrap();
+        assert_eq!(reply["waiting_for_the_user"], false, "{reply}");
+        assert!(std::fs::read_to_string(&leo)
+            .unwrap()
+            .contains("@file a.py"));
+        let py = std::fs::read_to_string(dir.path().join("a.py")).unwrap();
+        assert!(py.contains("x = 1\n"), "{py}");
+        assert!(!app.outline().changed);
     }
 
     #[test]

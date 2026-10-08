@@ -60,6 +60,45 @@ pub trait FileKind: Send + Sync {
     }
 }
 
+/// A tree kind Leo does not have: a headline directive whose subtree is not
+/// a file, as `@wiki`. Unlike a [`FileKind`], the `.leo` file stores its
+/// tree as any other, and nothing reads or writes a file for it.
+pub trait TreeKind: Send + Sync {
+    /// The headline directive, `@wiki`.
+    fn directive(&self) -> &'static str;
+    /// The language of every node in the tree, the root's included, over
+    /// what directives and headlines say.
+    fn language(&self) -> Option<&'static str> {
+        None
+    }
+    /// Plan renaming the node p, in the tree rooted at `root`, to
+    /// `headline`. None if the kind does not rename p; an error says why the
+    /// rename is refused.
+    fn plan_rename(
+        &self,
+        _o: &Outline,
+        _root: &Position,
+        _p: &Position,
+        _headline: &str,
+    ) -> Option<std::result::Result<Rename, String>> {
+        None
+    }
+}
+
+/// The registered tree kind p is under, and its root: the nearest ancestor,
+/// or p itself, whose headline starts with the kind's directive.
+pub fn tree_at(o: &Outline, p: &Position) -> Option<(Arc<dyn TreeKind>, Position)> {
+    let kinds = o.kinds.clone();
+    p.self_and_parents(o).into_iter().find_map(|q| {
+        let h = q.h(o);
+        kinds
+            .trees
+            .iter()
+            .find(|k| crate::util::match_word(h, 0, k.directive()))
+            .map(|k| (Arc::clone(k), q.clone()))
+    })
+}
+
 /// The registered kind p is under: the nearest ancestor, or p itself, whose
 /// headline names one.
 pub fn kind_at(o: &Outline, p: &Position) -> Option<Arc<dyn FileKind>> {
@@ -89,6 +128,7 @@ pub struct Rename {
 #[derive(Clone, Default)]
 pub struct Kinds {
     kinds: Vec<Arc<dyn FileKind>>,
+    trees: Vec<Arc<dyn TreeKind>>,
 }
 
 impl std::fmt::Debug for Kinds {
@@ -107,7 +147,20 @@ impl Kinds {
     /// These kinds and `kind`. Refused for a directive Leo has, or one
     /// already registered: a kind adds to Leo and never replaces it.
     pub fn with(mut self, kind: impl FileKind + 'static) -> std::result::Result<Self, String> {
-        let d = kind.directive();
+        self.check_new(kind.directive())?;
+        self.kinds.push(Arc::new(kind));
+        Ok(self)
+    }
+
+    /// These kinds and the tree kind `kind`, refused as [`Kinds::with`] refuses.
+    pub fn with_tree(mut self, kind: impl TreeKind + 'static) -> std::result::Result<Self, String> {
+        self.check_new(kind.directive())?;
+        self.trees.push(Arc::new(kind));
+        Ok(self)
+    }
+
+    /// Why `d` cannot be registered, if it cannot.
+    fn check_new(&self, d: &str) -> std::result::Result<(), String> {
         let leo = crate::node::AT_AUTO_NAMES
             .iter()
             .chain(crate::node::AT_FILE_NAMES)
@@ -119,11 +172,20 @@ impl Kinds {
         if !d.starts_with('@') || d.contains(char::is_whitespace) {
             return Err(format!("{d:?} is not a directive"));
         }
-        if self.kinds.iter().any(|k| k.directive() == d) {
+        let taken = self
+            .kinds
+            .iter()
+            .map(|k| k.directive())
+            .chain(self.trees.iter().map(|k| k.directive()));
+        if taken.into_iter().any(|t| t == d) {
             return Err(format!("{d} is registered twice"));
         }
-        self.kinds.push(Arc::new(kind));
-        Ok(self)
+        Ok(())
+    }
+
+    /// The registered tree directives, in order.
+    pub fn tree_directives(&self) -> Vec<&'static str> {
+        self.trees.iter().map(|k| k.directive()).collect()
     }
 
     /// The kind headline `h` names, and the file name after its directive.

@@ -103,7 +103,7 @@ pub fn save_recent(path: &Path, list: &[String]) -> std::io::Result<()> {
 /// Ask for an outline to open, starting where `near` is.
 pub fn pick_outline(near: &str) -> Option<String> {
     dialog(near)
-        .add_filter("Leo outline", &["leo", "leojs", "db"])
+        .add_filter("Leo outline", &["leo"])
         .add_filter("Any file", &["*"])
         .pick_file()
         .map(|p| p.to_string_lossy().into_owned())
