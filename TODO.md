@@ -4,8 +4,16 @@
 
 ## High
 
+### Plugins
+
+- [ ] **Use the plugins on real documents, then release them.** `@entangled`, `@qmd` and `@rmd` are built and tested but not used in earnest, so 0.7.0 leaves them out: their crates are `publish = false` and no binary registers them. To ship them: try each on real documents (a Quarto report, an R Markdown paper, an entangled README), then give leotui and leogui a `leo-plugins` dependency and call `leo_plugins::register()` first in `main` (with the `debug_assert!` on its result), and publish `leo-markdown`, `leo-entangled` and `leo-plugins`. crates.io refuses a crate whose dependencies, optional ones included, are unpublished, so a cargo feature cannot keep them out of a release.
+
+- [ ] **A way to run the plugins from a checkout before they ship.** With no binary registering them, only their tests run them. A `leotui`/`leogui` built with plugins needs either a local patch adding `leo_plugins::register()`, or binaries in `leo-plugins` itself (leogui's `run` is a library function; leotui would need its `main` split into a library the same way).
+
 ### leolib
 
+- [x] **Plugins: move the leo-rs-only kinds out of leolib.** Done (released in 0.7.0 as the API only): leolib is Leo plus `leolib::ext`; `@entangled` is in `leo-entangled`, `@qmd` and `@rmd` in `leo-markdown`, registered by `leo-plugins`. Design: `docs/dev/plugins.md`.
+- [x] **`@qmd` and `@rmd`: Quarto and R Markdown with cells as nodes.** Unreleased plugin. Opt-in; `@auto` stays Leo's. Exact round trip, cells and labelled fences as nodes, labels, fenced divs, and labelled cells cloned into `@clean` trees that survive a reopen. Design: `docs/dev/markdown_importer.md`, `docs/dev/plugins.md`.
 - [x] **Report a clone whose body differs between external files.** A node cloned into two external files takes the body of whichever file is read last, with no report, so an edit made in one file is lost when the other still holds the old text. Found with `@clean README.md` and `@file tests/test_readme.py` sharing an example node (`docs/dev/entangled_leo_backend.md`, the spike). Done: reported on read, both texts kept under `Recovered Nodes`. Python Leo keeps the last file's text without a word.
 
 ### leoapp and leolsp (both frontends)
@@ -36,7 +44,7 @@
 
 - [ ] **Syntax colouring from the language server.** Semantic tokens (`textDocument/semanticTokens/full`) name what tree-sitter cannot know: a parameter, a type from another file, a macro, a read-only variable. Request them per document, map each token's line and column to a body row as diagnostics are mapped, and lay them over `highlight`'s spans, tree-sitter staying the colouring for a node with no server. The token types go to Helix scopes (`variable.parameter`, `type`, `function.macro`) so themes colour them. Tokens arrive as deltas against the previous set, and a body edited since the request needs its tokens moved or dropped.
 
-- [ ] **`@wiki`: wikilinks in a markdown subtree** (leo-rs only; proposed, nothing built). An `@wiki <name>` node's descendants are markdown pages linked by `[[Page]]`, `[[Parent/Page]]` and `[[other:Page]]`; `export-wiki` writes the subtree to `<name>.md` with the links made markdown links. Also `open-url-under-cursor` (`gd`, `gf`) extended from `<< section >>`, its only branch today, to wiki links, `gnx:` and UNLs; `Ctrl-o` for `go-back`; `[[` headline completion through the completion list; renames that rewrite links; and `wiki::check` enforcing the note's five constraints on load, edit and export. Design and open questions in `docs/dev/wiki.md`, revised 2026-10-07 for leoapp.
+- [ ] **`@wiki`: wikilinks in a markdown subtree** (leo-rs only, a plugin; proposed, nothing built). Before it: `leo_markdown::markdown_root` treats any registered kind's node as a markdown root, so a kind needs a way to say it is not markdown. An `@wiki <name>` node's descendants are markdown pages linked by `[[Page]]`, `[[Parent/Page]]` and `[[other:Page]]`; `export-wiki` writes the subtree to `<name>.md` with the links made markdown links. Also `open-url-under-cursor` (`gd`, `gf`) extended from `<< section >>`, its only branch today, to wiki links, `gnx:` and UNLs; `Ctrl-o` for `go-back`; `[[` headline completion through the completion list; renames that rewrite links; and `wiki::check` enforcing the note's five constraints on load, edit and export. Design and open questions in `docs/dev/wiki.md`, revised 2026-10-07 for leoapp.
 
 ### leogui
 
@@ -52,7 +60,7 @@ Each is described, with an effort estimate, in `docs/dev/gui-roadmap.md`.
 
 - [x] Several outlines: tabs, Open Recent, native Open and Save As dialogs. Separate windows are not done.
 
-- [ ] Rendered view of markdown, reStructuredText and image nodes.
+- [x] Rendered view of markdown and image nodes, and a plugin kind's headings (unreleased). reStructuredText is shown as text: there is no Rust renderer for it.
 
 - [x] Clone navigation: clone count on the row, and a list of a node's clones.
 
@@ -94,7 +102,7 @@ Nothing open.
 
 ### leolib
 
-- [ ] **Literate markdown with entangled**: the `@entangled` kind. Phase 1 is done: the kind, its CommonMark scanner, named fences as `<< name >>` nodes, the exact writer and its read-time check, and fence languages for colouring and the language servers. Phase 2 is done: `:entangled-tangle` and `:entangled-check` through the CLI. Phase 4 is done: `demo/entangled/` tests a README's examples through a `tests.md` harness. Phase 1b is done: editing a fence node's headline renames the block everywhere the outline names it, as one undo step. Left: `include=` (3), only if a need shows. Design and plan in `docs/dev/entangled_leo_backend.md`.
+- [x] **Literate markdown with entangled**: the `@entangled` kind (unreleased plugin). Phase 1 is done: the kind, its CommonMark scanner, named fences as `<< name >>` nodes, the exact writer and its read-time check, and fence languages for colouring and the language servers. Phase 2 is done: `:entangled-tangle` and `:entangled-check` through the CLI. Phase 4 is done: `demo/entangled/` tests a README's examples through a `tests.md` harness. Phase 1b is done: editing a fence node's headline renames the block everywhere the outline names it, as one undo step. Phase 3 is done: `include=path` and `include=path#anchor` fill a read-only fence from a file tested on its own. Heading levels follow the tree: a heading node moved to another depth moves its `#` level by as much. The `@entangled` plan is complete. Design and plan in `docs/dev/entangled_leo_backend.md`.
 
 - [ ] Port `@jupytext`. It is refused on read and write now. Leo reads a notebook as `@clean` over the `py:percent` text jupytext makes of it (`at.readOneAtJupytextNode`), and writes that text back through jupytext (`writeOneAtJupytextNode`). A port has to do the conversion both ways and keep the cells' outputs and metadata, which the text does not carry.
 

@@ -1,9 +1,19 @@
 [workspace]
 resolver = "2"
-members = ["crates/leolib", "crates/leolsp", "crates/leomcp", "crates/leoapp", "crates/leotui", "crates/leogui"]
+members = [
+    "crates/leolib",
+    "crates/leolsp",
+    "crates/leomcp",
+    "crates/leoapp",
+    "crates/leo-markdown",
+    "crates/leo-entangled",
+    "crates/leo-plugins",
+    "crates/leotui",
+    "crates/leogui",
+]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 # leoapp's floor: tree-sitter-language 0.1.8 requires 1.90. leolib sets its own.
 rust-version = "1.90"
@@ -13,10 +23,13 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Keep in step with [workspace.package] version.
-leolib = { path = "crates/leolib", version = "0.6.1" }
-leolsp = { path = "crates/leolsp", version = "0.6.1" }
-leomcp = { path = "crates/leomcp", version = "0.6.1" }
-leoapp = { path = "crates/leoapp", version = "0.6.1" }
+leolib = { path = "crates/leolib", version = "0.7.0" }
+leolsp = { path = "crates/leolsp", version = "0.7.0" }
+leomcp = { path = "crates/leomcp", version = "0.7.0" }
+leoapp = { path = "crates/leoapp", version = "0.7.0" }
+leo-markdown = { path = "crates/leo-markdown", version = "0.7.0" }
+leo-entangled = { path = "crates/leo-entangled", version = "0.7.0" }
+leo-plugins = { path = "crates/leo-plugins", version = "0.7.0" }
 
 [profile.release]
 lto = true

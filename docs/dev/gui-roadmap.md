@@ -12,7 +12,7 @@ The first five, by value for effort: go-to-node, external-file status, code acti
 
 - **Several outlines** (medium). A tab or window per `.leo` file, File > Open Recent, and native Open and Save As dialogs (the `rfd` crate) where paths are typed now. `delta.md` lists all three as missing.
 
-- **Rendered view**, Leo's `viewrendered` (medium). A pane showing a markdown, reStructuredText or image node rendered. `egui_commonmark` renders markdown.
+- **Rendered view**, Leo's `viewrendered` (done; see `CHANGELOG.md`). A pane showing a markdown, reStructuredText or image node rendered. `egui_commonmark` renders markdown.
 
 - **External-file status in the outline** (small). A badge on an `@<file>` node that is unwritten, changed on disk, unread or refused, and a bar offering Reload or Keep for a file changed on disk. `ReadResult` and `WriteResult` already hold the facts.
 

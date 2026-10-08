@@ -26,15 +26,18 @@ Those figures come from runs against a leo-editor checkout. What `cargo test` ch
 ## Layout
 
 ```text
-crates/leolib     the model. No view, ever.
-crates/leolsp     language servers, with their positions mapped to nodes.
-crates/leoapp     a front end's state and commands, with no renderer.
-crates/leotui     the terminal front end: leoapp drawn with ratatui.
-crates/leogui    the desktop front end: leoapp drawn with egui.
-crates/leomcp     an MCP server on localhost, serving the open outline.
+crates/leolib         the model: Leo's, with an API for kinds Leo lacks. No view, ever.
+crates/leolsp         language servers, with their positions mapped to nodes.
+crates/leoapp         a front end's state and commands, with no renderer.
+crates/leo-markdown   @qmd and @rmd, and their markdown scanner and writer. Unreleased.
+crates/leo-entangled  @entangled, and its :entangled-* commands. Unreleased.
+crates/leo-plugins    registers the plugins; no binary calls it yet. Unreleased.
+crates/leotui         the terminal front end: leoapp drawn with ratatui.
+crates/leogui         the desktop front end: leoapp drawn with egui.
+crates/leomcp         an MCP server on localhost, serving the open outline.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`, and `egui_commonmark`, `egui_extras` and `image` for the rendered view.
 
 ## Installing
 
@@ -333,6 +336,7 @@ What the window adds to leotui:
 | Drag and drop | Dropping a `.leo` file opens it; dropping any other file imports it as `@auto`. |
 | Language servers | Completion under the cursor, Cmd-. for code actions, and the Body menu for hover, definition, rename and problems. The status bar's LSP dot opens View > Language Servers. See [Language servers](#language-servers). |
 | Bottom panel | View > Problems (the body's diagnostics), Log (the status messages), Find, and Language Servers (each server's state and log). |
+| Rendered view | View > Rendered View: the selected node rendered beside the body, as Leo's `viewrendered` shows it. Markdown (`@language md` or a `@md` headline) with its tables, coloured code and images; an `@image` node's picture (the path on the body's first line). reStructuredText is shown as text. |
 | Settings dialog | File > Settings... (Cmd-,). See [Settings](#settings). |
 
 View > Appearance picks dark, light, or the system's choice, saved as `appearance = "dark" | "light" | "system"`. The dark theme is `theme` (default `sonokai`) and the light one `theme-light` (default `onelight`); `:theme` sets whichever is showing. View > Theme... lists your Helix themes as dark or light, and previews each under the pointer. The window's parts take the Helix scopes for them, such as `ui.statusline.insert` for the INSERT badge, `ui.menu.selected` for a list's selected item, and `diagnostic.warning` for a warning's underline.
@@ -348,7 +352,6 @@ Both front ends read `~/.config/leo-rs/settings.toml`. leogui keeps its `session
 | `split-ratio` | the outline's share of the width, in percent |
 | `lsp` | `false` to start no language server |
 | `lsp-LANGUAGE` | the command of the server for Leo's language `LANGUAGE` |
-| `entangled` | the command `:entangled-tangle` and `:entangled-check` run; `entangled` on `PATH` when unset |
 | `mcp` `mcp-edit` `mcp-save` | the MCP server, and whether its clients may edit and save |
 | `mcp-port` `mcp-token` | where it listens on 127.0.0.1, and the token a client sends |
 | `qt-mac-dont-swap-ctrl-and-meta` | Leo's: on macOS, Cmd is Meta rather than Leo's Ctrl |
@@ -427,29 +430,9 @@ A code action that replaces the whole file is applied to just the lines it chang
 
 - "language server: ..." on the status line: the server refused the request, often because it does not offer that feature.
 
-## `@entangled`
+## Plugins (not in 0.7.0)
 
-`@entangled PATH` reads a markdown file written in [entangled](https://github.com/shakfu/entangled-rs)'s literate syntax. A leo-rs kind: Leo has no equivalent, and opens such a node as plain.
-
-````markdown
-## Adding
-
-```python #add file=hello.py
-print(2 + 3)
-```
-````
-
-becomes a heading node `Adding` whose body keeps the fence lines around a `<< add >>` reference, with a child node `<< add >>` holding `print(2 + 3)`.
-
-- Headings are nodes. A fence entangled would name -- `#name`, `file=`, `label=`, or Quarto's `#| label:` and `#| file:` -- becomes a `<< name >>` node; prose and other fences stay in the heading's body.
-- A fence node is in its fence's language (`python`, `py`, `{.rust}`), for colouring and the language servers, so an example gets completion and diagnostics.
-- Saving writes the file back as it was, with edited code and headings in place. A file that would not read back exactly opens as one node, with an error. A heading or fence node deleted from the tree stops the write rather than drop text.
-- The `.leo` file stores only the `@entangled` node; the tree is read from the markdown on every open.
-- Editing a fence node's headline renames the block, as one undo: every part of it, and entangled's `<<name>>` and `<<doc.md#name>>` references in every `@entangled` document in the outline. Documents outside the outline are not checked: run `:entangled-check`.
-
-`:entangled-tangle` writes the unsaved `@entangled` files, then runs `entangled tangle` in the outline's directory, so `file=` targets are written as entangled writes them; `:entangled-check` runs `entangled check`. Arguments pass through (`:entangled-tangle --force`), the output is in `:messages`, and leogui has both in the Body menu. Install entangled from [entangled-rs](https://github.com/shakfu/entangled-rs); set `entangled` in the settings to its full path if leogui, started from the desktop, does not find it on `PATH`. The design, and what comes next, is in `docs/dev/entangled_leo_backend.md`.
-
-`demo/entangled/` shows the point of it: a README whose examples are tested. `tests.md` places each named example in a pytest function by reference (`<<README.md#count>>`); `make test` there tangles it and runs pytest, and an example that no longer holds fails its test. Open `demo.leo` to edit the README, the tests and the library in one outline.
+The workspace holds kinds Leo does not have, as plugins outside leolib: `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs)), and `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes). They are not in any release: they have not yet been used in earnest, so the 0.7.0 binaries do not register them, and their crates are not published. leolib keeps the extension API they use (`leolib::ext`); with no kind registered, it reads an outline as Leo does. What they do is in `docs/plugins.md`; the design is in `docs/dev/plugins.md`.
 
 ## `@auto`
 

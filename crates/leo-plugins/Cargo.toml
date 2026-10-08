@@ -1,0 +1,25 @@
+[package]
+name = "leo-plugins"
+description = "The plugins a leo-rs front end offers: the leolib kinds and leoapp plugins, chosen by cargo feature and registered at startup."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+# Not released: the plugins are untested in use (docs/dev/plugins.md).
+publish = false
+
+[features]
+default = ["entangled", "markdown"]
+entangled = ["dep:leo-entangled"]
+markdown = ["dep:leo-markdown"]
+
+[dependencies]
+leolib.workspace = true
+leoapp.workspace = true
+leo-markdown = { workspace = true, optional = true }
+leo-entangled = { workspace = true, optional = true, features = ["leoapp"] }
+
+[dev-dependencies]
+tempfile = "3"

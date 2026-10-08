@@ -24,6 +24,7 @@ mod outlines;
 mod palette;
 mod panel;
 mod prompts;
+mod rendered;
 mod session;
 mod settings;
 mod status;
@@ -123,6 +124,8 @@ pub fn run(name: &'static str, renderer: eframe::Renderer) -> eframe::Result {
         name,
         options,
         Box::new(move |cc| {
+            // The rendered view shows images from files.
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             // A server's message repaints, so it is drawn without a key.
             let ctx = cc.egui_ctx.clone();
             let wake: std::sync::Arc<dyn Fn() + Send + Sync> =

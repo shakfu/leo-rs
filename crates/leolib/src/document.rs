@@ -147,7 +147,12 @@ impl Document {
     /// Folds and marks come from the sidecar state file, since the `.leo`
     /// format does not carry them.
     pub fn open(path: &str, read_external: bool) -> Result<Self> {
-        let (mut outline, report) = crate::open_outline_with_report(path, read_external)?;
+        Self::open_with(path, read_external, crate::ext::Kinds::empty())
+    }
+
+    /// [`Document::open`], reading the kinds in `kinds` beyond Leo's.
+    pub fn open_with(path: &str, read_external: bool, kinds: crate::ext::Kinds) -> Result<Self> {
+        let (mut outline, report) = crate::open_outline_with_kinds(path, read_external, kinds)?;
         crate::state::load(&mut outline);
         let mut doc = Self::new(outline);
         doc.read_report = report;
@@ -179,16 +184,23 @@ impl Document {
         self.outline.set_headline(p, &new);
     }
 
-    /// Rename the `@entangled` block whose fence node p is, everywhere the
-    /// outline names it, as one undo step (`entangled::plan_rename`). None if
-    /// p is not a fence node or the name is unchanged; an error if refused,
-    /// with nothing changed.
-    pub fn rename_entangled_block(
+    /// Rename the node p as the registered kind it is under plans it
+    /// (`FileKind::plan_rename`), as one undo step: an `@entangled` block
+    /// everywhere the outline names it. None if the kind does not rename p,
+    /// or p is under none; an error if refused, with nothing changed.
+    pub fn rename_block(
         &mut self,
         p: &Position,
         new_headline: &str,
-    ) -> std::result::Result<Option<crate::entangled::BlockRename>, String> {
-        let Some(plan) = crate::entangled::plan_rename(&self.outline, p, new_headline)? else {
+    ) -> std::result::Result<Option<crate::ext::Rename>, String> {
+        // The registered kind p is under, if any, plans the rename.
+        let Some(kind) = crate::ext::kind_at(&self.outline, p) else {
+            return Ok(None);
+        };
+        let Some(plan) = kind
+            .plan_rename(&self.outline, p, new_headline)
+            .transpose()?
+        else {
             return Ok(None);
         };
         self.begin_group("rename-block");

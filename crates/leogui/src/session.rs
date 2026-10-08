@@ -34,6 +34,8 @@ pub struct Session {
     pub active: usize,
     /// The bottom panel's tab, if it was open: `problems`, `log` or `find`.
     pub panel: Option<String>,
+    /// Whether the rendered view was open.
+    pub rendered: bool,
     pub window: Option<[f32; 2]>,
 }
 
@@ -78,6 +80,7 @@ pub fn parse(text: &str) -> Session {
             ("tab", Some(o)) if !rest.is_empty() => o.tabs.push((rest.to_string(), false)),
             ("pinned", Some(o)) if !rest.is_empty() => o.tabs.push((rest.to_string(), true)),
             ("panel", _) if !rest.is_empty() => s.panel = Some(rest.to_string()),
+            ("rendered", _) => s.rendered = true,
             ("window", _) => {
                 let size: Vec<f32> = rest
                     .split_whitespace()
@@ -101,6 +104,9 @@ pub fn render(s: &Session) -> String {
     }
     if let Some(panel) = &s.panel {
         out += &format!("panel {panel}\n");
+    }
+    if s.rendered {
+        out += "rendered\n";
     }
     for (i, o) in s.outlines.iter().enumerate() {
         out += &format!("outline {}\n", o.path);
@@ -138,6 +144,7 @@ mod tests {
             ],
             active: 1,
             panel: Some("find".into()),
+            rendered: true,
             window: Some([1280.0, 800.0]),
         };
         assert_eq!(parse(&render(&s)), s);

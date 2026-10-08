@@ -642,7 +642,7 @@ pub fn language_of(outline: &Outline, p: &leolib::Position) -> Option<String> {
 /// `@all` after leading whitespace as well. Those two are the ones that sit
 /// inside a class body, and left unclaimed a parser reads `@others` as a
 /// decorator on whatever follows it.
-fn directive_at(line: &str) -> Option<(&'static str, usize)> {
+pub(crate) fn directive_at(line: &str) -> Option<(&'static str, usize)> {
     if let Some(name) = DIRECTIVES.iter().find(|d| starts_word(line, d)).copied() {
         return Some((name, 0));
     }

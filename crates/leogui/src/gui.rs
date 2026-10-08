@@ -20,6 +20,7 @@ use crate::outlines::{self, Parked, Pick};
 use crate::palette::CommandPalette;
 use crate::panel::{self, PanelTab};
 use crate::prompts::{self, Prompts};
+use crate::rendered::RenderedView;
 use crate::session::{self, SavedOutline, Session};
 use crate::settings::SettingsDialog;
 use crate::status;
@@ -41,6 +42,8 @@ pub struct Gui {
     editor: Editor,
     prompts: Prompts,
     panel: Option<PanelTab>,
+    /// The rendered view, beside the body.
+    rendered: RenderedView,
     about: bool,
     /// The theme name and lightness the widgets were last dressed for.
     theme: String,
@@ -135,6 +138,7 @@ impl Gui {
             editor: Editor::default(),
             prompts: Prompts::default(),
             panel: None,
+            rendered: RenderedView::default(),
             about: false,
             theme: String::new(),
             appearance: settings.appearance,
@@ -378,6 +382,7 @@ impl Gui {
             menus::Action::Quit => self.quit_all(),
             menus::Action::Problems => self.panel = Some(PanelTab::Problems),
             menus::Action::Log => self.panel = Some(PanelTab::Log),
+            menus::Action::Rendered => self.rendered.open = !self.rendered.open,
             menus::Action::Servers => self.panel = Some(PanelTab::Servers),
             menus::Action::About => self.about = true,
             menus::Action::Settings => self.settings.show_dialog(&self.app),
@@ -507,6 +512,7 @@ impl Gui {
     fn session(&self) -> Session {
         let mut s = Session {
             panel: self.panel.map(|p| p.name().to_string()),
+            rendered: self.rendered.open,
             window: self.window,
             ..Default::default()
         };
@@ -554,6 +560,7 @@ impl Gui {
             self.switch_to(i);
         }
         self.panel = s.panel.as_deref().and_then(PanelTab::from_name);
+        self.rendered.open = s.rendered;
     }
 
     /// Act on a quit the active outline agreed to: close it, and go on to
@@ -779,6 +786,28 @@ impl eframe::App for Gui {
             self.app.tree_percent = percent.clamp(10, 70);
         }
         self.tree_percent = self.app.tree_percent;
+
+        if self.rendered.open {
+            egui::Panel::right("rendered")
+                .resizable(true)
+                .default_size(screen.width() * 0.35)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(colours.panel)
+                        .inner_margin(egui::Margin::same(10))
+                        .stroke(egui::Stroke::new(1.0, colours.border)),
+                )
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("RENDERED")
+                            .size(11.5)
+                            .color(colours.dim)
+                            .strong(),
+                    );
+                    ui.add_space(4.0);
+                    self.rendered.ui(ui, &self.app, &colours);
+                });
+        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(colours.bg))

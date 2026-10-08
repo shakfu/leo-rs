@@ -238,9 +238,13 @@ pub fn language_id(language: &str) -> &str {
 /// rendering it.
 fn source_of(o: &Outline, p: &Position) -> Option<(Source, Position)> {
     match goto::find_root(o, p) {
-        // An `@entangled` file is markdown, but its fence nodes are code in
-        // their own languages: each node is a document of its own.
-        Some(root) if root.is_at_entangled_node(o) => {
+        // A kind whose nodes are code in their own languages, as a markdown
+        // file's fence nodes are: each node is a document.
+        Some(root)
+            if o.kinds()
+                .find(root.h(o))
+                .is_some_and(|(k, _)| k.nodes_are_documents()) =>
+        {
             Some((Source::Node(p.gnx(o).to_string()), p.clone()))
         }
         Some(root) => {

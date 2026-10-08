@@ -8,8 +8,9 @@ leo-editor checks Python Leo against its own copy, so neither implementation
 needs a checkout of the other.
 
 `entangled/` is the `@entangled` example: a README whose code examples are
-tested (`entangled/demo.leo`, and see the main README). The corpus skips it,
-since Python Leo reads `@entangled` as a plain node.
+tested (`entangled/demo.leo`, and see `docs/plugins.md`). It needs the
+`@entangled` plugin, which no released binary registers yet. The corpus
+skips it, since Python Leo reads `@entangled` as a plain node.
 
 `scripts/make_corpus.py` builds the cases under `cases/` and writes every
 expected file:

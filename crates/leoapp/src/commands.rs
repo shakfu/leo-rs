@@ -22,8 +22,14 @@ const fn c(name: &'static str, summary: &'static str, run: fn(&mut App, usize)) 
 /// A command that documents keys the editor handles itself.
 fn noop(_app: &mut App, _count: usize) {}
 
+/// The command named `name`: the core's, or a plugin's.
 pub fn find(name: &str) -> Option<&'static Command> {
-    COMMANDS.iter().find(|x| x.name == name)
+    all().find(|x| x.name == name)
+}
+
+/// The core's commands, then the plugins'.
+pub fn all() -> impl Iterator<Item = &'static Command> {
+    COMMANDS.iter().chain(crate::plugins::commands())
 }
 
 /// Repeat `f` `count` times.
@@ -692,16 +698,6 @@ pub static COMMANDS: &[Command] = &[
         "lsp-diagnostics",
         "list this body's diagnostics",
         |app, _| app.show_diagnostics(),
-    ),
-    c(
-        "entangled-tangle",
-        "write the @entangled files, then run `entangled tangle`",
-        |app, _| app.run_entangled("tangle", ""),
-    ),
-    c(
-        "entangled-check",
-        "write the @entangled files, then run `entangled check`",
-        |app, _| app.run_entangled("check", ""),
     ),
     c(
         "lsp-status",

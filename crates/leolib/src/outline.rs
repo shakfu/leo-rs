@@ -105,6 +105,11 @@ pub struct Outline {
     pub(crate) read_paths: HashSet<(String, String, String)>,
     /// Per-gnx note from the last `@auto` import that normalized its file.
     pub(crate) import_warnings: HashMap<String, String>,
+    /// File nodes a kind keeps unsaved after a read
+    /// ([`Outline::keep_unsaved_after_read`]).
+    pub(crate) refilled: HashSet<String>,
+    /// The `@<file>` kinds this outline reads beyond Leo's.
+    pub(crate) kinds: std::sync::Arc<crate::ext::Kinds>,
     /// Size and mtime of each file as last read or written, by path. See
     /// [`Outline::changed_on_disk`].
     pub(crate) file_stamps: HashMap<String, util::FileStamp>,
@@ -138,12 +143,51 @@ impl Outline {
             dropped_descendent_uas: Vec::new(),
             read_paths: HashSet::new(),
             import_warnings: HashMap::new(),
+            refilled: HashSet::new(),
+            kinds: std::sync::Arc::new(crate::ext::Kinds::empty()),
             free: Vec::new(),
         };
         let hidden = o.new_vnode(Some(HIDDEN_ROOT_GNX));
         o.node_mut(hidden).h = "<hidden root vnode>".to_string();
         o.hidden_root = hidden;
         o
+    }
+
+    /// The `@<file>` kinds this outline reads beyond Leo's.
+    pub fn kinds(&self) -> &crate::ext::Kinds {
+        &self.kinds
+    }
+
+    /// Read, write and save the kinds in `kinds` beyond Leo's.
+    pub fn set_kinds(&mut self, kinds: std::sync::Arc<crate::ext::Kinds>) {
+        self.kinds = kinds;
+    }
+
+    /// Add a note on the file read at p to the read report.
+    pub fn add_import_warning(&mut self, p: &Position, note: String) {
+        let gnx = p.gnx(self).to_string();
+        let notes = self.import_warnings.entry(gnx).or_default();
+        if !notes.is_empty() {
+            notes.push_str("; ");
+        }
+        notes.push_str(&note);
+    }
+
+    /// Leave the file node at p unsaved after the read that is reading it,
+    /// though reading marks it saved: its tree took text its file lacks.
+    pub fn keep_unsaved_after_read(&mut self, p: &Position) {
+        let gnx = p.gnx(self).to_string();
+        self.refilled.insert(gnx);
+    }
+
+    /// The file name after any `@<file>` directive in `h`, Leo's or a
+    /// registered kind's; empty if none.
+    pub fn file_node_name(&self, h: &str) -> String {
+        let name = node::any_at_file_node_name(h);
+        match name.is_empty() {
+            true => self.kinds.find(h).map(|(_, n)| n).unwrap_or_default(),
+            false => name,
+        }
     }
 
     /// An outline with one empty node, as `File > New` produces.
@@ -434,6 +478,28 @@ impl Outline {
             }
             self.node_mut(cur).children.clear();
             todo.extend(kids);
+        }
+        self.generation += 1;
+    }
+
+    /// Link v as parent_v's last child. For the markdown readers, which give
+    /// a labelled cell back the vnode it had, perhaps a clone elsewhere.
+    pub fn link_as_last_child_raw(&mut self, parent_v: VnodeId, v: VnodeId) {
+        let n = self.node(parent_v).children.len();
+        self.link_child_raw(parent_v, n, v);
+    }
+
+    /// Detach v's subtree, but not the inside of a vnode that keeps another
+    /// parent: a clone elsewhere keeps its children.
+    pub fn detach_subtree_keeping_clones(&mut self, v: VnodeId) {
+        let kids = std::mem::take(&mut self.node_mut(v).children);
+        for k in kids {
+            if let Some(i) = self.node(k).parents.iter().position(|x| *x == v) {
+                self.node_mut(k).parents.remove(i);
+            }
+            if self.node(k).parents.is_empty() {
+                self.detach_subtree_keeping_clones(k);
+            }
         }
         self.generation += 1;
     }
@@ -759,7 +825,7 @@ impl Outline {
             if !seen.insert(cur) {
                 continue;
             }
-            if node::is_any_at_file_node(&self.node(cur).h) {
+            if !self.file_node_name(&self.node(cur).h).is_empty() {
                 out.push(cur);
             }
             todo.extend(self.node(cur).parents.iter().copied());
@@ -1205,8 +1271,8 @@ impl Outline {
     /// and an apostrophe opens a string. Reporting the absence lets a caller
     /// leave such a node alone.
     pub fn language_at(&self, p: &Position) -> Option<String> {
-        // An `@entangled` fence node's language, from its info string.
-        if let Some(node::Ua::Text(lang)) = self.node(p.v).uas.get(crate::entangled::LANGUAGE) {
+        // A kind's node's language, from the file: a fence's info string.
+        if let Some(node::Ua::Text(lang)) = self.node(p.v).uas.get(crate::ext::LANGUAGE) {
             return Some(lang.clone());
         }
         if let Some(lang) = find_first_valid_at_language(p.b(self)) {
@@ -1238,11 +1304,10 @@ impl Outline {
     }
 
     fn language_from_headline(&self, v: VnodeId) -> Option<String> {
-        let h = &self.node(v).h;
-        if !node::is_any_at_file_node(h) {
+        let name = self.file_node_name(&self.node(v).h);
+        if name.is_empty() {
             return None;
         }
-        let name = node::any_at_file_node_name(h);
         let (_, ext) = util::os_path_splitext(&name);
         let ext = ext.strip_prefix('.').unwrap_or(&ext);
         let lang = langdata::extension_dict().get(ext)?;

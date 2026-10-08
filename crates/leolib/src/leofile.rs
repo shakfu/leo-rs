@@ -368,7 +368,7 @@ fn put_v_element(
     let is_edit = p.is_at_edit_node(o) && !p.has_children(o);
     let is_external = is_auto
         || is_edit
-        || p.is_at_entangled_node(o)
+        || o.kinds.find(p.h(o)).is_some()
         || p.is_at_file_node(o)
         || p.is_at_shadow_file_node(o)
         || p.is_at_thin_file_node(o);
@@ -379,6 +379,12 @@ fn put_v_element(
     };
     let gnx = o.gnx(p.v).to_string();
     if force_write {
+        o.node_mut(p.v).set_bit(status::WRITE);
+    }
+    // A registered kind's node saves what its kind sets, in its `<t>`.
+    let kinds = o.kinds.clone();
+    if let Some((kind, _)) = kinds.find(p.h(o)) {
+        kind.before_save(o, p);
         o.node_mut(p.v).set_bit(status::WRITE);
     }
     let attrs = descendent_ua_attrs(o, p, any_uas);
@@ -461,7 +467,7 @@ fn rebuild_descendent_uas(o: &Outline, p: &Position, any_uas: bool) -> Option<St
 fn node_uas_as_values(o: &Outline, v: VnodeId) -> Vec<(pickle::Value, pickle::Value)> {
     let mut out = Vec::new();
     for (key, val) in &o.node(v).uas {
-        if key.starts_with("__native__") {
+        if key.starts_with("__native__") || is_in_memory(key) {
             continue;
         }
         let value = match val {
@@ -589,16 +595,30 @@ fn put_t_elements(o: &Outline, out: &mut String) {
             continue;
         }
         let ua = put_unknown_attributes(o, v);
-        let body = util::xml_escape(&o.node(v).b);
+        let kept = match o.kinds.find(&o.node(v).h) {
+            Some((kind, _)) => kind.stores_body(),
+            None => true,
+        };
+        let body = match kept {
+            true => util::xml_escape(&o.node(v).b),
+            false => String::new(),
+        };
         out.push_str(&format!("<t tx=\"{gnx}\"{ua}>{body}</t>\n"));
     }
     out.push_str("</tnodes>\n");
 }
 
+/// A leo-rs attribute that describes the file a node was read from, set on
+/// every read and never saved: a markdown fence or heading node's. Saved, a
+/// cloned cell's would reach Leo as a pickle it cannot read.
+fn is_in_memory(key: &str) -> bool {
+    key.starts_with("leo-rs-")
+}
+
 fn put_unknown_attributes(o: &Outline, v: VnodeId) -> String {
     let mut out = String::new();
     for (key, val) in &o.node(v).uas {
-        if key.starts_with("__native__") {
+        if key.starts_with("__native__") || is_in_memory(key) {
             continue;
         }
         // Both kinds are escaped. Leo's `fc.pickle` writes a hexlified

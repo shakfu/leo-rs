@@ -50,6 +50,9 @@ impl App {
     /// Enter INSERT at the cursor, as `i` does.
     pub fn begin_body_edit(&mut self) {
         self.focus = Focus::Body;
+        if self.refuse_read_only() {
+            return;
+        }
         let mut lines = self.body_buffer();
         self.editor.clamp(&lines);
         self.editor.begin_insert(&mut lines, InsertAt::Cursor, 1);
@@ -75,10 +78,27 @@ impl App {
 
     /// Write the body back as one change, which is one undo bead.
     pub(super) fn commit_body(&mut self, lines: &[String]) {
+        if self.refuse_read_only() {
+            self.buffer = None;
+            return;
+        }
         let p = self.current.clone();
         let text = editor::join(lines);
         self.doc.set_body(&p, &text);
         self.buffer = None;
+    }
+
+    /// Refuse, with why, to change a node its kind keeps read-only, as
+    /// `@entangled` keeps an `include=` fence node. True if refused.
+    fn refuse_read_only(&mut self) -> bool {
+        let o = self.outline();
+        let why =
+            leolib::ext::kind_at(o, &self.current).and_then(|k| k.read_only(o, &self.current));
+        let Some(why) = why else {
+            return false;
+        };
+        self.message = why;
+        true
     }
 
     /// The single-key NORMAL binding the body shares with the outline.
@@ -95,6 +115,14 @@ impl App {
         let action = self.parser.feed(key);
         let lines = self.body_buffer();
         let screen = (self.body_scroll, self.body_height);
+        let edits = match &action {
+            Action::Insert(..) | Action::Edit(..) => true,
+            Action::Operate { operator, .. } => *operator != Operator::Yank,
+            _ => false,
+        };
+        if edits && self.refuse_read_only() {
+            return;
+        }
         match action {
             Action::Pending => {}
             Action::Unknown => self.message = "no such command".to_string(),

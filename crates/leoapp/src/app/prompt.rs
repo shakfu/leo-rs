@@ -363,7 +363,7 @@ impl App {
                 let p = self.current.clone();
                 // A fence node's headline is its block's name: renaming it
                 // renames the block everywhere the outline names it.
-                match self.doc.rename_entangled_block(&p, &text) {
+                match self.doc.rename_block(&p, &text) {
                     Ok(Some(r)) => {
                         self.message = rename_message(&r);
                         return;
@@ -514,12 +514,9 @@ impl App {
 }
 
 /// What renaming an `@entangled` block did, for the status line.
-fn rename_message(r: &leolib::entangled::BlockRename) -> String {
-    format!(
-        "renamed {} to {}: {}, {}; documents outside the outline are not checked (:entangled-check)",
-        r.old,
-        r.new,
-        plural(r.fences, "fence"),
-        plural(r.references, "reference"),
-    )
+fn rename_message(r: &leolib::ext::Rename) -> String {
+    match &r.note {
+        Some(note) => format!("renamed {} to {}: {note}", r.old, r.new),
+        None => format!("renamed {} to {}", r.old, r.new),
+    }
 }

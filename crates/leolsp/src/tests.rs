@@ -254,11 +254,32 @@ fn a_node_in_no_file_is_a_document_of_its_own() {
     assert_eq!(doc["uri"], format!("untitled:leo/{}", p.gnx(&o)));
 }
 
+/// A kind whose nodes are documents of their own, as a markdown kind's
+/// fence nodes are.
+struct NodesAreDocuments;
+
+impl leolib::ext::FileKind for NodesAreDocuments {
+    fn directive(&self) -> &'static str {
+        "@entangled"
+    }
+    fn read(&self, _: &mut Outline, _: &leolib::Position) -> leolib::Result<bool> {
+        Ok(false)
+    }
+    fn write(&self, o: &Outline, p: &leolib::Position) -> leolib::Result<String> {
+        Ok(p.b(o).to_string())
+    }
+    fn nodes_are_documents(&self) -> bool {
+        true
+    }
+}
+
 #[test]
-fn an_entangled_fence_node_is_a_document_in_its_own_language() {
+fn a_kinds_node_is_a_document_in_its_own_language() {
     let seen: Seen = Default::default();
     let mut lsp = lsp(seen.clone());
     let mut o = Outline::new_empty();
+    let kinds = leolib::ext::Kinds::empty().with(NodesAreDocuments).unwrap();
+    o.set_kinds(std::sync::Arc::new(kinds));
     let root = o.root_position().unwrap();
     o.set_headline(&root, "@entangled doc.md");
     o.set_body(&root, "# Doc\n\n```python #add\n<< add >>\n```\n");
@@ -266,7 +287,7 @@ fn an_entangled_fence_node_is_a_document_in_its_own_language() {
     o.set_headline(&add, "<< add >>");
     o.set_body(&add, "x = 1\n");
     o.node_mut(add.v).uas.insert(
-        leolib::entangled::LANGUAGE.to_string(),
+        leolib::ext::LANGUAGE.to_string(),
         leolib::node::Ua::Text("python".into()),
     );
     lsp.sync(&o, &add);
@@ -508,7 +529,10 @@ fn what_a_server_writes_to_stderr_is_logged() {
     let mut lsp = Lsp::new(configs, dir.clone(), Arc::new(|| {}));
     let (o, _, f) = outline();
     lsp.sync(&o, &f);
-    for _ in 0..500 {
+    // A deadline, not a count: a shell starting under a full parallel test
+    // run took longer than 500 polls of 5ms.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
         lsp.poll(&o);
         if lsp.log().any(|l| l == "python: starting up") {
             break;

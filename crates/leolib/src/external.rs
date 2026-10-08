@@ -58,6 +58,9 @@ pub struct ReadResult {
     /// Cloned nodes that two files read in one pass gave different text.
     /// Each is also kept under a `Recovered Nodes` node.
     pub conflicts: Vec<CloneConflict>,
+    /// File nodes a kind kept unsaved after the read, as `@entangled` keeps
+    /// one whose `include=` fences took new text: the next save writes it.
+    pub refilled: Vec<Position>,
 }
 
 /// A cloned node to which two external files gave different text.
@@ -138,7 +141,7 @@ pub fn find_files_to_read(o: &Outline, root: &Position, all: bool) -> (Vec<Posit
             || cur.is_at_shadow_file_node(o)
             || cur.is_at_file_node(o)
             || cur.is_at_clean_node(o)
-            || cur.is_at_entangled_node(o)
+            || o.kinds.find(cur.h(o)).is_some()
             || cur.is_at_jupytext_node(o)
         {
             files.push(cur.clone());
@@ -168,6 +171,9 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
     for p in o.all_positions() {
         o.node_mut(p.v).clear_bit(crate::node::status::DIRTY);
     }
+    for p in &result.refilled {
+        o.set_dirty(p);
+    }
     result
 }
 
@@ -176,8 +182,13 @@ pub fn read_external_files(o: &mut Outline) -> ReadResult {
 /// Leo's `read-at-file-nodes` for those [`find_files_to_read`] lists under a
 /// node. An `@clean` file unchanged since its last read or write is skipped
 /// (#4385); [`refresh_files`] reads it anyway.
-pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
+pub fn read_files(o: &mut Outline, mut files: Vec<Position>) -> ReadResult {
     let mut result = ReadResult::default();
+    // Kinds that ask first: a markdown root links its cells to the vnodes
+    // the `.leo` file gave them, so an `@clean` file read after it compares
+    // its text with theirs. Read after, a clone's conflict would go unseen.
+    let kinds = o.kinds.clone();
+    files.sort_by_key(|p| !kinds.find(p.h(o)).is_some_and(|(k, _)| k.read_first()));
     let mut seen: HashMap<VnodeId, NodeText> = HashMap::new();
     for p in files {
         match read_file_at_position(o, &p) {
@@ -186,6 +197,11 @@ pub fn read_files(o: &mut Outline, files: Vec<Position>) -> ReadResult {
                     // The tree now matches the file; an `@clean` merge set bits.
                     o.clear_dirty_in_tree(&p);
                     result.read += 1;
+                }
+                let gnx = p.gnx(o).to_string();
+                if o.refilled.remove(&gnx) {
+                    o.set_dirty(&p);
+                    result.refilled.push(p.clone());
                 }
                 // A file skipped as unchanged already matches its tree, so it
                 // still takes part: a later file must not overwrite it unseen.
@@ -343,8 +359,9 @@ fn read_file_by_kind(o: &mut Outline, p: &Position) -> Result<bool> {
     if !encoding_is_supported(&encoding) {
         return Err(Error::UnsupportedEncoding { encoding });
     }
-    if p.is_at_entangled_node(o) {
-        return crate::entangled::read_one_at_entangled_node(o, p);
+    let kinds = o.kinds.clone();
+    if let Some((kind, _)) = kinds.find(p.h(o)) {
+        return kind.read(o, p);
     }
     if p.is_at_auto_node(o) {
         return read_one_at_auto_node(o, p);
@@ -828,8 +845,8 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     if !encoding_is_supported(&encoding) {
         return Err(Error::UnsupportedEncoding { encoding });
     }
-    if p.is_at_entangled_node(o) {
-        return Ok((crate::entangled::write_string(o, p)?, newline, encoding));
+    if let Some((kind, _)) = o.kinds.find(p.h(o)) {
+        return Ok((kind.write(o, p)?, newline, encoding));
     }
     if p.is_at_auto_node(o) {
         let path = o.full_path(p);

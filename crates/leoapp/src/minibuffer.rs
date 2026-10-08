@@ -4,8 +4,6 @@
 //! command table for `:` and an incremental match for `/`. The vocabulary is
 //! Leo's command names; Leo binds `full-command = :` for the same reason.
 
-use crate::commands::COMMANDS;
-
 /// What the line at the bottom is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MiniKind {
@@ -337,8 +335,7 @@ pub fn candidates(line: &str, themes: &[String]) -> Candidates {
 ///
 /// Aliases are included so `:w` completes, but a name always beats an alias.
 pub fn completions(stem: &str) -> Vec<String> {
-    let mut names: Vec<String> = COMMANDS
-        .iter()
+    let mut names: Vec<String> = crate::commands::all()
         .map(|c| c.name.to_string())
         .filter(|n| n.starts_with(stem))
         .collect();

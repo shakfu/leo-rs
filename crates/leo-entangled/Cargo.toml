@@ -1,0 +1,28 @@
+[package]
+name = "leo-entangled"
+description = "The @entangled kind for leo-rs: entangled literate-programming markdown as an outline, with an optional leoapp plugin running the entangled CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+# Not released: the plugins are untested in use (docs/dev/plugins.md).
+publish = false
+
+[features]
+# `:entangled-tangle` and `:entangled-check`, as a leoapp plugin.
+leoapp = ["dep:leoapp"]
+
+[dependencies]
+leolib.workspace = true
+leo-markdown.workspace = true
+leoapp = { workspace = true, optional = true }
+once_cell = "1"
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
+# tests/entangled.rs checks `@entangled`'s fence names against entangled's own
+# reader. Without default features it has no HTML backend or highlighter.
+entangled-rs = { version = "0.4", default-features = false }

@@ -1,6 +1,6 @@
 # Literate markdown with entangled
 
-Revised 2026-10-07; replaces the sketch of 2026-09-12. Nothing here is scheduled. A line says when something was measured or run; the rest is judgement.
+Revised 2026-10-07; replaces the sketch of 2026-09-12. Since 2026-10-08 the code is in `crates/leo-entangled` (the kind, its tests and data, and the leoapp plugin), on `crates/leo-markdown`'s scanner and writer; the paths below are where it was built (`docs/dev/plugins.md`). Nothing here is scheduled. A line says when something was measured or run; the rest is judgement.
 
 ## Goal
 
@@ -11,7 +11,8 @@ This is a third way for leo-rs to hold markdown, beside `@auto-md` (structure on
 ## Decisions
 
 - **The markdown must render on GitHub.** A fence always holds its code. No design may leave fences empty in the file.
-- **Full entangled compatibility.** A document tangles the same under the `entangled` CLI and under leo-rs, including references, continuation blocks, namespaces and annotations.
+- **Full entangled compatibility**, with one exception. A document tangles the same under the `entangled` CLI and under leo-rs, including references, namespaces and annotations.
+- **One fence per name** (2026-10-07). entangled joins fences that share a name into one block; leo-rs refuses such a file, as Leo refuses a section defined twice. A name must say which node it is. entangled-rs 0.4.0 refuses them too by default; its `split_blocks = true` restores the joining, which leo-rs does not offer.
 - **Python first**, for the test harness.
 
 ## What was checked
@@ -91,11 +92,11 @@ That is all.
     print(2 + 3)
 ````
 
-- **Named fences only.** A fence is named when entangled would name it: `#name` or `file=` in the info string (entangled-rs and Pandoc styles), `label=` or `file=` (knitr), or `#| label:` or `#| file:` lines opening the block (Quarto). An unnamed fence stays as text in its heading's body, so a writer chooses which examples become nodes.
-- **The fence node's headline is `<< name >>`**: the `#name`, the label, or for a `file=` block with no name, its file path, as entangled names it. Several fences with one name (a continuation block) are siblings with one headline; the writer matches them by order.
+- **Named fences only.** A fence is named when entangled would name it, in the style entangled reads from the file's extension: `#name` or `file=` in the info string for `.md` (entangled-rs and Pandoc forms), `label=` or `file=` in a braced knitr header for `.Rmd`, `#| label:` or `#| file:` lines opening the block for `.qmd`. A fence named in another style's way stays text, as entangled skips it. An unnamed fence stays as text in its heading's body, so a writer chooses which examples become nodes.
+- **The fence node's headline is `<< name >>`**: the `#name`, the label, or for a `file=` block with no name, its file path, as entangled names it. Names are unique in a document: a file in which two fences share one is not read as a tree (the whole file stays in the node, with an error), a rename to a name in use is refused, and the writer refuses two fences with one name.
 - **The root's body** is the text before the first heading: front matter, prose, fences.
 - **The writer** walks the tree and concatenates bodies, putting each child's code back in place of the reference that follows a fence-opening line. Only a reference directly after a fence-opening line is expanded, so a `<< name >>` in prose or an entangled `<<ref>>` inside code is left alone. An unedited file is written byte for byte.
-- **A heading keeps its source form** (`##` or underlined, trailing spaces) in an in-memory attribute, and is written as it was unless its headline or level changed; then it is written fresh in the same style.
+- **A heading keeps its source form** (`##` or underlined, trailing spaces) in an in-memory attribute, with its level and its depth in the tree when read, and is written as it was while its text and depth are unchanged. A heading node moved to another depth has its level moved by as much, its subheadings with it, kept to 1 to 6: demoting `## Usage` under `## Install` writes `### Usage`, and promoting it back restores the line as it was. An edited or moved heading is written fresh in its own style; an underlined one moved past level 2 becomes `###`. A heading added in leo-rs is ATX, one level below its parent.
 - **A fence's language** (`python`, from `python`, `.python` or `{python`) is kept in an in-memory attribute that `Outline::language_at` reads first. The fence node is then Python to the colouring and the language servers, so every example gets completion and diagnostics. `@language` cannot be used: the directive would be written into the markdown.
 - **An indented fence** (in a list item) has its indent taken off the code and put back on write, when every code line carries it.
 - **The read checks itself**: the tree is written and compared with the file before it is kept. If they differ, the whole file goes into the root's body with an error, as an `@auto` import that loses text does.
@@ -104,7 +105,7 @@ The attributes live only in memory: an `@entangled` node's children are rebuilt 
 
 ### Renaming a fence
 
-Editing a fence node's headline renames the block. leo-rs rewrites the `#name` in the fence line and its own reference, as one undo step, and in every fence of that name in the document (all parts of a continuation block). It also rewrites entangled's references, `<<name>>` and `<<doc.md#name>>`, in every `@entangled` document in the outline, and reports that documents outside the outline cannot be checked; `:entangled-check` finds them. Leo itself never rewrites section references on a rename; this follows `:lsp-rename`.
+Editing a fence node's headline renames the block. leo-rs rewrites the `#name` in the fence line and its own reference, as one undo step; a name another block in the document has is refused. It also rewrites entangled's references, `<<name>>` and `<<doc.md#name>>`, in every `@entangled` document in the outline, and reports that documents outside the outline cannot be checked; `:entangled-check` finds them. Leo itself never rewrites section references on a rename; this follows `:lsp-rename`.
 
 Editing the info string in the heading's body changes `file=` or the language without touching any reference.
 
@@ -116,12 +117,12 @@ entangled's, plus one extension that entangled ignores.
 |-|-|-|
 | ```` ```python #add ```` | a node headlined `<< add >>` | the markdown |
 | ```` ```python #main file=hello.py ```` | a node; a report if `hello.py` changed on disk since leo-rs last wrote it | the markdown, and `hello.py` as entangled tangles it |
-| ```` ```python #main include=hello.py ```` | a node filled from `hello.py` | the markdown with the code in it; `hello.py` if the node was edited |
+| ```` ```python #add include=lib.py#add ```` | a read-only node filled from `lib.py`, or from its `ANCHOR: add` region | the markdown, the fence filled from the file as it is then |
 | ```` ```python ```` (unnamed) | text in the heading's body | the markdown |
-| several ```` #add ```` blocks | sibling nodes headlined `<< add >>` | each in place; entangled concatenates them |
+| several ```` #add ```` fences | refused: the whole file in the node, with an error | the file as read |
 
 - `file=` is entangled's tangle: `<<references>>` expanded, the project-wide namespace, annotations and `entangled.toml` all apply. leo-rs calls entangled for it rather than reimplementing it. leolib's write guards still apply: no overwriting a file never read, or one changed on disk.
-- `include=` is the read direction. The fence keeps the code, so GitHub shows it. When both the node and the file changed since the last sync, report a conflict rather than pick one; leolib's file stamps already record the last read or write.
+- `include=` is the read direction, for code tested on its own: the file is the source. `include=path` takes the whole file and `include=path#name` the lines between `ANCHOR: name` and `ANCHOR_END: name` comments, without anchor lines, as mdBook takes them; the path starts from the markdown file's directory. The fence keeps the code, so GitHub shows it. On read the node is filled from the file after the round-trip check, and a fence whose file changed leaves the `@entangled` node unsaved, so the next save brings the markdown up to date; on write the fence is filled from the file as it is then. The node is read-only: leoapp refuses an edit and names the file to edit. An `include=` fence is a node even without `#name`, named by its target. In `.Rmd` and `.qmd` files `include` is knitr's and Quarto's own yes-or-no option, so it is left alone there. A missing file or anchor is a read warning, and the fence keeps its text.
 - An empty fence means nothing special. "Empty reads, filled writes" was rejected: GitHub would show blank examples; clearing a fence to rewrite it would restore the old code from disk on the next open; and entangled reads an empty `file=` fence as an empty file.
 
 ### Where entangled sits
@@ -136,7 +137,7 @@ crates/leo-entangled  tangle and check in-process. Depends on leolib and entangl
 crates/leoapp         optional dependency on leo-entangled, behind a feature
 ```
 
-leolib keeps its three runtime dependencies either way. `include=` needs no entangled: leolib reads and writes the named file itself. Tests run outside leo-rs.
+leolib keeps its three runtime dependencies either way. `include=` needs no entangled: leolib reads the named file itself. Tests run outside leo-rs.
 
 ### The Python test harness
 
@@ -156,18 +157,15 @@ def test_add():
 ## Plan
 
 1. **Clone conflicts, in leolib.** Done 2026-10-07: a clone two files disagree on is reported on read, and both texts kept under `Recovered Nodes` (`docs/dev/porting-notes.md`). Python Leo keeps the last file's text without a word.
-2. **Phase 1: the kind, in leolib.** Done 2026-10-07 (`crates/leolib/src/entangled.rs`, tests in `crates/leolib/tests/entangled.rs`), with leolsp serving each fence node as a document in its language. Recognising `@entangled`, the scanner, the tree above, the exact writer and its read-time check, fence languages. Tests: round trips over entangled-rs's `examples/` and edge cases (underlined headings, `~~~` and four-backtick fences, indented fences, front matter, CRLF). Python Leo knows nothing of the kind, so the Leo corpus cannot check it.
+2. **Phase 1: the kind, in leolib.** Done 2026-10-07 (`crates/leolib/src/entangled.rs`, with the CommonMark scanner and writer in `markdown.rs` since the `@auto-cells` work; tests in `crates/leolib/tests/entangled.rs`), with leolsp serving each fence node as a document in its language. Recognising `@entangled`, the scanner, the tree above, the exact writer and its read-time check, fence languages. Tests: round trips over entangled-rs's `examples/` and edge cases (underlined headings, `~~~` and four-backtick fences, indented fences, front matter, CRLF). Python Leo knows nothing of the kind, so the Leo corpus cannot check it.
 3. **Phase 1b: renaming, in leolib and leoapp**, as above. Done 2026-10-07: `entangled::plan_rename` works out every edit before any is made, `Document::rename_entangled_block` applies them as one undo step, and the headline edit and MCP's `set_headline` go through it. A block named only by `file=` is refused. Checked on `demo/entangled/`: entangled 0.2.1 tangles and checks the renamed documents, and the tests pass.
 4. **Open a real document.** An entangled document from entangled-rs's `examples/`: does the outline read well?
 5. **Phase 2: `:entangled-tangle` and `:entangled-check`**, through the CLI. Done 2026-10-07 (`crates/leoapp/src/app/entangled.rs`): run on a thread, unsaved `@entangled` files written first, output in `:messages`, the program set by `entangled`. Checked against entangled-rs's `literate-crypto` example: an edit in a fence node reached the tangled `ciphers.py`.
-6. **Phase 3: `include=`**, in leolib.
+6. **Phase 3: `include=`**, in leolib. Done 2026-10-07: whole files and `ANCHOR` regions, read-only nodes, filled on read and on write.
 7. **Phase 4: the Python harness.** Done 2026-10-07: `demo/entangled/`, its tests passing under entangled 0.2.1, a stale example making its test fail, and the indentation checked.
 
-Linking entangled-rs in-process waits for its 0.3.0, with the reduced dependencies.
+entangled-rs 0.3.0 has the reduced dependencies, so linking it in-process is now possible; the CLI is still used. A plan for in-process tangling and checks, an `entangled-core` crate with few dependencies, is deferred (2026-10-07): entangled-rs `docs/core-split.md`.
 
 ## Open questions
 
-- Whether moving a heading node to another depth should change its level. Phase 1 keeps the level the file gave it: promote and demote move the heading's text but leave `##` as it was. A node made in leo-rs is written one level below its parent.
-- Whether `include=` is wanted at all once `file=` and the harness cover testing.
-- How continuation blocks read as n siblings with one headline; number them if not.
-- Whether the named-fence rule matches entangled's parser on every style. Phase 1 approximates it; a test against `entangled::readers` settles it once entangled-rs is a dev-dependency.
+- Done: the named-fence rule is tested against entangled's own reader. `fence_nodes_are_the_blocks_entangleds_reader_finds` (`crates/leolib/tests/entangled.rs`) runs `entangled::readers::parse_markdown` from entangled-rs 0.4.0, a dev-dependency without default features, over entangled-rs's examples and one document per style, two of them mixing styles: the fence nodes are entangled's blocks, in order. entangled-rs 0.3.0 also fixed its Pandoc reader, which could not read its own `examples/pandoc-style` before.

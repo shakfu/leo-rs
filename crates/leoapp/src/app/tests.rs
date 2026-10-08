@@ -2140,36 +2140,3 @@ fn a_clone_conflict_is_on_the_status_line_and_in_the_log() {
         vec!["clone conflict: << example >>: /p/README.md and /p/tests/t.py differ; kept /p/tests/t.py"]
     );
 }
-
-#[test]
-fn editing_a_fence_nodes_headline_renames_its_block() {
-    let mut doc = Document::new_empty("");
-    let root = doc.outline().root_position().unwrap();
-    doc.set_headline(&root, "@entangled doc.md");
-    doc.set_body(&root, "```python #add\n<< add >>\n```\n");
-    let add = doc.outline_mut_untracked().insert_as_last_child(&root);
-    doc.set_headline(&add, "<< add >>");
-    doc.set_body(&add, "x = 1\n");
-    doc.clear_undo();
-    let mut app = App::new(doc);
-    app.select(add.clone());
-    press(&mut app, "e");
-    // Ctrl-u in a headline is Leo's move-node-up, so clear it key by key.
-    for _ in 0.."<< add >>".len() {
-        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-    }
-    app.handle_paste("<< sum >>");
-    press(&mut app, "Enter");
-    assert!(
-        app.message.starts_with("renamed add to sum: 1 fence"),
-        "{}",
-        app.message
-    );
-    let o = app.outline();
-    assert_eq!(add.h(o), "<< sum >>");
-    assert_eq!(root.b(o), "```python #sum\n<< sum >>\n```\n");
-    // One undo step puts both back.
-    press(&mut app, "u");
-    assert_eq!(app.outline().node(add.v).h, "<< add >>");
-    assert_eq!(root.b(app.outline()), "```python #add\n<< add >>\n```\n");
-}

@@ -21,7 +21,6 @@ use crate::search::{self, Direction, LastSearch, Scope};
 
 mod body;
 mod complete;
-mod entangled;
 pub use complete::CompletionMenu;
 pub use leolsp::Completion;
 mod ex;
@@ -224,8 +223,8 @@ pub struct App {
     /// waiting on the server was made at.
     pub completion: Option<CompletionMenu>,
     completion_asked: Option<(String, usize)>,
-    /// A run of the entangled command, until its result is collected.
-    entangled_job: Option<entangled::Job>,
+    /// Each plugin's state, by type: [`App::plugin_data`].
+    plugin_data: std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any>>,
     /// External files whose last read failed, by full path, and why.
     pub unread: std::collections::HashMap<String, String>,
     /// External files `check_disk` found changed by another program, by
@@ -279,7 +278,7 @@ pub fn read_report_message(report: &leolib::external::ReadResult) -> Option<Stri
 /// Open the outline at `path`, or start a new one there if no file exists,
 /// as vim does. The flag says which.
 pub fn open_or_new(path: &str, read_external: bool) -> leolib::Result<(Document, bool)> {
-    match Document::open(path, read_external) {
+    match Document::open_with(path, read_external, (*crate::plugins::kinds()).clone()) {
         Err(leolib::Error::NotFound { path }) => Ok((Document::new_empty(&path), true)),
         other => other.map(|doc| (doc, false)),
     }
@@ -437,6 +436,12 @@ pub struct Row {
 }
 impl App {
     pub fn new(doc: Document) -> Self {
+        // A document made with no kinds, a new one, takes the app's.
+        let mut doc = doc;
+        if doc.outline().kinds().directives().is_empty() {
+            doc.outline_mut_untracked()
+                .set_kinds(crate::plugins::kinds());
+        }
         let current = doc
             .outline()
             .root_position()
@@ -500,7 +505,7 @@ impl App {
             code_action_selected: 0,
             completion: None,
             completion_asked: None,
-            entangled_job: None,
+            plugin_data: std::collections::HashMap::new(),
             unread: Default::default(),
             changed_on_disk: Vec::new(),
         };
@@ -681,6 +686,22 @@ impl App {
             }
         }
         (exact, prefix)
+    }
+
+    /// A plugin's state of type `T`, made on first use.
+    pub fn plugin_data<T: Default + 'static>(&mut self) -> &mut T {
+        self.plugin_data
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_mut()
+            .expect("stored by its own type")
+    }
+
+    /// A plugin's state of type `T`, if it has any.
+    pub fn plugin_data_ref<T: 'static>(&self) -> Option<&T> {
+        self.plugin_data
+            .get(&std::any::TypeId::of::<T>())
+            .and_then(|b| b.downcast_ref())
     }
 
     /// Run a command by name.

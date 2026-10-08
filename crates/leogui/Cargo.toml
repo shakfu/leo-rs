@@ -33,6 +33,10 @@ eframe = { version = "0.36", features = ["glow"] }
 clap = { version = "4", features = ["derive"] }
 # Native Open and Save dialogs: the portal on Linux, the system's elsewhere.
 rfd = "0.17"
+# The rendered view: markdown, and the images a node or its markdown shows.
+egui_commonmark = "0.25"
+egui_extras = { version = "0.36", features = ["image", "file"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 # Already in the build through eframe; turns off winit's default macOS menu,
 # whose Quit item ends the process without asking about unsaved work.

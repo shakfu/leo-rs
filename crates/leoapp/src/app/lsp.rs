@@ -20,7 +20,10 @@ impl App {
     pub fn poll(&mut self) -> bool {
         // A whole colouring made on a thread, ready to draw.
         let recolour = self.colouring.poll();
-        let called = self.poll_mcp() | self.poll_entangled();
+        let mut called = self.poll_mcp();
+        for plugin in crate::plugins::all() {
+            called |= plugin.poll(self);
+        }
         let Some(lsp) = self.lsp.as_mut() else {
             return recolour || called;
         };
@@ -78,9 +81,13 @@ impl App {
         let sync = self
             .lsp_dirty_since
             .map(|since| DEBOUNCE.saturating_sub(since.elapsed()));
-        [sync, self.colouring.due_in(), self.entangled_poll_after()]
+        let plugins = crate::plugins::all()
+            .iter()
+            .filter_map(|p| p.poll_after(self));
+        [sync, self.colouring.due_in()]
             .into_iter()
             .flatten()
+            .chain(plugins)
             .min()
     }
 

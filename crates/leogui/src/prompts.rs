@@ -286,8 +286,7 @@ fn quick_input(ctx: &egui::Context, app: &App, colours: &Palette) {
                 } else if app.mode == Mode::Command {
                     let word = mini.buffer.split_whitespace().next().unwrap_or("");
                     if !word.is_empty() && !mini.buffer.contains(' ') {
-                        let hints: Vec<_> = leoapp::commands::COMMANDS
-                            .iter()
+                        let hints: Vec<_> = leoapp::commands::all()
                             .filter(|c| c.name.starts_with(word))
                             .take(8)
                             .collect();

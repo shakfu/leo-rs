@@ -17,8 +17,8 @@ pub(crate) mod atclean;
 pub(crate) mod atfile_read;
 pub(crate) mod atfile_write;
 pub mod document;
-pub mod entangled;
 pub mod error;
+pub mod ext;
 pub mod external;
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -64,11 +64,22 @@ pub fn open_outline_with_report(
     path: &str,
     read_external: bool,
 ) -> Result<(Outline, external::ReadResult)> {
+    open_outline_with_kinds(path, read_external, ext::Kinds::empty())
+}
+
+/// `open_outline_with_report`, reading the kinds in `kinds` beyond Leo's.
+/// `open_outline_with_report` opens with none, as Leo would.
+pub fn open_outline_with_kinds(
+    path: &str,
+    read_external: bool,
+    kinds: ext::Kinds,
+) -> Result<(Outline, external::ReadResult)> {
     let path = util::finalize(path);
     if !std::path::Path::new(&path).exists() {
         return Err(Error::NotFound { path });
     }
     let mut o = leofile::read_leo_file(&path)?;
+    o.kinds = std::sync::Arc::new(kinds);
     let report = match read_external {
         true => {
             let report = external::read_external_files(&mut o);

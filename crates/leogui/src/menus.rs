@@ -24,6 +24,7 @@ pub enum Action {
     CloseOutline,
     Quit,
     Servers,
+    Rendered,
     Problems,
     Log,
     About,
@@ -147,9 +148,6 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Gui("Code Actions...", Action::CodeActions, "Ctrl-."),
             Run("Next Problem", "lsp-next-diagnostic"),
             Run("Previous Problem", "lsp-prev-diagnostic"),
-            Sep,
-            Run("Tangle with entangled", "entangled-tangle"),
-            Run("Check with entangled", "entangled-check"),
         ],
     ),
     (
@@ -159,6 +157,7 @@ pub const MENUS: &[(&str, &[Item])] = &[
             Gui("Go to Node...", Action::GoToNode, "Ctrl-p"),
             Gui("Problems", Action::Problems, ""),
             Gui("Log", Action::Log, ""),
+            Gui("Rendered View", Action::Rendered, ""),
             Gui("Language Servers", Action::Servers, ""),
             Sep,
             Toggle("Wrap Lines", Opt::Wrap),
@@ -291,6 +290,18 @@ pub fn bar(
                         }
                     }
                 }
+                // What plugins add to this menu, after a separator.
+                let mut added = leoapp::plugins::menu(title).peekable();
+                if added.peek().is_some() {
+                    ui.separator();
+                }
+                for entry in added {
+                    let b = egui::Button::new(entry.label).shortcut_text(shortcut(entry.command));
+                    if ui.add(b).clicked() {
+                        app.run_chosen(entry.command);
+                        ui.close();
+                    }
+                }
             });
         }
     });
@@ -314,8 +325,7 @@ pub struct Entry {
 /// Every command a person can run by name. The table's entries that only
 /// document keys the body grammar handles (`body-motions`) are left out.
 pub fn entries() -> Vec<Entry> {
-    leoapp::commands::COMMANDS
-        .iter()
+    leoapp::commands::all()
         .filter(|c| {
             !c.name.starts_with("body-") && !c.name.contains("help-") && c.name != "close-help"
         })

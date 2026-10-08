@@ -137,9 +137,8 @@ pub struct Config {
     pub wrap: Option<bool>,
     pub syntax: Option<bool>,
     pub mcp: Mcp,
-    /// `entangled = "/usr/local/bin/entangled"`: the command `:entangled-tangle`
-    /// and `:entangled-check` run, split on blanks. `entangled` when unset.
-    pub entangled: Option<String>,
+    /// The settings plugins read (`crate::plugins`), by key.
+    pub plugin: std::collections::HashMap<String, String>,
     /// Lines that were read but meant nothing, first one first.
     pub warnings: Vec<String>,
 }
@@ -158,7 +157,7 @@ impl Default for Config {
             wrap: None,
             syntax: None,
             mcp: Mcp::default(),
-            entangled: None,
+            plugin: std::collections::HashMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -191,7 +190,8 @@ fn flag(key: &str, v: &str, n: usize, warnings: &mut Vec<String>) -> Option<bool
     }
 }
 
-fn parse(text: &str) -> Config {
+/// Settings from the text of a settings file.
+pub fn parse(text: &str) -> Config {
     let mut config = Config::default();
     for (i, line) in text.lines().enumerate() {
         let line = strip_comment(line).trim();
@@ -210,10 +210,12 @@ fn parse(text: &str) -> Config {
                 .warnings
                 .push(format!("config line {n}: theme is empty")),
             ("theme", name) => config.theme = Some(name.to_string()),
-            ("entangled", "") => config
+            (key, "") if crate::plugins::reads_setting(key) => config
                 .warnings
-                .push(format!("config line {n}: entangled is empty")),
-            ("entangled", command) => config.entangled = Some(command.to_string()),
+                .push(format!("config line {n}: {key} is empty")),
+            (key, v) if crate::plugins::reads_setting(key) => {
+                config.plugin.insert(key.to_string(), v.to_string());
+            }
             ("split-ratio", v) => match v.parse::<u16>() {
                 Ok(pct) => config.split_ratio = Some(pct.clamp(15, 85)),
                 Err(_) => config

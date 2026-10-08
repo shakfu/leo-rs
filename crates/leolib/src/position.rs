@@ -328,19 +328,15 @@ impl Position {
 
     /// The file name after any `@<file>` directive, as `p.anyAtFileNodeName`.
     pub fn any_at_file_node_name(&self, o: &Outline) -> String {
-        crate::node::any_at_file_node_name(self.h(o))
+        o.file_node_name(self.h(o))
     }
     /// True if the headline names any `@<file>` or `@leo` node.
     pub fn is_any_at_file_node(&self, o: &Outline) -> bool {
-        crate::node::is_any_at_file_node(self.h(o))
+        !o.file_node_name(self.h(o)).is_empty()
     }
     /// True for any `@auto` spelling, as `p.isAtAutoNode`.
     pub fn is_at_auto_node(&self, o: &Outline) -> bool {
         !crate::node::at_auto_node_name(self.h(o)).is_empty()
-    }
-    /// True for `@entangled`, a leo-rs kind (`crate::entangled`).
-    pub fn is_at_entangled_node(&self, o: &Outline) -> bool {
-        !crate::node::at_entangled_node_name(self.h(o)).is_empty()
     }
     /// True for `@clean`, as `p.isAtCleanNode`.
     pub fn is_at_clean_node(&self, o: &Outline) -> bool {

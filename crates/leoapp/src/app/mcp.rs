@@ -323,7 +323,7 @@ impl App {
         match name {
             "set_headline" => {
                 let headline = string(args, "headline")?;
-                if self.doc.rename_entangled_block(&p, headline)?.is_none() {
+                if self.doc.rename_block(&p, headline)?.is_none() {
                     self.doc.set_headline(&p, headline);
                 }
             }
