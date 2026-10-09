@@ -95,12 +95,19 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 - **leotui and leogui say when plugins failed to register**, on stderr; a release build was silent.
 
 - **`@qmd` and `@rmd` fixes before their release.**
+
   - A body edited to end without a newline joined the next heading onto it; the headings were lost on reopen.
+
   - Only the CR of a CRLF is removed. A line ending in CR alone makes the read refuse, which keeps the file byte for byte; it lost every line break before. A dropped byte-order mark is reported.
+
   - A refused read kept the whole file in the node, but the next write could refuse that body too; it is now written as it stands. A refused read no longer erases the saved cell gnxs, which unlinked `@clean` clones.
+
   - A fence opener on a file's last line, with no newline, is text.
+
   - A quoted label is one name: `#| label: "b c"` renames in place, where a second label line was added, and knitr's `label='x y'` no longer reads as `x`. A label named `label` renames its value.
+
   - An indented cell with a line of just its indent reads; it was refused.
+
   - Edits that would change the tree on the next read are written another way or refused: an underlined heading renamed to `- todo` is written `## - todo`, and a cell whose code would close its fence, or a heading with no headline, is refused. `#` lines in an HTML comment spanning lines stay text.
 
 ## [0.7.0]
