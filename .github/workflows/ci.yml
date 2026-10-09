@@ -17,7 +17,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install the toolchain
@@ -33,7 +33,7 @@ jobs:
         run: cargo test -p leo-plugins --no-default-features
 
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install nightly and cargo-fuzz
@@ -46,7 +46,7 @@ jobs:
           done
 
   corpus:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Check out leo-editor

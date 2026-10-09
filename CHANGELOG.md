@@ -74,7 +74,7 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **A `.leo` file with CRLF line endings reads as Leo reads it.** A Windows checkout's file put `\r\n` into every body, where Leo, following XML, reads `\n`; a written `&#13;` is still a CR.
 
-- **A `.leo` file with a byte-order mark no longer panics on a malformed tag.** The XML reader skips the BOM and counts its offsets from after it, so the line an unclosed or mismatched tag was reported on was sliced 3 bytes early: inside the BOM, a panic; past it, a line that could be one short. The BOM is now stripped before parsing. The `read_leo` fuzz target found it.
+- **A `.leo` file with a byte-order mark no longer panics on a malformed tag.** The XML reader skips a leading BOM, and a second one after it, and counts its offsets from after them, so the line an unclosed or mismatched tag was reported on was sliced early: inside a BOM, a panic; past it, a line that could be one short. Every leading BOM is now stripped before parsing, and the line is counted by bytes, so an offset that is still wrong cannot panic. The `read_leo` fuzz target found it.
 
 - **Gnxs take Leo's id first from `~/.leo/.leoID.txt`**, then the login name, as Leo does, so one person's nodes carry one id in both.
 
