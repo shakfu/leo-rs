@@ -99,9 +99,19 @@ pub fn unhexlify_loads(hex: &str) -> Result<Value> {
 
 /// A pickled value, or what stopped the read.
 ///
+/// A value is refused unless [`dumps`] writes it as bytes this reads within
+/// the same cap. The cap counts opcodes and memo copies, and protocol 1
+/// memoizes every tuple: a value built cheaply with `TUPLE1` can cost
+/// size x depth when written back, and a blob rebuilt from it would not read.
+pub fn loads(bytes: &[u8]) -> Result<Value> {
+    let value = load(bytes)?;
+    load(&dumps(&value)).map_err(|e| oops(format!("written back, it would not read: {e}")))?;
+    Ok(value)
+}
+
 /// The machine is Python's: opcodes push onto a stack, `MARK` records where a
 /// group began, and the memo holds every object a later opcode may name again.
-pub fn loads(bytes: &[u8]) -> Result<Value> {
+fn load(bytes: &[u8]) -> Result<Value> {
     let mut stack: Vec<Value> = Vec::new();
     let mut marks: Vec<usize> = Vec::new();
     // A map, as Python's: the index is the blob's to choose, up to 2^32.
@@ -488,6 +498,29 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_value_too_costly_to_write_back_is_refused_on_read() {
+        // Tuples nested with TUPLE1 cost one opcode a level; written back,
+        // each level is MARK, TUPLE and a PUT copying all below it.
+        let nested = |depth: usize| {
+            let mut blob = vec![b'K', 75];
+            blob.extend(std::iter::repeat_n(0x85, depth));
+            blob.push(b'.');
+            blob
+        };
+        let shallow = loads(&nested(10)).unwrap();
+        assert_eq!(loads(&dumps(&shallow)).unwrap(), shallow);
+        assert!(load(&nested(100)).is_ok(), "the input alone is cheap");
+        assert!(loads(&nested(100)).is_err());
+        // The fuzz target's find: what reads must read again once written.
+        let mut found = b"((KK".to_vec();
+        found.extend(std::iter::repeat_n(0x85, 89));
+        found.push(b'.');
+        if let Ok(v) = loads(&found) {
+            assert_eq!(loads(&dumps(&v)).unwrap(), v);
+        }
+    }
 
     /// Blobs taken from a leo-editor checkout, with what Python unpickles
     /// them to. `leo/test/test.leo`, `leo/dist/leoDist.leo`.

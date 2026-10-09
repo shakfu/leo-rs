@@ -80,6 +80,55 @@ fn a_link_under_the_cursor_is_followed_and_ctrl_o_comes_back() {
 }
 
 #[test]
+fn return_in_normal_follows_the_link_and_ctrl_o_comes_back() {
+    let mut app = app("");
+    let root = find(&app, "@wiki w");
+    app.select(root);
+    app.focus = Focus::Body;
+    app.editor.cursor = (0, 8);
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.current.h(app.outline()), "Intro", "{}", app.message);
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert_eq!(app.current.h(app.outline()), "@wiki w");
+}
+
+#[test]
+fn the_body_marks_the_links_return_follows_and_no_others() {
+    let mut app = app("");
+    let intro = find(&app, "Intro");
+    let body = "See [[Guide]] and `[[Guide]]`.\n```\n[[Guide]]\n```\n";
+    app.doc.set_body(&intro, body);
+    app.select(intro);
+    app.focus = Focus::Body;
+    let view = app.body_view(leoapp::view::Viewport { rows: 10, cols: 80 });
+    assert_eq!(view.links(0), [std::ops::Range { start: 4, end: 13 }]);
+    assert!(view.links(2).is_empty(), "a link in a fence is code");
+    assert!(view.link_at((0, 4)) && view.link_at((0, 12)) && !view.link_at((0, 13)));
+    // The fenced one is not followed either.
+    app.editor.cursor = (2, 3);
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.current.h(app.outline()), "Intro");
+}
+
+#[test]
+fn a_link_clicked_in_the_rendered_view_selects_its_page() {
+    let mut app = app("");
+    let root = find(&app, "@wiki w");
+    let intro = find(&app, "Intro");
+    let shown = leoapp::rendered::rendered(app.outline(), &root, root.b(app.outline()));
+    let leoapp::rendered::Rendered::Markdown { text, .. } = shown else {
+        panic!("{shown:?}");
+    };
+    let url = format!("unl:gnx://#{}", intro.gnx(app.outline()));
+    assert_eq!(text, format!("Read [Intro]({url}) first.\n"));
+    app.select(root);
+    assert!(app.follow_url(&url));
+    assert_eq!(app.current.h(app.outline()), "Intro", "{}", app.message);
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert_eq!(app.current.h(app.outline()), "@wiki w");
+}
+
+#[test]
 fn double_bracket_offers_the_wikis_pages() {
     let mut app = app("");
     let intro = find(&app, "Intro");

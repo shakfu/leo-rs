@@ -172,6 +172,7 @@ pub static BINDINGS: &[Binding] = &[
     b(Mode::Normal, BODY, "p P", "body-put"),
     b(Mode::Normal, BODY, ".", "body-repeat"),
     b(Mode::Normal, BODY, "gd", "open-url-under-cursor"),
+    b(Mode::Normal, BODY, "Enter", "open-url-under-cursor"),
     // Language servers, on neovim's keys: `K`, the tag jump, `]d` `[d`.
     b(Mode::Normal, BODY, "K", "lsp-hover"),
     b(Mode::Normal, BODY, "Ctrl-]", "lsp-definition"),

@@ -1,0 +1,42 @@
+---
+title: "Rainfall"
+format: html
+---
+
+## Data
+
+Monthly rainfall in millimetres, for one year.
+
+```{python}
+#| label: data
+RAIN = [78, 52, 61, 45, 50, 41, 38, 49, 55, 83, 90, 86]
+```
+
+## Summary
+
+```{python}
+#| label: stats
+def mean(xs):
+    return sum(xs) / len(xs)
+
+
+def wettest(xs):
+    """The 1-based month with the most rain."""
+    return xs.index(max(xs)) + 1
+```
+
+```{python}
+print(f"mean {mean(RAIN):.1f} mm, wettest month {wettest(RAIN)}")
+```
+
+A display fence stays in the prose:
+
+```python
+wettest([1, 3, 2])  # 2
+```
+
+::: {.callout-note}
+## Cells as code
+
+`rainfall.py` holds the `data` and `stats` cells, cloned from this file.
+:::

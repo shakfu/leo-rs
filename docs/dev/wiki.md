@@ -8,6 +8,7 @@ Decided: GitHub-style anchors (Q1); a page deeper than six is refused at export 
 - Edits that break a rule are undone after the fact, by leoapp's rule guard, rather than refused one operation at a time. The effect is the same: the edit does not stand, and the message names the rule.
 - Only ATX headings in a page body move down at export; an underlined heading is copied as it is.
 - `[[` completion offers the pages of the wiki the cursor is in, not other wikis'.
+- A link is drawn as a hyperlink, and `Enter` in NORMAL follows it, as `gd` does; leogui follows one clicked in the body or the rendered view, where it is shown as a markdown link to `unl:gnx://#GNX`. `gd` is a vim key few users expect to follow a link.
 
 ## 0. Summary
 

@@ -266,6 +266,7 @@ impl Theme {
             ("variable.other.member", fg(7)),
             ("attribute", fg(13)),
             ("markup.link.text", fg(5)),
+            ("markup.link.url", fg(12)),
             (
                 "keyword.directive",
                 Face {
@@ -823,6 +824,7 @@ grey0 = "#7f8490"   # a trailing comment
         for scope in [
             "keyword.directive",
             "markup.link.text",
+            "markup.link.url",
             "comment",
             "string",
             "constant.numeric",

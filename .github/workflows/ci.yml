@@ -19,7 +19,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
@@ -35,7 +35,7 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install nightly and cargo-fuzz
         run: rustup toolchain install nightly --profile minimal && cargo install cargo-fuzz --locked
       - name: Fuzz each target for a minute
@@ -48,14 +48,14 @@ jobs:
   corpus:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check out leo-editor
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.LEO_EDITOR_REPO }}
           ref: ${{ env.LEO_EDITOR_REF }}
           path: leo-editor
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: make corpus

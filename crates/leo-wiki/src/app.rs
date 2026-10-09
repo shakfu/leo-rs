@@ -1,13 +1,15 @@
 //! The wiki plugin: following `[[links]]`, completing them, keeping the
 //! rules, and `:export-wiki`. Built with the `leoapp` feature.
 
+use std::ops::Range;
+
 use leolib::{Outline, Position};
 
 use leoapp::app::App;
 use leoapp::commands::Command;
 use leoapp::plugins::{AppPlugin, MenuEntry};
 
-use crate::{check, escape, export, export_path, links, resolve, root_of, wikilinks_to_unls};
+use crate::{check, escape, export, export_path, links, resolve, root_of, wikilinks_to_unls, Link};
 
 /// The plugin.
 pub struct WikiPlugin;
@@ -24,6 +26,15 @@ impl AppPlugin for WikiPlugin {
     }
     fn open_url(&self, app: &mut App) -> bool {
         follow(app)
+    }
+    fn links(&self, o: &Outline, p: &Position, lines: &[String]) -> Vec<(usize, Range<usize>)> {
+        page_links(o, p, lines)
+            .into_iter()
+            .map(|(row, link)| (row, link.range))
+            .collect()
+    }
+    fn rendered(&self, o: &Outline, p: &Position, body: &str) -> Option<String> {
+        crate::rendered(o, p, body)
     }
     fn complete(&self, app: &App) -> Option<(usize, Vec<String>)> {
         complete(app)
@@ -123,17 +134,41 @@ fn cursor(app: &App) -> Option<(String, usize, usize)> {
     Some((line, row, at))
 }
 
+/// The links in page `p`'s body, `lines`, outside code: each with its line,
+/// its range made relative to that line. None if `p` is not in a wiki.
+fn page_links(o: &Outline, p: &Position, lines: &[String]) -> Vec<(usize, Link)> {
+    if root_of(o, p).is_none() {
+        return Vec::new();
+    }
+    let starts: Vec<usize> = lines
+        .iter()
+        .scan(0, |at, l| {
+            let start = *at;
+            *at += l.len() + 1;
+            Some(start)
+        })
+        .collect();
+    links(&lines.join("\n"))
+        .into_iter()
+        .map(|mut link| {
+            let row = starts.partition_point(|&s| s <= link.range.start) - 1;
+            link.range = link.range.start - starts[row]..link.range.end - starts[row];
+            (row, link)
+        })
+        .collect()
+}
+
 /// Follow the `[[link]]` under the cursor in a page.
 fn follow(app: &mut App) -> bool {
     let Some(root) = root_of(app.outline(), &app.current) else {
         return false;
     };
-    let Some((line, _, at)) = cursor(app) else {
+    let Some((line, row, at)) = cursor(app) else {
         return false;
     };
-    let Some(link) = links(&line)
+    let Some((_, link)) = page_links(app.outline(), &app.current, &app.body_buffer())
         .into_iter()
-        .find(|l| l.range.start <= at && at < l.range.end)
+        .find(|(r, l)| *r == row && l.range.contains(&at))
     else {
         return false;
     };

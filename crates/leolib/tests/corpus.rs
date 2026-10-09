@@ -380,10 +380,13 @@ fn collect(path: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `demo/entangled/` is an example, not a case: Python Leo reads its
-/// `@entangled` nodes as plain ones, so it has nothing to check them against.
+/// The plugin examples are not cases: Python Leo reads their `@entangled`,
+/// `@qmd`, `@rmd` and `@wiki` nodes as plain ones, so it has nothing to check
+/// them against. `leo-plugins/tests/demo.rs` checks them.
 fn is_example(p: &Path) -> bool {
-    p == demo().join("entangled")
+    ["entangled", "qmd", "rmd", "wiki"]
+        .iter()
+        .any(|name| p == demo().join(name))
 }
 
 /// The `@ignore` case is the one case whose point is a file that is *not*

@@ -114,6 +114,8 @@ impl Editor {
         let lines = body.screen_lines();
         let cursor_row = body.cursor.map(|c| c.0);
         let palette = classes(app);
+        let face = app.theme.face(view::LINK_SCOPE).fg;
+        let hyperlink = style::colour(app, face).unwrap_or(ui.visuals().hyperlink_color);
         let plain = Look {
             fg: colours.fg,
             bg: None,
@@ -132,7 +134,7 @@ impl Editor {
                 let spans = body.spans.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
                 let (hits, marks) = (body.hits(i), body.marks(i));
                 let pieces: Vec<(&str, Look)> =
-                    view::decorate(&body.lines[i], spans, &hits, &marks)
+                    view::decorate(&body.lines[i], spans, &hits, &marks, body.links(i))
                         .into_iter()
                         .map(|seg| {
                             let mut look = match palette.iter().find(|(c, _, _)| *c == seg.class) {
@@ -146,10 +148,17 @@ impl Editor {
                             if seg.hit {
                                 look.bg = Some(style::ansi(3).gamma_multiply(0.55));
                             }
-                            look.squiggle = seg.severity.map(|s| {
-                                let m = colours.mark(s);
-                                (m.underline, m.style)
-                            });
+                            if seg.link {
+                                look.fg = hyperlink;
+                            }
+                            // A diagnostic's underline over a link's.
+                            look.squiggle = seg
+                                .severity
+                                .map(|s| {
+                                    let m = colours.mark(s);
+                                    (m.underline, m.style)
+                                })
+                                .or(seg.link.then_some((hyperlink, UnderlineStyle::Line)));
                             (seg.text, look)
                         })
                         .collect();
@@ -262,6 +271,11 @@ impl Editor {
             if response.drag_started() || response.clicked() {
                 if app.run_chosen("") {
                     app.click_body(&body, y, x);
+                    // A click on a link follows it; a drag from one selects.
+                    let on_link = body.position_at(y, x).is_some_and(|p| body.link_at(p));
+                    if response.clicked() && on_link && app.mode == Mode::Normal {
+                        app.run("open-url-under-cursor", 1);
+                    }
                 }
             } else if response.dragged() && self.thumb_from.is_none() {
                 app.drag_body(&body, y, x);
@@ -271,6 +285,9 @@ impl Editor {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
             if let Some(p) = response.hover_pos() {
                 let (y, x) = grid(p);
+                if body.position_at(y, x).is_some_and(|p| body.link_at(p)) {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
                 if let Some((row, col)) = body.position_at(y, x) {
                     let hit = body.diagnostics.iter().find(|d| {
                         (d.row, d.col) <= (row, col)

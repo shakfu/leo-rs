@@ -62,6 +62,9 @@ pub struct BodyView {
     pub text_width: usize,
     pub tab: usize,
     pub wrap: bool,
+    /// A plugin's links, as byte ranges, by line: drawn as links, and what
+    /// `open-url-under-cursor` follows.
+    pub links: Vec<Vec<Range<usize>>>,
     /// The language server's diagnostics, shown only over committed text:
     /// while a change is typed, rows no longer match what the server saw.
     pub diagnostics: Vec<BodyDiagnostic>,
@@ -224,6 +227,20 @@ impl BodyView {
         out
     }
 
+    /// The links in line `i`, as byte ranges.
+    pub fn links(&self, i: usize) -> &[Range<usize>] {
+        self.links.get(i).map_or(&[], |l| l.as_slice())
+    }
+
+    /// Whether line `row`, character `col` is in a link.
+    pub fn link_at(&self, (row, col): Pos) -> bool {
+        let Some(line) = self.lines.get(row) else {
+            return false;
+        };
+        let at = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
+        self.links(row).iter().any(|r| r.contains(&at))
+    }
+
     /// hlsearch matches in line `i`, as byte ranges.
     pub fn hits(&self, i: usize) -> Vec<Range<usize>> {
         match (&self.hlsearch, self.lines.get(i)) {
@@ -290,6 +307,7 @@ impl App {
         let mut view = BodyView {
             lines,
             spans: Rc::default(),
+            links: Vec::new(),
             cursor,
             cursor_col,
             selection,
@@ -359,6 +377,10 @@ impl App {
             true => highlight::language_of(self.outline(), &self.current),
             false => None,
         };
+        for (row, range) in crate::plugins::links(self.outline(), &self.current, &view.lines) {
+            view.links.resize(view.links.len().max(row + 1), Vec::new());
+            view.links[row].push(range);
+        }
         if let Some(language) = language {
             let node = self.current.gnx(self.doc.outline());
             let visible = top..top + v.rows;
@@ -774,6 +796,9 @@ pub fn help_lines(focus: Focus) -> Vec<String> {
         .collect()
 }
 
+/// The Helix scope a plugin's link is drawn as, underlined.
+pub const LINK_SCOPE: &str = "markup.link.url";
+
 /// The Helix scope each class is drawn as.
 ///
 /// A theme names scopes, not classes, and resolves `type.builtin` to `type`
@@ -873,22 +898,25 @@ pub struct Segment<'a> {
     pub hit: bool,
     /// Inside a diagnostic, the worst one there.
     pub severity: Option<Severity>,
+    /// Inside a plugin's link.
+    pub link: bool,
 }
 
-/// `line` cut wherever its colouring, a search match or a diagnostic starts
-/// or ends. `marks` comes from `BodyView::marks`, worst last.
+/// `line` cut wherever its colouring, a search match, a diagnostic or a link
+/// starts or ends. `marks` comes from `BodyView::marks`, worst last.
 pub fn decorate<'a>(
     line: &'a str,
     spans: &[highlight::Span],
     hits: &[Range<usize>],
     marks: &[(Range<usize>, Severity)],
+    links: &[Range<usize>],
 ) -> Vec<Segment<'a>> {
     let end = line.trim_end_matches('\n').len();
     let mut cuts: Vec<usize> = vec![0, end];
     for s in spans {
         cuts.extend([s.start, s.end]);
     }
-    for r in hits.iter().chain(marks.iter().map(|(r, _)| r)) {
+    for r in hits.iter().chain(marks.iter().map(|(r, _)| r)).chain(links) {
         cuts.extend([r.start, r.end]);
     }
     cuts.retain(|&c| c <= end && line.is_char_boundary(c));
@@ -906,6 +934,7 @@ pub fn decorate<'a>(
                     .map_or(Class::Plain, |s| s.class),
                 hit: hits.iter().any(inside),
                 severity: marks.iter().rev().find(|(r, _)| inside(r)).map(|(_, s)| *s),
+                link: links.iter().any(inside),
             }
         })
         .collect()
@@ -1306,6 +1335,16 @@ mod tests {
     }
 
     #[test]
+    fn a_link_is_cut_out_and_marked() {
+        let line = "See [[Page]] now";
+        let got: Vec<(&str, bool)> = decorate(line, &[], &[], &[], &[Range { start: 4, end: 12 }])
+            .into_iter()
+            .map(|s| (s.text, s.link))
+            .collect();
+        assert_eq!(got, [("See ", false), ("[[Page]]", true), (" now", false)]);
+    }
+
+    #[test]
     fn a_line_is_cut_at_every_edge_of_colour_match_and_diagnostic() {
         use crate::highlight::Span;
         let line = "let x = 1;\n";
@@ -1316,10 +1355,11 @@ mod tests {
         }];
         let marks = [(4..5, Severity::Warning), (4..9, Severity::Error)];
         let hits = [Range { start: 8, end: 9 }];
-        let got: Vec<(&str, Class, bool, Option<Severity>)> = decorate(line, &spans, &hits, &marks)
-            .into_iter()
-            .map(|s| (s.text, s.class, s.hit, s.severity))
-            .collect();
+        let got: Vec<(&str, Class, bool, Option<Severity>)> =
+            decorate(line, &spans, &hits, &marks, &[])
+                .into_iter()
+                .map(|s| (s.text, s.class, s.hit, s.severity))
+                .collect();
         assert_eq!(
             got,
             [

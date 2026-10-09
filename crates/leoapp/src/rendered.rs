@@ -22,6 +22,8 @@ pub enum Rendered {
 /// What the rendered view shows for p, whose body is `body`: the text being
 /// typed, which the outline does not hold until INSERT ends.
 pub fn rendered(o: &Outline, p: &Position, body: &str) -> Rendered {
+    let changed = crate::plugins::rendered(o, p, body);
+    let body = changed.as_deref().unwrap_or(body);
     let base = base_dir(o);
     let h = p.h(o);
     if let Some(rest) = headline_directive(h, "@image") {

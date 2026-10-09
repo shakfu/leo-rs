@@ -1,7 +1,7 @@
 # Plugins
 
-`@qmd` and `@rmd` are in `leo-markdown`, registered in leotui and leogui
-by `leo-plugins`, from the release after 0.7.0. `@entangled` is in the
+`@qmd` and `@rmd` are in `leo-markdown`, and `@wiki` in `leo-wiki`,
+registered in leotui and leogui by `leo-plugins`, from 0.8.0. `@entangled` is in the
 unpublished `leo-entangled`, and no binary registers it. The design is in
 `docs/dev/plugins.md`. Its settings key, `entangled`, applies only when
 the plugin is registered:
@@ -73,16 +73,20 @@ Working with one:
 
 Code-first literate programming: clone a labelled cell into an `@clean` tree. The same node is a fence in the markdown and code in the `.py` file, so an edit in either tree is saved to both, and `<<load>>` in a cell resolves as the `<< load >>` section. The `.leo` file keeps each labelled cell's gnx, so the clone survives a reopen; if both files changed on disk, the `@clean` file's text wins and the markdown's goes to Recovered Nodes. An unnamed cell is renumbered as cells are added, so label a cell before cloning it. This works for `@entangled` fence nodes too. The design is in `docs/dev/markdown_importer.md`.
 
+`demo/qmd/` and `demo/rmd/` show both kinds, each with labelled cells cloned into an `@clean` file that runs.
+
 
 ## `@wiki`
 
 A node headlined `@wiki NAME` is a wiki; its descendants are pages, written in markdown. `[[Page]]` in a page links to the page headed `Page`; `[[Parent/Page]]` narrows it by its parent; `[[Page|text]]` shows `text`; `[[other:Page]]` and `[[other:]]` reach another wiki. `\/`, `\|` and `\]` escape. Links in code are text.
 
-- `gd` on a link follows it, and `Ctrl-o` comes back. `gd` also follows Leo's `gnx:GNX`, `unl:gnx://#GNX` and `unl://#Parent-->Page` links, anywhere.
+- A link in a page is drawn underlined, in the theme's `markup.link.url` colour, else light blue in leotui and egui's link colour in leogui.
+- `Enter` in NORMAL, with the cursor on a link, follows it; `gd` is the same. In leogui, a click on a link in the body or the rendered view follows it too. `Enter` and `gd` also follow Leo's `gnx:GNX`, `unl:gnx://#GNX` and `unl://#Parent-->Page` links, anywhere.
+- `Ctrl-o`, in either pane, goes back to the node a link was followed from, however it was followed. `L` in the outline goes forward again.
 - In INSERT, `[[` offers the wiki's pages.
 - Renaming a page rewrites every link to it, from any wiki, as one undo step; renaming a wiki rewrites `[[old:...]]`.
 - `:export-wiki` writes `NAME.md` beside the outline (or in the `@path` in effect): the root's body, then each page under a heading of its depth, links as `[text](#anchor)` with GitHub's anchors. A link naming no page or several, or a page deeper than six levels, refuses the export and says which.
 - `:convert-wikilinks-to-unls` rewrites the wiki's links as Leo's `unl:gnx://` links, for an outline shared with Leo.
 - The rules: no wiki inside another, no page a clone, no page headline starting with `@`, no directive in a page, and a name without `:`, `/` or `\`. An edit that breaks one is undone and the message names it; `:check-wiki` lists what an outline opened from elsewhere breaks.
 
-The design is in `docs/dev/wiki.md`.
+`demo/wiki/` holds two wikis that link to each other. The design is in `docs/dev/wiki.md`.

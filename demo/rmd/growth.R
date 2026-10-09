@@ -1,0 +1,5 @@
+data(PlantGrowth)
+fit <- aov(weight ~ group, data = PlantGrowth)
+print(summary(fit))
+means <- tapply(PlantGrowth$weight, PlantGrowth$group, mean)
+round(means, 2)

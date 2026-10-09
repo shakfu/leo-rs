@@ -1,7 +1,7 @@
 # demo
 
-The conformance corpus, and one example. Every `.leo` file here except
-`entangled/demo.leo` is a case, beside the external files it names, with a
+The conformance corpus, and one example per plugin. Every `.leo` file here
+outside the example directories is a case, beside the external files it names, with a
 `<name>.expected.json` holding what Python Leo reads from it.
 `crates/leolib/tests/corpus.rs` checks this port against those files and
 leo-editor checks Python Leo against its own copy, so neither implementation
@@ -11,6 +11,19 @@ needs a checkout of the other.
 tested (`entangled/demo.leo`, and see `docs/plugins.md`). It needs the
 `@entangled` plugin, which no released binary registers yet. The corpus
 skips it, since Python Leo reads `@entangled` as a plain node.
+
+The other examples need a leotui or leogui from 0.8.0, which registers their
+plugins. The corpus skips them too; `crates/leo-plugins/tests/demo.rs` checks
+each one opens and writes back unchanged.
+
+| example | what it shows |
+|---|---|
+| `qmd/` | `@qmd`: a Quarto report whose labelled cells are cloned into `@clean rainfall.py` |
+| `rmd/` | `@rmd`: an R Markdown paper whose chunks are cloned into `@clean growth.R` |
+| `wiki/` | `@wiki`: two wikis linked to each other, exported by `:export-wiki` |
+
+`make test` in `qmd/` or `rmd/` runs the cloned code; `make render` renders
+the document.
 
 `scripts/make_corpus.py` builds the cases under `cases/` and writes every
 expected file:
