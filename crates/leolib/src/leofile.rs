@@ -59,6 +59,9 @@ impl Element {
 
 /// Parse the `.leo` XML into the three sections the reader needs.
 fn parse(contents: &str) -> Result<(Element, Element)> {
+    // The reader skips a BOM but counts its offsets from after it; without
+    // one, they index `contents` and can name a line.
+    let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
     let mut reader = Reader::from_reader(contents.as_bytes());
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
@@ -941,6 +944,23 @@ mod tests {
         let mut o = Outline::new("");
         let err = read_leo_string(&mut o, xml).unwrap_err().to_string();
         assert!(err.contains("<v> opened on line 3 is not closed"), "{err}");
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_shift_the_lines_an_error_names() {
+        // The XML reader skips a BOM and counts its offsets from after it.
+        let mismatched =
+            "\u{feff}<?xml version=\"1.0\"?>\n<leo_file><vnodes>\n<v t=\"a.1\"><vh>A</v>\n";
+        let cut = "\u{feff}<?xml version=\"1.0\"?>\n<leo_file><vnodes>\n<v t=\"a.1\"><vh>x</vh>\n";
+        let err = |xml| {
+            read_leo_string(&mut Outline::new(""), xml)
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(err(mismatched).contains("</v> on line 3 closes <vh> opened on line 3"));
+        assert!(err(cut).contains("<v> opened on line 3 is not closed"));
+        // The fuzz target's find: an element open from byte 2 of the text.
+        assert!(read_leo_string(&mut Outline::new(""), "\u{feff}<>uuuu").is_err());
     }
 
     #[test]
