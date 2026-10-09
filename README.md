@@ -12,6 +12,7 @@ Leo's outline model was re-implemented in rust as `leolib`. `leolib` reads and w
 
 ```sh
 cargo install leotui --locked                  # leotui, from crates.io
+cargo install leogui --locked                  # leogui and leogui-glow, from crates.io
 cargo install --path crates/leotui --locked    # leotui, from a checkout
 cargo install --path crates/leogui --locked    # leogui and leogui-glow, from a checkout
 cargo add leolib                               # the library, in your own crate
@@ -489,6 +490,7 @@ make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Py
 make lint       # rustfmt --check and clippy -D warnings
 make check      # lint, then test
 make audit      # Cargo.lock against the RustSec advisories (cargo-audit)
+make publish    # every crate but leo-entangled to crates.io
 cargo bench -p leoapp    # drawing and colouring a 5,000-line body
 cargo bench -p leolsp    # keeping language servers in step with the outline
 ```
