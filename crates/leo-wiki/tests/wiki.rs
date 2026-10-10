@@ -1,6 +1,6 @@
 //! `@wiki`: links, resolution, rules, renaming and export.
 
-use leo_wiki::{check, export, links, resolve, slug, wikilinks_to_unls, Wiki};
+use leo_wiki::{check, export, links, rendered, resolve, slug, wikilinks_to_unls, Wiki};
 use leolib::{Document, Outline, Position};
 
 /// An outline holding, by indentation in `tree`, `headline|body` lines;
@@ -253,4 +253,23 @@ fn links_become_leo_unls_for_an_outline_shared_with_leo() {
         .unwrap()
         .1;
     assert_eq!(root_edit, &format!("Start at `unl:gnx://#{gnx}`.\n"));
+}
+
+#[test]
+fn the_rendered_view_shows_each_link_to_one_page_as_a_link_to_its_node() {
+    let doc = notes();
+    let o = doc.outline();
+    let intro = find(o, "Intro");
+    let setup = find(o, "Setup").gnx(o).to_string();
+    let other = find(o, "@wiki other");
+    let body = "[[Setup|a [b\\]]] [[other:]] [[Nowhere]] `[[Setup]]`\n";
+    assert_eq!(
+        rendered(o, &intro, body).unwrap(),
+        format!(
+            "[a \\[b\\]](unl:gnx://#{setup}) [other](unl:gnx://#{}) [[Nowhere]] `[[Setup]]`\n",
+            other.gnx(o)
+        )
+    );
+    // Outside a wiki, or with no link to change, the body stays as it is.
+    assert_eq!(rendered(o, &intro, "No links.\n"), None);
 }

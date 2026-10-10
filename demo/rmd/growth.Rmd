@@ -1,0 +1,29 @@
+---
+title: "Plant growth"
+output: html_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+data(PlantGrowth)
+```
+
+# Model
+
+One-way ANOVA of dried weight by treatment.
+
+```{r fit}
+fit <- aov(weight ~ group, data = PlantGrowth)
+```
+
+```{r, echo=FALSE}
+summary(fit)
+```
+
+## Group means
+
+```{r means}
+means <- tapply(PlantGrowth$weight, PlantGrowth$group, mean)
+round(means, 2)
+```

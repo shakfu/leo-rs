@@ -803,7 +803,7 @@ impl eframe::App for Gui {
                             .strong(),
                     );
                     ui.add_space(4.0);
-                    self.rendered.ui(ui, &self.app, &colours);
+                    self.rendered.ui(ui, &mut self.app, &colours);
                 });
         }
 

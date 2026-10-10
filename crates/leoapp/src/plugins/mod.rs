@@ -7,6 +7,7 @@
 //! are none. The leolib kinds documents are opened with are registered the
 //! same way ([`register_kinds`]).
 
+use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -54,6 +55,21 @@ pub trait AppPlugin: Sync {
     /// True if it was.
     fn open_url(&self, _app: &mut App) -> bool {
         false
+    }
+    /// The links in node `p`'s body, `lines`, that `open_url` follows: a
+    /// line index and a byte range in that line, for the body to draw.
+    fn links(
+        &self,
+        _o: &leolib::Outline,
+        _p: &leolib::Position,
+        _lines: &[String],
+    ) -> Vec<(usize, Range<usize>)> {
+        Vec::new()
+    }
+    /// Node `p`'s markdown, `body`, as the rendered view shows it, if this
+    /// plugin changes it: its links as markdown links the view can follow.
+    fn rendered(&self, _o: &leolib::Outline, _p: &leolib::Position, _body: &str) -> Option<String> {
+        None
     }
     /// What completes at the body cursor while typing, if this plugin offers
     /// anything there: the column the text starts at, and the candidates.
@@ -120,6 +136,20 @@ pub fn menu(menu: &str) -> impl Iterator<Item = &'static MenuEntry> + '_ {
 /// Follow the link under the body cursor with the first plugin that knows it.
 pub fn open_url(app: &mut App) -> bool {
     all().iter().any(|p| p.open_url(app))
+}
+
+/// Every plugin's links in node `p`'s body.
+pub fn links(
+    o: &leolib::Outline,
+    p: &leolib::Position,
+    lines: &[String],
+) -> Vec<(usize, Range<usize>)> {
+    all().iter().flat_map(|q| q.links(o, p, lines)).collect()
+}
+
+/// Node `p`'s body as the first plugin that changes it renders it.
+pub fn rendered(o: &leolib::Outline, p: &leolib::Position, body: &str) -> Option<String> {
+    all().iter().find_map(|q| q.rendered(o, p, body))
 }
 
 /// What the first plugin with anything to offer completes at the cursor.

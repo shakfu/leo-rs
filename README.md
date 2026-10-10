@@ -11,7 +11,7 @@ Leo's outline model was re-implemented in rust as `leolib`. `leolib` reads and w
 ## Installing
 
 ```sh
-cargo install leotui --locked                  # leotui, from crates.io
+cargo install leogui --locked                  # leogui and leogui-glow, from crates.io
 cargo install --path crates/leotui --locked    # leotui, from a checkout
 cargo install --path crates/leogui --locked    # leogui and leogui-glow, from a checkout
 cargo add leolib                               # the library, in your own crate
@@ -145,7 +145,8 @@ The keys are the same in leogui.
 | `v V` | select charwise, linewise |
 | `p P` | put the text register after, before |
 | `.` | repeat the last change |
-| `gd` | go to the node defining the `<< section >>` on this line |
+| `gd` | follow the link under the cursor: a `[[wiki link]]`, a `gnx:` or `unl:` link, else the `<< section >>` on this line to the node defining it |
+| `Enter` | the same as `gd` |
 | `K` | what the language server says of the symbol under the cursor |
 | `Ctrl-]` | go to its definition |
 | `gr` | clone every node using it under a `Found` node |
@@ -235,7 +236,7 @@ Colours come from a Helix theme, read from `~/.config/leo-rs/themes` or `~/.conf
 
 Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess. A non-empty `NO_COLOR` turns colour off, as `:set colors=none` does; the selected row and the status line are then shown reversed.
 
-The outline's selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window` scopes, so a light theme draws them for a light background.
+The outline's selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window` scopes, so a light theme draws them for a light background. A `[[wiki link]]` is underlined in `markup.link.url`.
 
 In leotui, flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
@@ -274,11 +275,11 @@ What the window adds to leotui:
 | External files | An `@<file>` row is badged unread, changed on disk, never read, or unwritten. A bar above the body offers Reload or Keep for a file changed on disk. |
 | Clones and hoists | A cloned row shows its clone count, and its context menu lists the clones. A hoisted node is named above the outline, with a De-hoist button. |
 | Several nodes | Cmd-click (Ctrl-click off macOS) adds a row, Shift-click the rows from the current one. Delete and Mark then act on every chosen row, and dragging one moves them all, each as one undo step; any other command acts on the current row alone and unchooses the rest. |
-| The body | The bracket at the cursor and its match are shaded (`ui.cursor.match`). An `@pagewidth` directive draws a ruler at its column (`ui.virtual.ruler`). Indent guides mark each indent level (`ui.virtual.indent-guide`, `:set noguides`); `:set list` marks spaces and tabs (`ui.virtual.whitespace`). |
+| The body | The bracket at the cursor and its match are shaded (`ui.cursor.match`). An `@pagewidth` directive draws a ruler at its column (`ui.virtual.ruler`). Indent guides mark each indent level (`ui.virtual.indent-guide`, `:set noguides`); `:set list` marks spaces and tabs (`ui.virtual.whitespace`). A click on a `[[wiki link]]` follows it. |
 | Drag and drop | Dropping a `.leo` file opens it; dropping any other file imports it as `@auto`. |
 | Language servers | Completion under the cursor, Cmd-. for code actions, and the Body menu for hover, definition, rename and problems. The status bar's LSP dot opens View > Language Servers. See [Language servers](#language-servers). |
 | Bottom panel | View > Problems (the body's diagnostics), Log (the status messages), Find, and Language Servers (each server's state and log). |
-| Rendered view | View > Rendered View: the selected node rendered beside the body, as Leo's `viewrendered` shows it. Markdown (`@language md` or a `@md` headline) with its tables, coloured code and images; an `@image` node's picture (the path on the body's first line). reStructuredText is shown as text. |
+| Rendered view | View > Rendered View: the selected node rendered beside the body, as Leo's `viewrendered` shows it. Markdown (`@language md` or a `@md` headline) with its tables, coloured code and images; an `@image` node's picture (the path on the body's first line). reStructuredText is shown as text. A `@wiki` page's links are links, and a click selects the page. |
 | Settings dialog | File > Settings... (Cmd-,). See [Settings](#settings). |
 
 View > Appearance picks dark, light, or the system's choice, saved as `appearance = "dark" | "light" | "system"`. The dark theme is `theme` (default `sonokai`) and the light one `theme-light` (default `onelight`); `:theme` sets whichever is showing. View > Theme... lists your Helix themes as dark or light, and previews each under the pointer. The window's parts take the Helix scopes for them, such as `ui.statusline.insert` for the INSERT badge, `ui.menu.selected` for a list's selected item, and `diagnostic.warning` for a warning's underline.
@@ -378,7 +379,14 @@ A code action or a format that replaces the whole file is applied to just the li
 
 ## Plugins
 
-The workspace holds kinds Leo does not have, as plugins outside leolib: `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs)), `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes), and `@wiki` (markdown pages linked by `[[...]]`, exported to one file). leotui and leogui register `@qmd`, `@rmd` and `@wiki` from 0.8.0. `@entangled` is in no release: its crate is unpublished, and `make ... ENTANGLED=1` builds and tests it. leolib keeps the extension API they use (`leolib::ext`); with no kind registered, it reads an outline as Leo does. What they do is in `docs/plugins.md`; the design is in `docs/dev/plugins.md`.
+Plugins are the current way to extend leo-rs, and keep the core minimal and conformant (to the extent possible) with leo-editor. The following plugins are implemented:
+
+- `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs))
+- `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes)
+- `@wiki` (markdown pages linked by `[[...]]`, exported to one file).
+
+You can read more about plugins in `docs/plugins.md`; and their design in `docs/dev/plugins.md`. See `demo/qmd/`, `demo/rmd/`, `demo/wiki/` and `demo/entangled/` for an example of each of the current plugins.
+
 
 ## Using leolib
 
@@ -426,7 +434,7 @@ Verified against `leo/core/LeoPyRef.leo` from the Leo repository, at leo-editor 
 | `@auto` trees, 1,000 files across 8 languages | 998 identical to Leo's importers; the 2 differences are a deliberate fix |
 | `@auto` files written back | 1,008 of 1,010 byte-identical; the 2 exceptions fail in Leo too |
 
-Those figures come from runs against a leo-editor checkout. What `cargo test` checks every time is the conformance corpus in `demo/`: each outline there has an expected file written by Python Leo (`scripts/make_corpus.py`), and leo-editor checks Python Leo against a copy of the same files. One case per feature, indexed in `demo/README.md`. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
+Those figures come from runs against a leo-editor checkout. What `cargo test` checks every time is the conformance corpus in `demo/`: each case there has an expected file written by Python Leo (`scripts/make_corpus.py`), and leo-editor checks Python Leo against a copy of the same files. One case per feature, indexed in `demo/README.md`. The `@auto` tree comparison needs a Python Leo: see `docs/dev/compare-importers.py`.
 
 ## Layout
 
@@ -443,7 +451,7 @@ crates/leogui         the desktop front end: leoapp drawn with egui.
 crates/leomcp         an MCP server on localhost, serving the open outline.
 ```
 
-`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`, and `egui_commonmark`, `egui_extras` and `image` for the rendered view.
+`leolib` has one runtime dependency for XML parsing (`quick-xml`), one for regular expressions (`regex`), and `once_cell`. `leolsp` adds `lsp-types` and `serde_json`, `leomcp` only `serde_json`, and `leoapp` `unicode-width` and the tree-sitter grammars. `leotui` adds `ratatui`, `crossterm` and `clap`; `leogui` adds `eframe`, `rfd` and `clap`, and `egui_commonmark`, `egui_extras` and `image` for the rendered view.
 
 ## `@auto`
 
@@ -488,6 +496,7 @@ make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Py
 make lint       # rustfmt --check and clippy -D warnings
 make check      # lint, then test
 make audit      # Cargo.lock against the RustSec advisories (cargo-audit)
+make publish    # every crate but leo-entangled to crates.io
 cargo bench -p leoapp    # drawing and colouring a 5,000-line body
 cargo bench -p leolsp    # keeping language servers in step with the outline
 ```

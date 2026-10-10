@@ -28,6 +28,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **`demo/entangled/`: a README whose examples are tested.** `tests.md` places each named example from `README.md` in a pytest function by reference; tangling writes `test_readme.py`, and an example that no longer holds fails its test. `demo.leo` holds the README, the tests and the library in one outline. The conformance corpus skips it: Python Leo reads `@entangled` as a plain node, so there is nothing to check it against.
 
+- **`demo/qmd/`, `demo/rmd/` and `demo/wiki/`: an example for each plugin.** The `@qmd` and `@rmd` outlines clone labelled cells into an `@clean` file that `make test` runs. The corpus skips them, as it skips `demo/entangled/`; `leo-plugins/tests/demo.rs` checks that each opens without errors and writes back unchanged. It also runs the cloned code and renders each document, skipping a step when Python, Quarto with Jupyter in the uv `.venv`, R or rmarkdown is missing.
+
 - **`@settings` trees set what leolib reads and writes.** The outline's `@settings` tree, and `~/.leo/myLeoSettings.leo` in leotui and leogui, give `tab-width`, `page-width`, `output-newline`, `target-language`, `default-derived-file-encoding`, `create-nonexistent-directories` and `force-newlines-in-at-nosent-bodies`; an outline with `@string output-newline = crlf` now writes CRLF files, as Leo does. Other settings are ignored. A value that is not valid is reported and the default kept. `@ignore`, `@ifplatform`, `@ifenv` and `@ifhostname` are honoured; `@if EXPRESSION` is Python, so its settings are skipped.
 
 - **A session that ends without the user's say keeps its work.** On a hangup (a dropped ssh session), SIGTERM, a terminal that fails, or a panic, leotui writes every node to `NAME.recovered.leo` beside the outline, all under one `@ignore` node, so opening it reads no external file. The next open names the copy. Five seconds after a signal the process exits whatever it is doing.
@@ -38,6 +40,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **`@wiki`: markdown pages linked by `[[...]]`**, in the new `leo-wiki` crate. `gd` follows a link and `Ctrl-o` comes back; `[[` completes a page; renaming a page rewrites the links to it; `:export-wiki` writes one markdown file with GitHub anchors, refusing a broken or ambiguous link or a page deeper than six. An edit that breaks a wiki's rules (no clones, no `@` headlines, no directives in pages) is undone and named. `leolib::ext::TreeKind` is the extension it uses: a directive whose tree is stored in the `.leo` file, unlike a `FileKind`'s. `gd` also follows Leo's `gnx:` and `unl:` links everywhere. Design: `docs/dev/wiki.md`.
 
+- **A `[[wiki link]]` is drawn and followed as a hyperlink.** In a `@wiki` page, both front ends draw it underlined in the theme's `markup.link.url` colour; the builtin theme's is light blue. `Enter` in NORMAL follows it, as `gd` does, since `gd` is a vim key few expect to follow a link. In leogui a click follows it, and the mouse shows a pointing hand over it. leogui's rendered view shows each link that names one page as a link to its node, and a click selects the node; the link is an egui_commonmark link hook, so hovering does not show its `unl:gnx://` URL. A link naming no page or several is shown as typed. Following uses the scan that drawing and export use, so a `[[link]]` in fenced code is text.
+
 - **Semantic-token colouring.** Where a language server offers semantic tokens, parameters, variables, macros, namespaces and enum members take their theme colours over tree-sitter's; `:set nosemantic` turns it off. Tokens are asked for when the text the server has changes, and not shown while a change is typed.
 
 - **Find references, signature help and format document**, from the language server. `gr` clones the nodes using the symbol under `Found N:references to NAME`, as `clone-find-all` gathers matches. A call's signature shows while its arguments are typed, its parameter in brackets on the status line and in a popup in leogui. `:lsp-format` formats the node's file and applies just the lines it changes; one touching a sentinel line refuses the whole.
@@ -45,6 +49,10 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 - **leogui's body: matching brackets, a ruler and guides.** The bracket at the cursor and its match are shaded; an `@pagewidth` directive draws a ruler; indent guides mark each level (`:set noguides`); `:set list` marks spaces and tabs.
 
 - **Several nodes at once in leogui.** Cmd- or Ctrl-click adds a row, Shift-click a run; Delete, Mark and a drag then act on every chosen row, as one undo step each (`Document::move_nodes`, `delete_nodes`).
+
+### Changed
+
+- **leoapp: plugins can mark and render links.** `AppPlugin` has `links`, the ranges the body draws as links, and `rendered`, a node's markdown as the rendered view shows it. `view::decorate` takes the links and marks their segments, and `BodyView` carries them. `App::follow_url` follows a Leo link outside the body, as the rendered view needs.
 
 ### Fixed
 
@@ -66,6 +74,8 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **A `.leo` file with CRLF line endings reads as Leo reads it.** A Windows checkout's file put `\r\n` into every body, where Leo, following XML, reads `\n`; a written `&#13;` is still a CR.
 
+- **A `.leo` file with a byte-order mark no longer panics on a malformed tag.** The XML reader skips a leading BOM, and a second one after it, and counts its offsets from after them, so the line an unclosed or mismatched tag was reported on was sliced early: inside a BOM, a panic; past it, a line that could be one short. Every leading BOM is now stripped before parsing, and the line is counted by bytes, so an offset that is still wrong cannot panic. The `read_leo` fuzz target found it.
+
 - **Gnxs take Leo's id first from `~/.leo/.leoID.txt`**, then the login name, as Leo does, so one person's nodes carry one id in both.
 
 - **`@ifenv` and `@ifhostname` in `@settings` are tested as Leo tests them**; their settings were skipped. The pickle reader reads and writes floats and tuples, so a uA blob holding one survives a restructure.
@@ -78,17 +88,26 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 - **A file that fails to read keeps its nodes' uAs.** The `descendentVnodeUnknownAttributes` blob was consumed even though the tree it names was not read, so the next save dropped its uAs for good.
 
+- **A uA blob leo-rs rebuilt could fail to read back.** The pickle reader's cap counts opcodes and memo copies, and protocol 1 memoizes every tuple, so a value built cheaply with `TUPLE1` could cost size x depth once written: a uA of tuples nested about 90 deep read, and the `descendentVnodeUnknownAttributes` blob rebuilt from it did not. The blob stayed parked, unchanged, but its subtree's uAs were not restored. The reader now refuses a value unless its own pickle reads within the cap, which the `pickle` fuzz target found.
+
 - **The MCP server reads nothing large before it checks the token**, closes a refused connection, caps request lines and headers, and serves at most 16 connections. A settings file holding `mcp-token` is written readable by its owner only.
 
 - **leotui and leogui say when plugins failed to register**, on stderr; a release build was silent.
 
 - **`@qmd` and `@rmd` fixes before their release.**
+
   - A body edited to end without a newline joined the next heading onto it; the headings were lost on reopen.
+
   - Only the CR of a CRLF is removed. A line ending in CR alone makes the read refuse, which keeps the file byte for byte; it lost every line break before. A dropped byte-order mark is reported.
+
   - A refused read kept the whole file in the node, but the next write could refuse that body too; it is now written as it stands. A refused read no longer erases the saved cell gnxs, which unlinked `@clean` clones.
+
   - A fence opener on a file's last line, with no newline, is text.
+
   - A quoted label is one name: `#| label: "b c"` renames in place, where a second label line was added, and knitr's `label='x y'` no longer reads as `x`. A label named `label` renames its value.
+
   - An indented cell with a line of just its indent reads; it was refused.
+
   - Edits that would change the tree on the next read are written another way or refused: an underlined heading renamed to `- todo` is written `## - todo`, and a cell whose code would close its fence, or a heading with no headline, is refused. `#` lines in an HTML comment spanning lines stay text.
 
 ## [0.7.0]

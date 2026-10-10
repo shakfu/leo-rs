@@ -501,6 +501,30 @@ fn rewrite_body(
     (at > 0).then(|| out + &body[at..])
 }
 
+/// Page `p`'s `body` with each link that names one page as a markdown link
+/// to it, `[text](unl:gnx://#GNX)`, for the rendered view to follow. A link
+/// naming no page or several stays as typed. None if `p` is not in a wiki
+/// or no link changed.
+pub fn rendered(o: &Outline, p: &Position, body: &str) -> Option<String> {
+    let root = root_of(o, p)?;
+    let mut n = 0;
+    rewrite_body(
+        body,
+        |link| match resolve(o, &root, link).as_slice() {
+            [target] => {
+                let cross = link
+                    .wiki
+                    .as_deref()
+                    .is_some_and(|w| root_named(o, w).is_some());
+                let text = link.text(cross).replace('[', "\\[").replace(']', "\\]");
+                Some(format!("[{text}](unl:gnx://#{})", target.gnx(o)))
+            }
+            _ => None,
+        },
+        &mut n,
+    )
+}
+
 // --- Export ------------------------------------------------------------------
 
 /// A heading's anchor as GitHub makes it: lower case, punctuation dropped,

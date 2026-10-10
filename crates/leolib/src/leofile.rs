@@ -57,8 +57,18 @@ impl Element {
     }
 }
 
+/// The line of `contents` that byte `at` is on. By bytes, so an offset that is
+/// not a char boundary names a line rather than panics.
+fn line_at(contents: &str, at: usize) -> usize {
+    let before = &contents.as_bytes()[..at.min(contents.len())];
+    before.iter().filter(|&&b| b == b'\n').count() + 1
+}
+
 /// Parse the `.leo` XML into the three sections the reader needs.
 fn parse(contents: &str) -> Result<(Element, Element)> {
+    // The reader skips a leading BOM, each in turn, and counts its offsets
+    // from after it; with none left, they index `contents`.
+    let contents = contents.trim_start_matches('\u{feff}');
     let mut reader = Reader::from_reader(contents.as_bytes());
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
@@ -87,9 +97,7 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
                 let closing = e.name().into_inner().to_string();
                 if let Some(open) = stack.get(1..).and_then(|s| s.last()) {
                     if open.name != closing {
-                        let line = |at: usize| {
-                            contents[..at.min(contents.len())].matches('\n').count() + 1
-                        };
+                        let line = |at: usize| line_at(contents, at);
                         return Err(Error::NotALeoFile {
                             detail: format!(
                                 "</{closing}> on line {} closes <{}> opened on line {}",
@@ -130,10 +138,7 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
     // An element still open at the end: the file was cut short, or a closing
     // tag names another element, which `check_end_names` lets pass.
     if let Some(open) = stack.get(1..).and_then(|s| s.last()) {
-        let line = contents[..open.start.min(contents.len())]
-            .matches('\n')
-            .count()
-            + 1;
+        let line = line_at(contents, open.start);
         return Err(Error::NotALeoFile {
             detail: format!(
                 "<{}> opened on line {line} is not closed: the file is cut short or a tag is mismatched",
@@ -941,6 +946,25 @@ mod tests {
         let mut o = Outline::new("");
         let err = read_leo_string(&mut o, xml).unwrap_err().to_string();
         assert!(err.contains("<v> opened on line 3 is not closed"), "{err}");
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_shift_the_lines_an_error_names() {
+        // The XML reader skips a BOM and counts its offsets from after it.
+        let mismatched =
+            "\u{feff}<?xml version=\"1.0\"?>\n<leo_file><vnodes>\n<v t=\"a.1\"><vh>A</v>\n";
+        let cut = "\u{feff}<?xml version=\"1.0\"?>\n<leo_file><vnodes>\n<v t=\"a.1\"><vh>x</vh>\n";
+        let err = |xml| {
+            read_leo_string(&mut Outline::new(""), xml)
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(err(mismatched).contains("</v> on line 3 closes <vh> opened on line 3"));
+        assert!(err(cut).contains("<v> opened on line 3 is not closed"));
+        // The fuzz target's find: an element open from byte 2 of the text.
+        assert!(read_leo_string(&mut Outline::new(""), "\u{feff}<>uuuu").is_err());
+        // And after a second BOM, which the reader skips as it did the first.
+        assert!(read_leo_string(&mut Outline::new(""), "\u{feff}\u{feff}<>").is_err());
     }
 
     #[test]

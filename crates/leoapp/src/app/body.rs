@@ -363,16 +363,28 @@ impl App {
     /// cursor's line, the one under the cursor if there are several: select
     /// the node it names. False if the line has none.
     fn follow_leo_link(&mut self) -> bool {
-        static LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r#"unl:gnx://([^\s'"`#]*)#([^\s'"`]+)|unl://([^\s'"`#]*)#([^'"`\n]+)|gnx:([^\s'"`]+)"#)
-                .expect("a valid pattern")
-        });
         let lines = self.body_buffer();
         let (row, col) = self.editor.cursor;
         let Some(line) = lines.get(row) else {
             return false;
         };
         let at = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
+        self.follow_leo_link_in(line, at)
+    }
+
+    /// Follow `url`, a Leo link as `follow_leo_link` reads one: a click in
+    /// the rendered view. False if it is not one.
+    pub fn follow_url(&mut self, url: &str) -> bool {
+        self.follow_leo_link_in(url, 0)
+    }
+
+    /// The link in `line` at byte `at`, else its first: select the node it
+    /// names. False if the line has none.
+    fn follow_leo_link_in(&mut self, line: &str, at: usize) -> bool {
+        static LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r#"unl:gnx://([^\s'"`#]*)#([^\s'"`]+)|unl://([^\s'"`#]*)#([^'"`\n]+)|gnx:([^\s'"`]+)"#)
+                .expect("a valid pattern")
+        });
         let links: Vec<regex::Captures> = LINK.captures_iter(line).collect();
         let Some(m) = links
             .iter()

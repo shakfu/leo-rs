@@ -13,7 +13,7 @@ else
 WS := --workspace --exclude leo-entangled
 endif
 
-.PHONY: test corpus bench build release fmt lint audit check run gui gui-glow dump clean
+.PHONY: test corpus bench build release fmt lint audit check publish run tui gui gui-glow dump clean
 
 test:
 	cargo test $(WS)
@@ -48,8 +48,14 @@ audit:
 
 check: lint test
 
+# Not $(WS): ENTANGLED=1 must not publish leo-entangled, which is unpublished.
+publish:
+	cargo publish --workspace --exclude leo-entangled
+
 run:
 	cargo run -p leotui -- $(FILE)
+
+tui: run
 
 # Release: egui's debug build is slow to draw.
 gui:

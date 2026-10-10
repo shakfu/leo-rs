@@ -170,6 +170,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     let palette = palette(&app.theme, app.depth);
     let selected_style = ui_style(app, "ui.selection");
     let linenr = ui_style(app, "ui.linenr");
+    let link = link_style(app);
     let mut cells: Vec<Vec<(char, Style, usize)>> = Vec::new();
     let mut shown: Vec<Line> = Vec::new();
     for screen in body.screen_lines() {
@@ -186,10 +187,13 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             };
             let spans = body.spans.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
             let (hits, marks) = (body.hits(i), body.marks(i));
-            let pieces: Vec<(&str, Style)> = view::decorate(l, spans, &hits, &marks)
+            let pieces: Vec<(&str, Style)> = view::decorate(l, spans, &hits, &marks, body.links(i))
                 .into_iter()
                 .map(|seg| {
                     let mut style = style_for(seg.class, base, &palette);
+                    if seg.link {
+                        style = style.patch(link);
+                    }
                     if let Some(severity) = seg.severity {
                         style = style.patch(severity_style(severity));
                     }
@@ -347,6 +351,14 @@ fn severity_style(severity: view::Severity) -> Style {
 }
 
 /// A search match: vim's default `Search` colours.
+/// A plugin's link: the theme's link colour, else light blue, underlined.
+fn link_style(app: &App) -> Style {
+    let fg = app.theme.face(view::LINK_SCOPE).fg;
+    Style::default()
+        .fg(fg.map_or(Color::LightBlue, |c| terminal_colour(c.reduce(app.depth))))
+        .add_modifier(Modifier::UNDERLINED)
+}
+
 fn match_style() -> Style {
     Style::default().bg(Color::Yellow).fg(Color::Black)
 }
