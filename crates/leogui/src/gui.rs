@@ -24,7 +24,7 @@ use crate::rendered::RenderedView;
 use crate::session::{self, SavedOutline, Session};
 use crate::settings::SettingsDialog;
 use crate::status;
-use crate::style::Palette;
+use crate::style::{self, Palette};
 use crate::tabs::{self, Tabs};
 use crate::themes::ThemePicker;
 use crate::tree::Tree;
@@ -696,9 +696,9 @@ impl eframe::App for Gui {
         }
 
         self.follow_appearance(&ctx);
-        let colours = Palette::of(&self.app, self.light == Some(true));
+        let colours = style::palette(&self.app, self.light == Some(true));
         if self.theme != self.app.theme.name() {
-            ctx.set_visuals(colours.visuals());
+            ctx.set_visuals(style::visuals(&colours));
             self.theme = self.app.theme.name().to_string();
         }
         self.tabs.track(&self.app);

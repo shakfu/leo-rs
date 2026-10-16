@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn a_diagnostic_is_underlined_in_its_severitys_colour() {
+    fn a_diagnostic_is_named_on_the_status_line_not_underlined() {
         let mut o = Outline::new_empty();
         let root = o.root_position().unwrap();
         o.set_body(&root, "x = nope\n");
@@ -559,9 +559,23 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         let row: Vec<_> = (0..width).map(|x| buffer[(x, 2)].clone()).collect();
         let start = row.iter().position(|c| c.symbol() == "x").unwrap();
-        let marked = |i: usize| {
+        // The sign column marks the line; the text is drawn as it is.
+        let p = ui::colours(&app);
+        assert!((0..8).all(|i| {
             let c = &row[start + i];
-            c.fg == Color::Red && c.modifier.contains(ratatui::style::Modifier::UNDERLINED)
+            c.fg == p.fg && !c.modifier.contains(ratatui::style::Modifier::UNDERLINED)
+        }));
+        // Unless `diagnostic-underline` asks for it, in the theme's colour.
+        app.settings.diagnostic_underline = true;
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let lit: Vec<_> = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 2)].clone())
+            .collect();
+        let underline = p.mark(leoapp::view::Severity::Error).underline;
+        let marked = |i: usize| {
+            let c = &lit[start + i];
+            c.underline_color == underline
+                && c.modifier.contains(ratatui::style::Modifier::UNDERLINED)
         };
         assert!((4..8).all(marked), "`nope` is not marked");
         assert!(!(0..4).any(marked), "`x = ` is marked");
@@ -570,6 +584,100 @@ mod tests {
             .map(|x| buffer[(x, height - 1)].symbol().to_string())
             .collect();
         assert!(status.contains("E: undefined: nope"), "{status}");
+    }
+
+    #[test]
+    fn a_line_with_a_diagnostic_gets_a_sign_while_a_server_is_attached() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_body(&root, "ok\nx = nope\n");
+        let mut app = App::new(Document::new(o));
+        let warning = leoapp::view::Severity::Warning;
+        app.diagnostics = vec![leoapp::view::BodyDiagnostic {
+            row: 1,
+            col: 4,
+            end_row: 1,
+            end_col: 8,
+            severity: warning,
+            message: "undefined: nope".into(),
+        }];
+        // The `width` cells left of the text, on its two lines.
+        let column = |app: &mut App, width: usize| {
+            let lines = render(app, 60, 8);
+            let x = lines[2].chars().position(|c| c == 'o').unwrap();
+            lines[2..4]
+                .iter()
+                .map(|l| l.chars().skip(x - width).take(width).collect::<String>())
+                .collect::<Vec<_>>()
+        };
+        // No server, no column: the text starts inside the border.
+        assert_eq!(column(&mut app, 1), ["\u{2502}", "\u{2502}"]);
+
+        // A server for a language this body is not, so none starts.
+        let diagnostics = std::mem::take(&mut app.diagnostics);
+        let settings = leoapp::config::parse("lsp-nosuchlanguage = \"true\"");
+        app.set_lsp(&settings, std::sync::Arc::new(|| {}));
+        assert!(app.lsp.is_some());
+        app.diagnostics = diagnostics;
+        // A dot, then a blank before the text.
+        assert_eq!(column(&mut app, 3), ["\u{2502}  ", "\u{2502}\u{25cf} "]);
+        // The status bar counts it, and shows the server not yet started.
+        let status = render(&mut app, 60, 8).pop().unwrap();
+        assert!(status.ends_with("E 0  W 1  LSP \u{25cf}"), "{status:?}");
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let dot = (0..60u16).find(|&x| buffer[(x, 3)].symbol() == "\u{25cf}");
+        assert_eq!(
+            buffer[(dot.unwrap(), 3)].fg,
+            ui::colours(&app).mark(warning).gutter
+        );
+    }
+
+    /// Sonokai's parts that leotui once drew green.
+    const GREEN_ACCENT: &str = r##"
+"ui.background" = { bg = "#000000" }
+"ui.text" = "#e2e2e3"
+"ui.text.focus" = "#9ed072"
+"ui.selection.primary" = { bg = "#5c606a" }
+"ui.menu.selected" = { fg = "#000000", bg = "#9ed072" }
+"ui.window" = { fg = "#7f8490", bg = "#000000" }
+"##;
+
+    #[test]
+    fn the_theme_is_drawn_as_leogui_draws_it() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file demo.py");
+        let mut app = App::new(Document::new(o));
+        app.theme = leoapp::theme::Theme::from_text("t", GREEN_ACCENT);
+        app.depth = leoapp::theme::Depth::True;
+        let (width, height) = (60, 8);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let green = Color::Rgb(0x9e, 0xd0, 0x72);
+        let cells: Vec<_> = buffer.content.iter().collect();
+        assert!(
+            cells.iter().all(|c| c.fg != green && c.bg != green),
+            "the accent is drawn"
+        );
+        // The selected row is the theme's selection, the kind dim, the
+        // name in the text's colour.
+        let p = ui::colours(&app);
+        let row: Vec<_> = (0..width).map(|x| buffer[(x, 2)].clone()).collect();
+        let at = |s: &str| row.iter().position(|c| c.symbol() == s).unwrap();
+        assert_eq!(row[at("@")].bg, Color::Rgb(0x5c, 0x60, 0x6a));
+        assert_eq!(row[at("@")].fg, p.dim);
+        assert_eq!(row[at("p")].fg, Color::Rgb(0xe2, 0xe2, 0xe3));
+        // The body is on the theme's background.
+        assert_eq!(buffer[(width - 3, 4)].bg, Color::Rgb(0, 0, 0));
+
+        // Unless the terminal's is asked for.
+        app.settings.terminal_background = true;
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(buffer[(width - 3, 4)].bg, Color::Reset);
     }
 
     #[test]
@@ -712,7 +820,7 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         let highlighted: String = (0..14)
             .flat_map(|y| (0..60).map(move |x| (x, y)))
-            .filter(|&(x, y)| buffer[(x, y)].bg == Color::Blue)
+            .filter(|&(x, y)| buffer[(x, y)].bg == ui::colours(&app).menu_selected)
             .map(|(x, y)| buffer[(x, y)].symbol().to_string())
             .collect();
         assert!(

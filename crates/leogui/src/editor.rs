@@ -225,7 +225,11 @@ impl Editor {
                 _ => Rect::from_min_size(min, cell),
             };
             let look = colours.cursor(app.mode);
-            painter.rect_filled(cursor, 1.0, look.fill);
+            let fill = match look.soft {
+                true => look.fill.gamma_multiply(0.75),
+                false => look.fill,
+            };
+            painter.rect_filled(cursor, 1.0, fill);
             // A block cursor shows the character under it, in the theme's
             // colour for that: a reversed cursor's is the background.
             if let (Some(text), true) = (look.text, app.mode != Mode::Insert) {
@@ -343,7 +347,7 @@ impl Editor {
         if let Some(s) = worst {
             painter.circle_filled(
                 pos2(left + cell.x * 0.5, at.y + cell.y / 2.0),
-                3.0,
+                2.0,
                 colours.mark(s).gutter,
             );
         }

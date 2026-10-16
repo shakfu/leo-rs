@@ -6,6 +6,10 @@
 //! comments. The keys:
 //!
 //! - `theme`, `theme-light`, `appearance`, `split-ratio`;
+//! - `terminal-background`, true for leotui to leave the theme's
+//!   background unpainted and show the terminal's;
+//! - `diagnostic-underline`, true for leotui to underline a diagnostic's
+//!   text as well as mark its line;
 //! - `number`, `wrap`, `syntax`: what `:set` starts as;
 //! - `lsp`, off to start no language server, and `lsp-LANGUAGE`, the
 //!   command of the server for Leo's language `LANGUAGE`;
@@ -128,6 +132,10 @@ pub struct Config {
     /// `theme` is the dark one.
     pub appearance: Appearance,
     pub theme_light: Option<String>,
+    /// leotui shows the terminal's background, not the theme's.
+    pub terminal_background: bool,
+    /// leotui underlines a diagnostic's text, besides its sign.
+    pub diagnostic_underline: bool,
     /// False to start no language server, whatever `servers` names.
     pub lsp: bool,
     /// `lsp-python = "pylsp"`: a server per language, none unless named.
@@ -151,6 +159,8 @@ impl Default for Config {
             mac_dont_swap_ctrl_and_meta: false,
             appearance: Appearance::default(),
             theme_light: None,
+            terminal_background: false,
+            diagnostic_underline: false,
             lsp: true,
             servers: Vec::new(),
             number: None,
@@ -254,6 +264,14 @@ pub fn parse(text: &str) -> Config {
                 if let Some(b) = flag("qt-mac-dont-swap-ctrl-and-meta", v, n, &mut config.warnings)
                 {
                     config.mac_dont_swap_ctrl_and_meta = b;
+                }
+            }
+            (key @ ("terminal-background" | "diagnostic-underline"), v) => {
+                if let Some(b) = flag(key, v, n, &mut config.warnings) {
+                    match key {
+                        "terminal-background" => config.terminal_background = b,
+                        _ => config.diagnostic_underline = b,
+                    }
                 }
             }
             (key @ ("lsp" | "mcp" | "mcp-edit" | "mcp-save"), v) => {
@@ -498,6 +516,17 @@ mod tests {
                 "config line 3: unknown setting lsp-"
             ]
         );
+    }
+
+    #[test]
+    fn the_terminal_background_is_a_flag() {
+        assert!(!parse("").terminal_background);
+        assert!(parse("terminal-background = true").terminal_background);
+        assert!(!parse("").diagnostic_underline);
+        assert!(parse("diagnostic-underline = true").diagnostic_underline);
+        let bad = parse("terminal-background = yes");
+        assert!(!bad.terminal_background);
+        assert_eq!(bad.warnings.len(), 1);
     }
 
     #[test]

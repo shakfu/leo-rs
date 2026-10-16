@@ -817,6 +817,8 @@ The parser is by hand. A theme file uses three shapes -- `key = "value"`, `key =
 
 `bg` and `underline` are parsed and dropped. Painting a pane's background is a decision about the whole frame, not about a run of text, and a theme's background under a terminal's own would leave the outline pane and the borders mismatched.
 
+Superseded on 2026-10-16: leotui reads the panes' colours from `leoapp::palette`, the mapping leogui draws with, and paints the frame in `ui.background`. Its own scope choices -- `ui.menu.selected` for the selected row, `ui.text.focus` for borders -- drew sonokai's accent green across the outline where leogui drew grey. `terminal-background = true` keeps the terminal's background.
+
 #### 19.7.1 Fewer colours than the theme wants
 
 `Depth` is truecolor, the 256-colour cube, or the terminal's sixteen, from

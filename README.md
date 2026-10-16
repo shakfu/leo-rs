@@ -236,9 +236,9 @@ Colours come from a Helix theme, read from `~/.config/leo-rs/themes` or `~/.conf
 
 Truecolor is used where the terminal reports it, and reduced to the 256-colour cube or the terminal's sixteen where it does not; `:set colors=true|256|16` overrides the guess. A non-empty `NO_COLOR` turns colour off, as `:set colors=none` does; the selected row and the status line are then shown reversed.
 
-The outline's selected row, marked and `@<file>` nodes and pane borders take the theme's `ui.menu.selected`, `ui.selection`, `warning`, `ui.text.directory`, `ui.text.focus` and `ui.window` scopes, so a light theme draws them for a light background. A `[[wiki link]]` is underlined in `markup.link.url`.
+The panes, borders, selected row, status bar and diagnostics take the same theme scopes in leotui as in leogui, so one theme looks the same in both. leotui paints the theme's `ui.background`, as Helix does; `terminal-background = true` in `settings.toml` keeps the terminal's own. A `[[wiki link]]` is underlined in `markup.link.url`.
 
-In leotui, flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. `@<file>` nodes are green. The design, and what is still to come, is in `docs/dev/tui-design.md`.
+In leotui, flags in the left column: `>` selected, `*` marked, `C` cloned, `~` dirty. An `@<file>` node's kind is dim. The design, and what is still to come, is in `docs/dev/tui-design.md`.
 
 ## Using leogui
 
@@ -353,7 +353,7 @@ A `rust-analyzer` installed by rustup is a stub until `rustup component add rust
 
 | feature | keys and commands | leogui |
 |-|-|-|
-| Diagnostics | underlined in the body; the cursor line's on the status line. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's | Body > Next Problem, Previous Problem; View > Problems |
+| Diagnostics | a dot in the sign column left of the text, and an underline with `diagnostic-underline = true`; the cursor line's on the status line, with the body's error and warning counts and the servers' state at its right end. `]d` `[d` move between them; `:lsp-diagnostics` lists the body's | Body > Next Problem, Previous Problem; View > Problems |
 | Hover | `K` | Body > Hover |
 | Go to definition | `Ctrl-]` | Body > Go to Definition |
 | Semantic colouring | automatic, where the server offers semantic tokens: parameters, variables, macros, namespaces and the like, which tree-sitter cannot tell apart, take their theme colours; `:set nosemantic` turns it off. Not while a change is typed | the same |

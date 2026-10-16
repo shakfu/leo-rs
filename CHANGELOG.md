@@ -4,7 +4,16 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ## [Unreleased]
 
+### Added
+
+- **leotui marks diagnostics in a sign column, not by underlining.** While a language server is attached, the body's first two columns hold a dot in the colour of each line's worst diagnostic, then a blank before the text, as leogui's gutter does. Some terminals draw a straight underline in the text's colour whatever colour is asked for, so the underline is off by default; `diagnostic-underline = true` puts it back, in the theme's `diagnostic.*` colour where the terminal draws one. The status line still names the cursor line's diagnostic. The column is kept while a server is attached, not only while diagnostics exist, so the text does not shift as they come and go.
+- **leotui's status bar shows the body's error and warning counts and the language servers' state**, as leogui's does: `E n  W n  LSP` and a dot, lit while a server runs and in the error colour if one failed.
+- **`terminal-background = true` keeps the terminal's background in leotui**, which now paints the theme's `ui.background` by default, as Helix does.
+
 ### Changed
+
+- **leogui's diagnostic and LSP dots are 2 px smaller across, and the LSP dot sits 1 px further from its label.**
+- **leotui draws a theme as leogui does.** Both take their panes' colours from one mapping, `leoapp::palette`, moved out of leogui. leotui had its own scope choices: `ui.menu.selected` for the selected row and `ui.text.focus` for borders and the breadcrumb, so sonokai drew its accent green across the outline where leogui drew grey. `@<file>` headlines fell back to the terminal's green, because sonokai names no `ui.text.directory`. A diagnostic replaced the text's colour with a fixed ANSI one. A shared mapping was chosen over patching leotui's call sites so the two cannot drift apart again.
 
 - **`Outline::move_to_nth_child_of` and `Outline::move_after` return `Option<Position>`.** They return None, changing nothing, when the target is inside the moved node's tree; they linked the node under itself. `move_to_nth_child_of` clamps its index to the end, where moving a node to the last place under its own parent panicked.
 

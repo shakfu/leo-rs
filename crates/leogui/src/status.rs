@@ -1,7 +1,7 @@
 //! The status bar: mode, file, message, and the cursor's place.
 
 use eframe::egui::{self, vec2, RichText, Sense};
-use leoapp::app::{App, Focus};
+use leoapp::app::{App, Focus, Servers};
 use leoapp::view::Severity;
 
 use crate::menus::Action;
@@ -70,16 +70,7 @@ pub fn ui(ui: &mut egui::Ui, app: &mut App, colours: &Palette) -> Option<Action>
                         .color(colours.dim),
                 );
             }
-            let errors = app
-                .diagnostics
-                .iter()
-                .filter(|d| d.severity == Severity::Error)
-                .count();
-            let warnings = app
-                .diagnostics
-                .iter()
-                .filter(|d| d.severity == Severity::Warning)
-                .count();
+            let (errors, warnings) = app.diagnostic_counts();
             if app.lsp.is_some() {
                 let text = RichText::new(format!("E {errors}  W {warnings}"))
                     .size(12.0)
@@ -105,25 +96,20 @@ pub fn ui(ui: &mut egui::Ui, app: &mut App, colours: &Palette) -> Option<Action>
 /// "LSP" with a dot for the servers' state: lit while one runs, the error
 /// colour if one failed. True if clicked.
 fn servers(ui: &mut egui::Ui, app: &App, colours: &Palette) -> bool {
-    let Some(lsp) = &app.lsp else { return false };
-    let states: Vec<leolsp::ServerState> = lsp.status().into_iter().map(|(_, s)| s).collect();
-    let failed = states
-        .iter()
-        .any(|s| matches!(s, leolsp::ServerState::Failed(_)));
-    let running = states.contains(&leolsp::ServerState::Running);
-    let dot = if failed {
-        colours.mark(Severity::Error).gutter
-    } else if running {
-        colours.accent
-    } else {
-        colours.dim
+    let Some(state) = app.servers() else {
+        return false;
+    };
+    let dot = match state {
+        Servers::Failed => colours.mark(Severity::Error).gutter,
+        Servers::Running => colours.accent,
+        Servers::Idle => colours.dim,
     };
     let response = ui
         .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = 5.0;
             ui.label(RichText::new("LSP").size(12.0).color(colours.dim));
             let (r, _) = ui.allocate_exact_size(vec2(8.0, 12.0), Sense::hover());
-            ui.painter().circle_filled(r.center(), 3.5, dot);
+            ui.painter().circle_filled(r.center(), 2.5, dot);
         })
         .response
         .interact(Sense::click());

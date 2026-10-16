@@ -14,7 +14,46 @@ use super::*;
 /// How long the outline must be still before the servers are sent it.
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
+/// The language servers' state, as the status bar's dot shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Servers {
+    /// None has started yet.
+    Idle,
+    Running,
+    /// One would not start, or stopped.
+    Failed,
+}
+
 impl App {
+    /// The body's errors and warnings, counted.
+    pub fn diagnostic_counts(&self) -> (usize, usize) {
+        let count = |s: Severity| self.diagnostics.iter().filter(|d| d.severity == s).count();
+        (count(Severity::Error), count(Severity::Warning))
+    }
+
+    /// The servers' state, a failure first; None while none is configured.
+    pub fn servers(&self) -> Option<Servers> {
+        let states: Vec<leolsp::ServerState> = self
+            .lsp
+            .as_ref()?
+            .status()
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect();
+        Some(
+            if states
+                .iter()
+                .any(|s| matches!(s, leolsp::ServerState::Failed(_)))
+            {
+                Servers::Failed
+            } else if states.contains(&leolsp::ServerState::Running) {
+                Servers::Running
+            } else {
+                Servers::Idle
+            },
+        )
+    }
+
     /// Sync the servers and act on what they sent. True if anything changed
     /// that a front end draws. Call it often: every frame, or every tick.
     pub fn poll(&mut self) -> bool {

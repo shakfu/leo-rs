@@ -29,7 +29,7 @@ mod find;
 mod hoist;
 mod lsp;
 mod mcp;
-pub use lsp::{diagnostic_line, signature_line, CODE_ACTIONS};
+pub use lsp::{diagnostic_line, signature_line, Servers, CODE_ACTIONS};
 pub use mcp::Access;
 mod prompt;
 #[cfg(test)]

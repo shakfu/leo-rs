@@ -14,6 +14,7 @@ pub mod history;
 pub mod keys;
 pub mod keywords;
 pub mod minibuffer;
+pub mod palette;
 pub mod plugins;
 pub mod rendered;
 pub mod search;

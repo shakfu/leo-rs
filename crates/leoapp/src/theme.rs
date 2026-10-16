@@ -315,6 +315,20 @@ impl Theme {
             scopes,
         })
     }
+
+    /// A theme from one file's text, over the builtin's pane scopes, as
+    /// `load` reads it. `inherits` is not followed.
+    pub fn from_text(name: &str, text: &str) -> Theme {
+        let mut scopes: HashMap<String, Face> = ui_scopes()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        scopes.extend(resolve(vec![parse_raw(text)]));
+        Theme {
+            name: name.to_string(),
+            scopes,
+        }
+    }
 }
 
 /// The Helix scopes the panes are drawn with, in the terminal's own colours.

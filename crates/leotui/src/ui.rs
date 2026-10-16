@@ -6,8 +6,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use leoapp::app::{App, Focus, Mode};
+use leoapp::app::{App, Focus, Mode, Servers};
 use leoapp::highlight::Class;
+use leoapp::palette::Palette;
 use leoapp::theme::{Colour, Depth, Theme};
 use leoapp::view::{self, Viewport, SCOPES};
 
@@ -29,15 +30,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ])
         .split(chunks[1]);
 
-    draw_breadcrumb(f, app, chunks[0]);
-    draw_outline(f, app, panes[0]);
-    draw_body(f, app, panes[1]);
-    draw_status(f, app, chunks[2]);
+    let p = colours(app);
+    f.buffer_mut()
+        .set_style(area, Style::default().bg(p.bg).fg(p.fg));
+    draw_breadcrumb(f, app, &p, chunks[0]);
+    draw_outline(f, app, &p, panes[0]);
+    draw_body(f, app, &p, panes[1]);
+    draw_status(f, app, &p, chunks[2]);
     if app.mode == Mode::Help {
-        draw_help(f, app, area);
+        draw_help(f, app, &p, area);
     }
-    draw_menu(f, app, area);
-    draw_completions(f, app, area);
+    draw_menu(f, app, &p, area);
+    draw_completions(f, app, &p, area);
     if app.depth == Depth::None {
         strip_colour(f.buffer_mut());
     }
@@ -55,41 +59,53 @@ fn strip_colour(buffer: &mut ratatui::buffer::Buffer) {
     }
 }
 
-/// The style the theme gives one of the panes' scopes.
-fn ui_style(app: &App, scope: &str) -> Style {
-    let face = app.theme.face(scope);
-    let mut style = Style::default();
-    if let Some(colour) = face.fg {
-        style = style.fg(terminal_colour(colour.reduce(app.depth)));
+/// The theme's palette (`leoapp::palette`) in the terminal's colours, as
+/// leogui draws the same theme.
+///
+/// The theme's background is painted, as Helix does, unless the theme names
+/// none, colour is off, or `terminal-background` asks for the terminal's.
+/// Then the panes are the terminal's, and so is a text colour the theme
+/// does not name: a grey derived for a dark background is unreadable on a
+/// light terminal.
+pub fn colours(app: &App) -> Palette<Color> {
+    let depth = app.depth;
+    let mut p = Palette::of(&app.theme, depth, false).map(|c| terminal_colour(c.reduce(depth)));
+    let painted = depth != Depth::None
+        && app.theme.face("ui.background").bg.is_some()
+        && !app.settings.terminal_background;
+    if !painted {
+        (p.bg, p.panel, p.gutter) = (Color::Reset, Color::Reset, Color::Reset);
+        if app.theme.face("ui.text").fg.is_none() {
+            p.fg = Color::Reset;
+        }
     }
-    if let Some(colour) = face.bg {
-        style = style.bg(terminal_colour(colour.reduce(app.depth)));
-    }
-    if face.bold {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    if face.italic {
-        style = style.add_modifier(Modifier::ITALIC);
-    }
-    style
+    p
 }
 
-/// The path to the current node, so a deep node says where it is.
-fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
-    let text = truncate(&format!(" {}", app.breadcrumb()), area.width as usize);
-    let style = ui_style(app, "ui.text.focus");
-    f.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
+/// The path to the current node, so a deep node says where it is: its
+/// ancestors dim, the node itself in the text's colour.
+fn draw_breadcrumb(f: &mut Frame, app: &App, p: &Palette<Color>, area: Rect) {
+    let text = format!(" {}", app.breadcrumb());
+    let last = app.current.h(app.outline()).len().min(text.len());
+    let (path, node) = text.split_at(text.len() - last);
+    let line = Line::from(vec![
+        Span::styled(path.to_string(), Style::default().fg(p.dim)),
+        Span::styled(node.to_string(), Style::default().fg(p.fg)),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
 }
 
-/// The border of the focused pane is thick; the other is plain.
-fn pane_block(app: &App, title: String, focused: bool) -> Block<'static> {
-    let block = Block::default().borders(Borders::ALL).title(title);
-    if focused {
-        block
+/// The border of the focused pane is thick, and its title in the text's
+/// colour; the other's is plain and dim. Both are the theme's border colour.
+fn pane_block(p: &Palette<Color>, title: String, focused: bool) -> Block<'static> {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(p.border));
+    match focused {
+        true => block
             .border_type(BorderType::Thick)
-            .border_style(ui_style(app, "ui.text.focus"))
-    } else {
-        block.border_style(ui_style(app, "ui.window"))
+            .title(Span::styled(title, Style::default().fg(p.fg))),
+        false => block.title(Span::styled(title, Style::default().fg(p.dim))),
     }
 }
 
@@ -101,7 +117,7 @@ fn inner(area: Rect) -> Viewport {
     }
 }
 
-fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_outline(f: &mut Frame, app: &mut App, p: &Palette<Color>, area: Rect) {
     let tree = app.tree_view(inner(area));
     let width = inner(area).cols;
     let focused = app.focus == Focus::Tree;
@@ -129,47 +145,66 @@ fn draw_outline(f: &mut Frame, app: &mut App, area: Rect) {
         let indent = "  ".repeat(row.depth);
         let prefix = format!("{flags}{indent}{marker}");
         let text = truncate(&format!("{prefix}{}", row.headline), width);
-        let style = if i == current && focused {
-            ui_style(app, "ui.menu.selected")
+        // As leogui: the selected row filled, an `@<file>` node's kind dim.
+        let row_style = if i == current && focused {
+            Style::default().bg(p.selection)
         } else if i == current {
-            ui_style(app, "ui.selection")
-        } else if row.marked {
-            ui_style(app, "warning")
-        } else if row.is_file {
-            ui_style(app, "ui.text.directory")
+            Style::default().bg(p.line)
         } else {
             Style::default()
         };
+        let kind = match row.is_file {
+            true => row.headline.find(' ').map_or(row.headline.len(), |k| k + 1),
+            false => 0,
+        };
+        let dim_to = (prefix.len() + kind).min(text.len());
+        let ink = if row.marked { p.warning } else { p.fg };
         let matches: Vec<std::ops::Range<usize>> = hits
             .iter()
             .map(|r| r.start + prefix.len()..r.end + prefix.len())
             .collect();
-        let cells: Vec<Span> = view::cut(&text, &matches)
-            .into_iter()
-            .map(|(piece, hit)| {
-                let style = if hit {
-                    style.patch(match_style())
-                } else {
-                    style
-                };
-                Span::styled(piece.to_string(), style)
-            })
-            .collect();
+        let mut cells: Vec<Span> = Vec::new();
+        let mut at = 0;
+        for (piece, hit) in view::cut(&text, &matches) {
+            let split = dim_to.clamp(at, at + piece.len()) - at;
+            for (part, dim) in [(&piece[..split], true), (&piece[split..], false)] {
+                if part.is_empty() {
+                    continue;
+                }
+                let mut style = row_style.fg(if dim { p.dim } else { ink });
+                if hit {
+                    style = style.patch(match_style());
+                }
+                cells.push(Span::styled(part.to_string(), style));
+            }
+            at += piece.len();
+        }
         lines.push(Line::from(cells));
     }
 
     let title = format!(" outline {}/{} ", tree.current + 1, tree.total);
     f.render_widget(
-        Paragraph::new(lines).block(pane_block(app, title, focused)),
+        Paragraph::new(lines)
+            .style(Style::default().bg(p.panel))
+            .block(pane_block(p, title, focused)),
         area,
     );
 }
 
-fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
-    let body = app.body_view(inner(area));
+fn draw_body(f: &mut Frame, app: &mut App, p: &Palette<Color>, area: Rect) {
+    // A sign column, as leogui's gutter, while a language server can fill
+    // it: shown only with diagnostics, the text would shift as they change.
+    // It replaces an underline, which some terminals draw only in the
+    // text's colour; `diagnostic-underline` puts it back.
+    // Two cells: the dot, and a blank between it and the text.
+    let signs = 2 * usize::from(app.lsp.is_some());
+    let mut fits = inner(area);
+    fits.cols = fits.cols.saturating_sub(signs);
+    let body = app.body_view(fits);
     let palette = palette(&app.theme, app.depth);
-    let selected_style = ui_style(app, "ui.selection");
-    let linenr = ui_style(app, "ui.linenr");
+    let selected_style = Style::default().bg(p.selection);
+    let linenr = Style::default().fg(p.linenr);
+    let underline = app.settings.diagnostic_underline;
     let link = link_style(app);
     let mut cells: Vec<Vec<(char, Style, usize)>> = Vec::new();
     let mut shown: Vec<Line> = Vec::new();
@@ -194,8 +229,10 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
                     if seg.link {
                         style = style.patch(link);
                     }
-                    if let Some(severity) = seg.severity {
-                        style = style.patch(severity_style(severity));
+                    if let Some(s) = seg.severity.filter(|_| underline) {
+                        style = style
+                            .underline_color(p.mark(s).underline)
+                            .add_modifier(Modifier::UNDERLINED);
                     }
                     if seg.hit {
                         style = style.patch(match_style());
@@ -206,6 +243,9 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             cells.push(view::expand(&pieces, body.tab));
         }
         let mut row: Vec<Span> = Vec::new();
+        if signs > 0 {
+            row.push(sign(&body, i, screen.first, p));
+        }
         if body.number_width > 0 {
             let number = match screen.first {
                 true => format!("{:>w$} ", i + 1, w = body.number_width.saturating_sub(1)),
@@ -230,30 +270,40 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let focused = app.focus == Focus::Body;
     f.render_widget(
-        Paragraph::new(shown).block(pane_block(app, title, focused)),
+        Paragraph::new(shown).block(pane_block(p, title, focused)),
         area,
     );
 
     if let Some((y, x)) = body.cursor_screen() {
+        let x = x + signs;
         f.set_cursor_position((area.x + 1 + x as u16, area.y + 1 + y as u16));
     }
 }
 
-fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
+/// Line `i`'s sign: a dot in the colour of its worst diagnostic, on the
+/// line's first screen row.
+fn sign(body: &view::BodyView, i: usize, first: bool, p: &Palette<Color>) -> Span<'static> {
+    let worst = body
+        .diagnostics
+        .iter()
+        .filter(|d| first && d.row <= i && i <= d.end_row)
+        .map(|d| d.severity)
+        .min();
+    let style = Style::default().bg(p.gutter);
+    match worst {
+        Some(s) => Span::styled("\u{25cf} ", style.fg(p.mark(s).gutter)),
+        None => Span::styled("  ", style),
+    }
+}
+
+fn draw_status(f: &mut Frame, app: &mut App, p: &Palette<Color>, area: Rect) {
     let mode = app.mode.label();
+    let (badge, badge_text) = p.mode(app.mode);
     let mode_style = Style::default()
-        .bg(match app.mode {
-            Mode::Normal => Color::Blue,
-            Mode::Insert => Color::Green,
-            Mode::Visual => Color::Magenta,
-            Mode::Headline => Color::Magenta,
-            Mode::Help => Color::Cyan,
-            Mode::Confirm => Color::Red,
-            Mode::Command | Mode::Search => Color::Yellow,
-        })
-        .fg(Color::Black)
+        .bg(badge)
+        .fg(badge_text)
         .add_modifier(Modifier::BOLD);
-    let base = Style::default().bg(Color::DarkGray).fg(Color::White);
+    let base = Style::default().bg(p.statusbar).fg(p.statusbar_text);
 
     // The minibuffer owns the whole line, so the answer is where the eye is.
     //
@@ -288,21 +338,42 @@ fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
     let right = app.status_text();
     let mode_text = format!(" {mode} ");
     let width = area.width as usize;
-    let rest = truncate(&format!(" {right}"), width.saturating_sub(mode_text.len()));
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(mode_text, mode_style),
-            Span::styled(
-                format!("{rest:<w$}", w = width.saturating_sub(mode.len() + 2)),
-                base,
-            ),
-        ])),
-        area,
-    );
+    let servers = lsp_spans(app, p, base);
+    let servers_width: usize = servers.iter().map(|s| s.content.chars().count()).sum();
+    let room = width.saturating_sub(mode_text.chars().count() + servers_width);
+    let rest = truncate(&format!(" {right}"), room);
+    let mut spans = vec![
+        Span::styled(mode_text, mode_style),
+        Span::styled(format!("{rest:<room$}"), base),
+    ];
+    spans.extend(servers);
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The right end of the status bar while a language server is attached, as
+/// leogui's: the body's error and warning counts, then "LSP" and a dot lit
+/// while a server runs, in the error colour if one failed.
+fn lsp_spans(app: &App, p: &Palette<Color>, base: Style) -> Vec<Span<'static>> {
+    let Some(state) = app.servers() else {
+        return Vec::new();
+    };
+    let (errors, warnings) = app.diagnostic_counts();
+    let error = p.mark(view::Severity::Error).gutter;
+    let counts = base.fg(if errors > 0 { error } else { p.dim });
+    let dot = match state {
+        Servers::Failed => error,
+        Servers::Running => p.accent,
+        Servers::Idle => p.dim,
+    };
+    vec![
+        Span::styled(format!(" E {errors}  W {warnings}  "), counts),
+        Span::styled("LSP ", base.fg(p.dim)),
+        Span::styled("\u{25cf} ", base.fg(dot)),
+    ]
 }
 
 /// The help overlay, generated from the binding table.
-fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_help(f: &mut Frame, app: &mut App, p: &Palette<Color>, area: Rect) {
     // Never wider than 80, never narrower than the terminal allows.
     let w = area.width.saturating_sub(8).clamp(20, 80);
     let h = area.height.saturating_sub(4).max(6);
@@ -326,28 +397,17 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         help.total
     );
     f.render_widget(
-        Paragraph::new(shown).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Thick)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(title),
-        ),
+        Paragraph::new(shown)
+            .style(Style::default().bg(p.help).fg(p.fg))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Thick)
+                    .border_style(Style::default().fg(p.border))
+                    .title(title),
+            ),
         popup,
     );
-}
-
-/// A diagnostic: underlined, in vim's colours for its severity.
-fn severity_style(severity: view::Severity) -> Style {
-    let colour = match severity {
-        view::Severity::Error => Color::Red,
-        view::Severity::Warning => Color::Yellow,
-        view::Severity::Information => Color::Blue,
-        view::Severity::Hint => Color::DarkGray,
-    };
-    Style::default()
-        .fg(colour)
-        .add_modifier(Modifier::UNDERLINED)
 }
 
 /// A search match: vim's default `Search` colours.
@@ -366,7 +426,7 @@ fn match_style() -> Style {
 /// The completion drop-down, above the `:` line.
 ///
 /// See `Menu::is_open` for when it shows.
-fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
+fn draw_menu(f: &mut Frame, app: &App, p: &Palette<Color>, area: Rect) {
     let Some(mini) = &app.mini else {
         return;
     };
@@ -404,7 +464,9 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
                 };
                 let text = format!("{name:<width$}");
                 let style = match menu.selected == Some(column * rows + row) {
-                    true => Style::default().bg(Color::Blue).fg(Color::White),
+                    true => Style::default()
+                        .bg(p.menu_selected)
+                        .fg(p.menu_selected_text),
                     false => Style::default(),
                 };
                 cells.push(Span::styled(text, style));
@@ -421,10 +483,11 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
     };
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(lines).block(
+        Paragraph::new(lines).style(menu_style(p)).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(p.border))
                 .title(match menu.at {
                     0 => format!(" {} commands ", menu.items.len()),
                     _ => format!(" {} themes ", menu.items.len()),
@@ -436,7 +499,7 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
 
 /// The language server's completions, a drop-down above the status line,
 /// the selected one lit and kept on screen.
-fn draw_completions(f: &mut Frame, app: &App, area: Rect) {
+fn draw_completions(f: &mut Frame, app: &App, p: &Palette<Color>, area: Rect) {
     let Some(menu) = &app.completion else {
         return;
     };
@@ -452,7 +515,9 @@ fn draw_completions(f: &mut Frame, app: &App, area: Rect) {
         .filter_map(|i| {
             let c = menu.shown_item(i)?;
             let style = match i == menu.selected {
-                true => Style::default().bg(Color::Blue).fg(Color::White),
+                true => Style::default()
+                    .bg(p.menu_selected)
+                    .fg(p.menu_selected_text),
                 false => Style::default(),
             };
             let mut spans = vec![Span::styled(c.label.clone(), style)];
@@ -460,7 +525,7 @@ fn draw_completions(f: &mut Frame, app: &App, area: Rect) {
                 let detail: String = detail.chars().take(60).collect();
                 spans.push(Span::styled(
                     format!("  {detail}"),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(p.dim),
                 ));
             }
             Some(Line::from(spans))
@@ -474,14 +539,20 @@ fn draw_completions(f: &mut Frame, app: &App, area: Rect) {
     };
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(lines).block(
+        Paragraph::new(lines).style(menu_style(p)).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(p.border))
                 .title(format!(" {} completions; Tab takes one ", menu.shown.len())),
         ),
         popup,
     );
+}
+
+/// A drop-down's colours: `ui.menu`, as leogui's.
+fn menu_style(p: &Palette<Color>) -> Style {
+    Style::default().bg(p.menu).fg(p.fg)
 }
 
 /// Every class's style, resolved once for the frame.
