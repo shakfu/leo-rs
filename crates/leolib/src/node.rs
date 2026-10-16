@@ -57,10 +57,12 @@ pub struct Vnode {
     pub h: String,
     /// The body text.
     pub b: String,
-    /// Child links, in order. A vnode may appear more than once.
-    pub children: Vec<VnodeId>,
+    /// Child links, in order. A vnode may appear more than once. Private,
+    /// with `parents`, so that only `Outline`'s checked operations link
+    /// nodes: a link made by hand can make a cycle or a one-sided link.
+    pub(crate) children: Vec<VnodeId>,
     /// Every vnode that has this one as a child, once per link.
-    pub parents: Vec<VnodeId>,
+    pub(crate) parents: Vec<VnodeId>,
     /// Bits from [`status`].
     pub status: u32,
     /// Unknown attributes, by name.
@@ -68,6 +70,16 @@ pub struct Vnode {
 }
 
 impl Vnode {
+    /// Child links, in order. A vnode may appear more than once.
+    pub fn children(&self) -> &[VnodeId] {
+        &self.children
+    }
+
+    /// Every vnode that has this one as a child, once per link.
+    pub fn parents(&self) -> &[VnodeId] {
+        &self.parents
+    }
+
     /// An empty node with id `gnx`.
     pub fn new(gnx: String) -> Self {
         Self {

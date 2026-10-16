@@ -2,7 +2,7 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
-## [Unreleased]
+## [0.9.0]
 
 ### Added
 
@@ -12,12 +12,32 @@ Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
 ### Changed
 
+- **`Vnode::children` and `Vnode::parents` are private; read them with `children()` and `parents()`.** A link made through the fields could make a cycle, or a child link with no matching parent link, which leolib then cannot defend; links are now made only by `Outline`'s operations. `Outline::link_as_last_child_raw` returns false, linking nothing, where the link would put a node inside itself, and `Outline::paste_after` is no longer public.
+- **`Document::insert_node`, `insert_child`, `insert_node_before` and `clone_node` return `Option<Position>`.** None means the position no longer exists, and nothing was inserted. They indexed the parent's children by a stale position, inserting in the wrong place or panicking past the end; a refusal needs a way to say so.
 - **leogui's diagnostic and LSP dots are 2 px smaller across, and the LSP dot sits 1 px further from its label.**
 - **leotui draws a theme as leogui does.** Both take their panes' colours from one mapping, `leoapp::palette`, moved out of leogui. leotui had its own scope choices: `ui.menu.selected` for the selected row and `ui.text.focus` for borders and the breadcrumb, so sonokai drew its accent green across the outline where leogui drew grey. `@<file>` headlines fell back to the terminal's green, because sonokai names no `ui.text.directory`. A diagnostic replaced the text's colour with a fixed ANSI one. A shared mapping was chosen over patching leotui's call sites so the two cannot drift apart again.
 
 - **`Outline::move_to_nth_child_of` and `Outline::move_after` return `Option<Position>`.** They return None, changing nothing, when the target is inside the moved node's tree; they linked the node under itself. `move_to_nth_child_of` clamps its index to the end, where moving a node to the last place under its own parent panicked.
 
 ### Fixed
+
+- **`SECURITY.md` contradicted the code.** It said `@clean` and `@nosent` could overwrite an unread file, named two fuzz targets of four, and left out the markdown and language-server readers and the MCP server. It now matches.
+
+- **Undoing or redoing a large group was quadratic.** Each recorded step looked up the node to select by walking the whole outline; the selection is now found once per undo. Undoing `unmark_all` over 3,000 marks took 0.70 s and now takes 2 ms.
+- **The org, otl, markdown and treepad importers were quadratic in headings**: each line searched a list for its node's body. 20,000 org headings took 2.29 s to import and now take 0.23 s.
+
+- **`Document`'s structural edits acted on whatever node sat at a stale position's index.** A position kept across an edit, as an MCP client or a second view keeps one, made `delete_node` remove the wrong node in release builds and panic past the end in debug ones; the moves, `promote`, `demote`, `cut_node`, `paste_node` and the sorts did the same. Each now returns None or false, changing nothing, when the position no longer exists. So do `insert_node`, `insert_child`, `insert_node_before` and `clone_node`; see Changed.
+
+- **An `@auto` or `@file` file nested deep enough ran out of memory, or would overflow the stack.** An otl file indented 20,000 tabs built a tree 20,000 deep, and walking it took memory quadratic in its depth, since each `Position` holds its whole path. Every read now refuses a tree deeper than `outline::MAX_DEPTH`, 1000 levels counted from the top of the outline: an `@auto` file is left whole in the node's body and a sentinel file's node empty, both reported as `Error::Import` and neither approved for writing. The tree's recursive helpers stay recursive; the cap is what bounds them.
+- **A `.leo` file with `<v>` elements nested 100,000 deep overflowed the stack and aborted the process.** The reader now refuses nesting deeper than 1000 levels with `Error::NotALeoFile`. A cap was chosen over making the reader iterative because the tree it builds is also written, copied and dropped by code that recurses per level; Leo's own recursive reader stops near Python's limit of 1000, so no outline Leo can open is refused.
+
+- **An outline's own `@settings` could turn off the check that refuses to write into a directory that does not exist.** With `@bool create-nonexistent-directories = True` in its `@settings` tree, an outline someone else wrote could create directories anywhere its headlines named. Only `myLeoSettings.leo` can now turn it on; an outline that tries gets a note on open, and may still turn it off. Leo honours the setting from any `@settings` tree; this port diverges because the setting removes a guard against the outline's own headlines.
+
+- **An `@auto` file whose importer failed could lose lines on the first save.** The fallback puts the whole file in the node's body and approved the file for writing on the assumption that the body writes back as the file. The writer reads lines such as `@others` or `@c` as directives, so a file holding one was changed on save. The body is now written and compared first; if it differs, the file is not approved, and a save asks before overwriting it, as for a file the outline never read.
+
+- **An external edit to an `@clean` file that kept an older mtime was skipped, and the next save overwrote it.** The read skipped any file whose mtime was not newer than the one cached, as Leo's #4385 does, so `cp -p`, `rsync -t` or a restored backup went unseen. It now skips only a file whose size and mtime both equal the cached ones. The cache was also set before the read, so a read that failed (a file not UTF-8, say) was skipped as unchanged after the file was fixed with its mtime kept; it is now set only once a read succeeds. An edit that keeps both the size and the mtime still needs `refresh-from-disk`: catching it would mean hashing every `@clean` file on each read.
+
+- **An MCP client's `save` could create a file anywhere the user can write.** `may_overwrite` guards only files that exist, so a client allowed `mcp-edit` and `mcp-save` could rename a node to `@file ~/.ssh/authorized_keys` and save it. Now each file such a save would create waits for the user's y/n, showing its full path, as an unread file's overwrite does; a declined file stays held, so the user's own save asks again. Every new file is held, not only those outside the outline's directory: `.git/hooks/pre-commit` is inside it.
 
 - **An `@file` sentinel naming an ancestor's gnx.** The hidden root's gnx emptied the outline, so the next save wrote an empty `.leo` file; the `@file` root's own gnx made a cycle, and the read hung. The read is now refused, as the `.leo` reader refuses a `<v>` inside itself.
 

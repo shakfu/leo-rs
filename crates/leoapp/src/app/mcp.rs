@@ -97,7 +97,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "save",
-            description: "Save the .leo file and every changed external file, as Ctrl-S does; a file that would be overwritten waits for the user. Needs mcp-save.",
+            description: "Save the .leo file and every changed external file, as Ctrl-S does; a file that would be overwritten or created waits for the user. Needs mcp-save.",
             input_schema: schema(json!({}), &[]),
         },
     ]
@@ -327,6 +327,19 @@ impl App {
                     );
                 }
                 self.may_edit()?;
+                // A client must not create files unasked: `@file
+                // ~/.ssh/authorized_keys` would pass `may_overwrite`, which
+                // guards only files that exist. The user approves each one.
+                let o = self.outline();
+                let new: Vec<String> = leolib::external::find_files_to_write(o, true)
+                    .0
+                    .iter()
+                    .map(|p| o.full_path(p))
+                    .filter(|path| !std::path::Path::new(path).exists())
+                    .collect();
+                for path in &new {
+                    self.doc.outline_mut_untracked().hold_new_file(path);
+                }
                 self.run("save", 1);
                 let waiting = self.mode == Mode::Confirm;
                 let message = self.message.clone();
@@ -366,7 +379,10 @@ impl App {
             "insert_node" => {
                 let place = place(args)?;
                 self.doc.begin_group("mcp-insert-node");
-                let new = self.doc.insert_node(&p);
+                let Some(new) = self.doc.insert_node(&p) else {
+                    self.doc.end_group();
+                    return Err("the node moved; read the outline again".into());
+                };
                 let new = self.doc.move_node(&new, &p, place).unwrap_or(new);
                 self.doc.set_headline(&new, string(args, "headline")?);
                 if let Some(body) = args["body"].as_str() {
@@ -474,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn save_writes_the_outline_and_its_files_when_allowed() {
+    fn a_save_writes_the_outline_and_asks_before_creating_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let leo = dir.path().join("s.leo").to_string_lossy().to_string();
         let mut doc = Document::new_empty(&leo);
@@ -486,14 +502,53 @@ mod tests {
             edit: true,
             save: true,
         };
+        let py = dir.path().join("a.py");
         let reply = app.mcp_tool("save", &json!({})).unwrap();
-        assert_eq!(reply["waiting_for_the_user"], false, "{reply}");
+        // The .leo file is saved; the new file waits for the user.
+        assert_eq!(reply["waiting_for_the_user"], true, "{reply}");
         assert!(std::fs::read_to_string(&leo)
             .unwrap()
             .contains("@file a.py"));
-        let py = std::fs::read_to_string(dir.path().join("a.py")).unwrap();
-        assert!(py.contains("x = 1\n"), "{py}");
+        assert!(!py.exists());
+        let label = app.mini_label();
+        assert!(
+            label.contains("create") && label.contains(&*py.to_string_lossy()),
+            "{label}"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(std::fs::read_to_string(&py).unwrap().contains("x = 1\n"));
         assert!(!app.outline().changed);
+
+        // A file the user approved is the outline's now: no question.
+        let gnx = app.outline().root_position().unwrap().gnx(app.outline());
+        app.mcp_tool("set_body", &json!({"gnx": gnx, "body": "x = 2\n"}))
+            .unwrap();
+        let reply = app.mcp_tool("save", &json!({})).unwrap();
+        assert_eq!(reply["waiting_for_the_user"], false, "{reply}");
+        assert!(std::fs::read_to_string(&py).unwrap().contains("x = 2\n"));
+    }
+
+    #[test]
+    fn a_declined_file_stays_held_for_the_users_own_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let leo = dir.path().join("s.leo").to_string_lossy().to_string();
+        let mut doc = Document::new_empty(&leo);
+        let root = doc.outline().root_position().unwrap();
+        doc.set_headline(&root, "@file b.py");
+        doc.set_body(&root, "y = 1\n");
+        let mut app = App::new(doc);
+        app.mcp_access = Access {
+            edit: true,
+            save: true,
+        };
+        let py = dir.path().join("b.py");
+        app.mcp_tool("save", &json!({})).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert!(!py.exists());
+        // Ctrl-S asks again rather than writing what the client named.
+        app.save();
+        assert_eq!(app.mode, Mode::Confirm);
+        assert!(!py.exists());
     }
 
     #[test]

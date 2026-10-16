@@ -13,6 +13,9 @@ impl App {
             (MiniKind::ConfirmOverwrite, [p]) => {
                 let path = self.outline().full_path(p);
                 let name = leolib::util::short_file_name(&path);
+                if !std::path::Path::new(&path).exists() {
+                    return format!("create {path}, which an MCP client asked for? (y/n) ");
+                }
                 match self.outline().changed_on_disk(&path) {
                     true => {
                         format!("overwrite {name}, which changed on disk since it was read? (y/n) ")
@@ -21,7 +24,7 @@ impl App {
                 }
             }
             (MiniKind::ConfirmOverwrite, files) => format!(
-                "overwrite {} files this outline has not read, or that changed on disk? (y/n) ",
+                "write {} files: new ones an MCP client asked for, or ones this outline has not read or that changed on disk? (y/n) ",
                 files.len()
             ),
             (MiniKind::ConfirmRead, _) if self.pending_read.0.len() == 1 => {

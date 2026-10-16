@@ -124,6 +124,58 @@ fn only_a_refresh_reads_an_at_clean_file_unchanged_since_the_write() {
 }
 
 #[test]
+fn an_at_clean_edit_with_an_older_mtime_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@clean sample.py");
+    o.set_body(&root, "a = 1\n");
+    external::write_external_files(&mut o, false);
+
+    // `cp -p`, `rsync -t` or a restored backup: new text, an older mtime.
+    let path = dir.path().join("sample.py");
+    let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+    fs::write(&path, "a = 22\n").unwrap();
+    let day = std::time::Duration::from_secs(86_400);
+    let file = fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(mtime - day).unwrap();
+
+    let result = external::read_files(&mut o, vec![root.clone()]);
+    assert_eq!(result.read, 1, "{:?}", result.errors);
+    assert_eq!(root.b(&o), "a = 22\n");
+    // A save now writes what was read, not the outline's older text.
+    external::write_external_files(&mut o, false);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "a = 22\n");
+}
+
+#[test]
+fn a_failed_at_clean_read_is_retried_at_the_same_mtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@clean sample.py");
+    o.set_body(&root, "a = 1\n");
+    external::write_external_files(&mut o, false);
+
+    let path = dir.path().join("sample.py");
+    fs::write(&path, b"a = '\xe9'\n").unwrap();
+    let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+    let result = external::read_files(&mut o, vec![root.clone()]);
+    assert_eq!(result.read, 0);
+    assert!(!result.errors.is_empty(), "the non-UTF-8 file was read");
+
+    // Fixed in place, the mtime kept: the read is not skipped as unchanged.
+    fs::write(&path, "a = 3\n").unwrap();
+    let file = fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(mtime).unwrap();
+    let result = external::read_files(&mut o, vec![root.clone()]);
+    assert_eq!(result.read, 1, "{:?}", result.errors);
+    assert_eq!(root.b(&o), "a = 3\n");
+}
+
+#[test]
 fn writing_an_unchanged_outline_touches_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let leo_path = dir.path().join("test.leo").to_string_lossy().to_string();
@@ -151,7 +203,7 @@ fn an_edit_and_its_undo_leave_the_outline_as_it_was() {
     d.clear_undo();
     let before = digest(d.outline());
 
-    let child = d.insert_node(&root);
+    let child = d.insert_node(&root).unwrap();
     d.set_headline(&child, "child");
     d.set_body(&child, "text\n");
     d.move_right(&child);
@@ -728,6 +780,28 @@ fn an_at_jupytext_notebook_is_neither_read_nor_written() {
         fs::read_to_string(dir.path().join("nb.ipynb")).unwrap(),
         mine
     );
+}
+
+#[test]
+fn an_auto_file_whose_importer_fails_and_body_would_not_write_back_is_never_overwritten() {
+    // The importer does not reproduce the file, and the fallback, the whole
+    // file as the body, holds `@others`, which the writer would expand.
+    let dir = tempfile::tempdir().unwrap();
+    let mine = "x = 1\n@others\n";
+    let leo_path = outline_over_existing_file(dir.path(), "@auto a.py", "a.py", mine);
+
+    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(
+        matches!(report.errors[..], [ref e] if matches!(e.error, Error::Import { .. })),
+        "{:?}",
+        report.errors
+    );
+    let root = o.root_position().unwrap();
+    assert_eq!(root.b(&o), mine);
+    o.set_dirty(&root);
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.written.is_empty(), "{:?}", result.written);
+    assert_eq!(fs::read_to_string(dir.path().join("a.py")).unwrap(), mine);
 }
 
 #[test]
@@ -1325,7 +1399,7 @@ fn a_save_names_the_tree_whose_descendent_uas_it_dropped() {
         .contains("descendentVnodeUnknownAttributes="));
 
     let child = root.children(doc.outline())[0].clone();
-    doc.insert_node_before(&child);
+    doc.insert_node_before(&child).unwrap();
     let dropped = doc.save_all("");
     assert!(dropped.leo.is_ok(), "{:?}", dropped.leo);
     assert_eq!(dropped.dropped_descendent_uas, vec!["@auto x.py"]);
@@ -1452,7 +1526,7 @@ fn a_move_inside_an_at_file_tree_reaches_the_file() {
     doc.set_headline(&root, "@file sample.py");
     doc.set_body(&root, "@others\n");
     for (headline, body) in [("f", "def f():\n    pass\n"), ("g", "def g():\n    pass\n")] {
-        let child = doc.insert_child(&root);
+        let child = doc.insert_child(&root).unwrap();
         doc.set_headline(&child, headline);
         doc.set_body(&child, body);
     }

@@ -69,6 +69,12 @@ pub enum Error {
         /// The file left unwritten.
         path: String,
     },
+    /// Writing would create a file held for the user's approval
+    /// ([`crate::Outline::hold_new_file`]).
+    RefusedCreate {
+        /// The file left unwritten.
+        path: String,
+    },
     /// Writing would discard changes made to the file since it was read.
     ChangedOnDisk {
         /// The file left unwritten.
@@ -103,6 +109,12 @@ impl std::fmt::Display for Error {
                 f,
                 "refusing to overwrite a file this outline has not read: {path}"
             ),
+            Error::RefusedCreate { path } => {
+                write!(
+                    f,
+                    "refusing to create a file the user has not approved: {path}"
+                )
+            }
             Error::ChangedOnDisk { path } => write!(
                 f,
                 "refusing to overwrite a file changed on disk since it was read: {path}"

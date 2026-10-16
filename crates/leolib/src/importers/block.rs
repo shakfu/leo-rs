@@ -13,7 +13,7 @@ use crate::importers::{
     ImportReport, LanguageSpec, Postprocess,
 };
 use crate::node::VnodeId;
-use crate::outline::{set_delims_from_language, Outline};
+use crate::outline::{set_delims_from_language, Outline, MAX_DEPTH};
 use crate::position::Position;
 use crate::util;
 
@@ -78,7 +78,8 @@ pub fn import(
     parent: &Position,
     contents: &str,
     spec: &LanguageSpec,
-) -> ImportReport {
+) -> Option<ImportReport> {
+    let whole = contents;
     let tab_width = o.get_tab_width(parent);
     // Leo strips every carriage return before importing, so a CRLF file
     // becomes an LF file in the outline -- and on the next write.
@@ -122,17 +123,23 @@ pub fn import(
             i.gen_block();
         }
     }
+    // Before anything walks the tree by position: each holds its whole path.
+    if parent.level() + i.o.height(parent.v) > MAX_DEPTH {
+        i.o.detach_subtree(parent.v);
+        i.o.node_mut(parent.v).b = whole.to_string();
+        return None;
+    }
     i.add_directives();
 
     let nodes = parent.self_and_subtree(i.o).len();
     let language = spec.language.to_string();
-    ImportReport {
+    Some(ImportReport {
         language,
         nodes,
         regularized_whitespace: regularized,
         text,
         ..Default::default()
-    }
+    })
 }
 
 /// Put each pair of adjacent tags on its own line.

@@ -347,8 +347,10 @@ fn build(
                                 };
                                 // What the last read noted is this read's to say.
                                 o.node_mut(v).uas.retain(|k, _| !k.starts_with("leo-rs-"));
-                                o.link_as_last_child_raw(top, v);
-                                v
+                                match o.link_as_last_child_raw(top, v) {
+                                    true => v,
+                                    false => o.new_child_vnode(top),
+                                }
                             }
                             None => o.new_child_vnode(top),
                         };
@@ -642,7 +644,7 @@ fn duplicate_name(o: &Outline, p: &Position) -> Option<(String, usize)> {
 /// its node, or else the node's body. Errors name p's kind.
 pub fn write_tree(o: &Outline, p: &Position, code: &Code) -> Result<String> {
     // A refused read left the whole file in the body: write it as it is.
-    if get(o, p.v, REFUSED).is_some() && o.node(p.v).children.is_empty() {
+    if get(o, p.v, REFUSED).is_some() && o.node(p.v).children().is_empty() {
         return Ok(o.node(p.v).b.clone());
     }
     let kind = p.h(o).split_whitespace().next().unwrap_or_default();
@@ -716,7 +718,7 @@ fn write_own(
         }
     };
     let (fences, headings): (Vec<VnodeId>, Vec<VnodeId>) = node
-        .children
+        .children()
         .iter()
         .partition(|&&c| o.node(c).h.starts_with("<< ") && get(o, c, HEADING).is_none());
     let mut fences = fences.into_iter();
@@ -741,7 +743,7 @@ fn write_own(
                 }
                 // A fence holds one body. Children, which a clone of the cell
                 // can gain in an `@clean` tree, would be left out of it.
-                if !o.node(f).children.is_empty() {
+                if !o.node(f).children().is_empty() {
                     return Err(write_error(
                         o,
                         v,

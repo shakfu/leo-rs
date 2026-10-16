@@ -501,7 +501,15 @@ pub fn import_string(
         path: util::short_file_name(path),
         detail: "no @auto importer for it".to_string(),
     })?;
-    let mut report = block::import(o, parent, contents, spec);
+    let mut report = block::import(o, parent, contents, spec).ok_or_else(|| Error::Import {
+        path: util::short_file_name(path),
+        detail: format!(
+            "the {} importer nested its nodes deeper than {} levels in the outline. \
+             The whole file is in the node's body.",
+            spec.language,
+            crate::outline::MAX_DEPTH
+        ),
+    })?;
     report.round_trips = spec.line_importer.is_none();
     Ok(report)
 }
@@ -585,5 +593,32 @@ mod tests {
             import_string(&mut o, &root, &text, name).unwrap();
             assert!(o.all_positions().len() < 10, "{text:?}");
         }
+    }
+
+    #[test]
+    fn an_import_nested_past_the_limit_keeps_the_whole_file() {
+        // 20,000 tabs: each Position holds its path, so walking the tree
+        // took memory quadratic in its depth and ran out.
+        let text = format!("{}x\n", "\t".repeat(20_000));
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@auto a.otl");
+        let err = import_string(&mut o, &root, &text, "a.otl").unwrap_err();
+        assert!(err.to_string().contains("deeper than 1000"), "{err}");
+        assert_eq!(o.all_positions().len(), 1);
+        assert_eq!(root.b(&o), text);
+    }
+
+    #[test]
+    fn a_height_counts_levels_once_per_vnode() {
+        let mut o = Outline::new_empty();
+        let a = o.root_position().unwrap();
+        let b = o.insert_as_last_child(&a);
+        let c = o.insert_as_last_child(&b);
+        assert_eq!(o.height(a.v), 3);
+        assert_eq!(o.height(c.v), 1);
+        // A clone of b beside it adds no level, and b is measured once.
+        o.clone_node(&b);
+        assert_eq!(o.height(a.v), 3);
     }
 }

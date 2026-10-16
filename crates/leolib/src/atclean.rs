@@ -109,21 +109,24 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool> 
     // The tree matches the file even when nothing is read below, so the file
     // is the outline's to write, and a later edit by another program shows.
     let stamp = util::file_stamp(&path);
+    let gnx = root.gnx(o).to_string();
+    // The stamp is cached only once a read succeeds: a failed read must be
+    // retried, not skipped as unchanged.
     let seen = |o: &mut Outline| {
         o.remember_read_path(root, &path);
         o.record_file_stamp(&path, stamp);
+        if let Some(s) = stamp {
+            o.mod_time_cache.insert(gnx.clone(), s);
+        }
     };
     // #4385: do nothing if the file has not changed since we last saw it.
-    let new_mod_time = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-    let gnx = root.gnx(o).to_string();
-    if let (Some(old), Some(new)) = (o.mod_time_cache.get(&gnx).copied(), new_mod_time) {
-        if old >= new {
-            seen(o);
-            return Ok(false);
-        }
-    }
-    if let Some(t) = new_mod_time {
-        o.mod_time_cache.insert(gnx, t);
+    // Only an equal stamp counts: Leo's `old >= new` also skipped an edit
+    // that kept an older mtime (`cp -p`, `rsync -t`, a restored backup), and
+    // the next save overwrote it.
+    let cached = o.mod_time_cache.get(&gnx).copied();
+    if cached.is_some_and(|c| Some(c) == stamp && c.modified.is_some()) {
+        seen(o);
+        return Ok(false);
     }
 
     let contents = crate::external::read_file_to_string(&path)?.replace("\r\n", "\n");

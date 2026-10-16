@@ -449,16 +449,28 @@ fn read_one_at_auto_node(o: &mut Outline, p: &Position) -> Result<bool> {
         };
         if !ok {
             o.detach_subtree(p.v);
-            o.node_mut(p.v).b = contents;
-            // The body is the whole file, so writing it reproduces the file.
-            o.remember_read_path(p, &path);
+            o.node_mut(p.v).b = contents.clone();
+            // The body is the whole file, but the writer reads lines such as
+            // `@others` or `@c` in it as directives. Approve the file for
+            // writing only if the body writes back as the file.
+            let plain = contents.replace('\r', "");
+            let body_written = crate::importers::write_string(o, p, &path)
+                .is_ok_and(|text| text.replace('\r', "") == plain || text == format!("{plain}\n"));
+            if body_written {
+                o.remember_read_path(p, &path);
+            }
             let detail = written.map_or_else(|e| e.to_string(), |_| "text differs".to_string());
             return Err(Error::Import {
                 path: util::short_file_name(&path),
                 detail: format!(
                     "the {} importer did not reproduce it: {detail}. \
-                     The whole file is in the node's body.",
-                    report.language
+                     The whole file is in the node's body.{}",
+                    report.language,
+                    match body_written {
+                        true => "",
+                        false =>
+                            " It would not be written back unchanged either, so a save asks first.",
+                    }
                 ),
             });
         }
@@ -740,6 +752,9 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
             result.errors.push(FileReport {
                 headline: p.h(o).to_string(),
                 error: match decodable {
+                    true if !std::path::Path::new(&path).exists() => {
+                        Error::RefusedCreate { path: path.clone() }
+                    }
                     true => Error::RefusedOverwrite { path: path.clone() },
                     false => Error::NotUtf8 {
                         path: path.clone(),
@@ -809,11 +824,11 @@ pub fn write_files(o: &mut Outline, files: Vec<Position>) -> WriteResult {
                         o.remember_read_path(&p, &path);
                         o.clear_dirty_in_tree(&p);
                         if p.is_at_clean_node(o) {
-                            // The mod time is what stops the next read from
+                            // The stamp is what stops the next read from
                             // treating our own write as an external edit.
-                            if let Some(t) = file_mtime(&path) {
+                            if let Some(s) = util::file_stamp(&path) {
                                 let gnx = p.gnx(o).to_string();
-                                o.mod_time_cache.insert(gnx, t);
+                                o.mod_time_cache.insert(gnx, s);
                             }
                         }
                     }
@@ -946,10 +961,6 @@ fn hard_linked(_path: &str) -> bool {
 
 fn strip_cr(b: &[u8]) -> Vec<u8> {
     b.iter().copied().filter(|c| *c != b'\r').collect()
-}
-
-fn file_mtime(path: &str) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 /// Write `contents` to `path`. Returns whether the file on disk changed.

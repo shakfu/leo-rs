@@ -732,7 +732,7 @@ fn a_new_heading_under_a_moved_one_is_a_level_below_it() {
     let mut doc = doc_over(dir.path(), "# A\n\n## B\n\n## C\n");
     let c = find(doc.outline(), "C");
     let c = doc.move_right(&c).expect("C goes under B");
-    let d = doc.insert_child(&c);
+    let d = doc.insert_child(&c).unwrap();
     doc.set_headline(&d, "D");
     let o = doc.outline();
     assert_eq!(

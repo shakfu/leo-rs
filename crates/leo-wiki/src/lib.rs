@@ -350,7 +350,7 @@ pub fn check_wiki(o: &Outline, root: &Position) -> Vec<String> {
     }
     for q in root.subtree(o).into_iter().filter(|q| *q != *root) {
         let h = q.h(o);
-        if o.node(q.v).parents.len() > 1 {
+        if o.node(q.v).parents().len() > 1 {
             out.push(format!("page `{h}` of wiki {name} is a clone"));
         }
         if h.trim_start().starts_with('@') && wiki_name(h).is_none() {

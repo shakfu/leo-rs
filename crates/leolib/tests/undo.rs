@@ -42,16 +42,16 @@ fn edit(doc: &mut Document, rng: &mut Rng, step: usize) -> String {
         0 => doc.set_headline(&p, &format!("h{step}")),
         1 => doc.set_body(&p, &format!("body {step}\nline\n")),
         2 => {
-            doc.insert_node(&p);
+            doc.insert_node(&p).unwrap();
         }
         3 => {
-            doc.insert_child(&p);
+            doc.insert_child(&p).unwrap();
         }
         4 => {
             doc.delete_node(&p);
         }
         5 => {
-            doc.clone_node(&p);
+            doc.clone_node(&p).unwrap();
         }
         6 => {
             doc.demote(&p);
@@ -101,13 +101,13 @@ fn links_agree(o: &Outline) -> Result<(), String> {
         if !seen.insert(u) {
             continue;
         }
-        for &c in &o.node(u).children {
+        for &c in o.node(u).children() {
             want.entry(c).or_default().push(u);
             todo.push(c);
         }
     }
     for (v, mut w) in want {
-        let mut got = o.node(v).parents.clone();
+        let mut got = o.node(v).parents().to_vec();
         w.sort();
         got.sort();
         if got != w {
@@ -122,7 +122,7 @@ fn has_cycle(o: &Outline) -> bool {
     fn reaches(o: &Outline, from: leolib::VnodeId, target: leolib::VnodeId, depth: usize) -> bool {
         depth > 200
             || o.node(from)
-                .children
+                .children()
                 .iter()
                 .any(|&c| c == target || reaches(o, c, target, depth + 1))
     }
@@ -136,8 +136,8 @@ fn has_cycle(o: &Outline) -> bool {
         if reaches(o, v, v, 0) {
             return true;
         }
-        vs.extend(o.node(v).children.iter().copied());
-        vs.extend(o.node(v).parents.iter().copied());
+        vs.extend(o.node(v).children().iter().copied());
+        vs.extend(o.node(v).parents().iter().copied());
     }
     false
 }
@@ -184,7 +184,7 @@ fn node_and_its_clone() -> (Document, Position) {
     let mut doc = Document::new_empty("");
     let a = doc.outline().root_position().unwrap();
     doc.set_headline(&a, "a");
-    doc.clone_node(&a);
+    doc.clone_node(&a).unwrap();
     (doc, a)
 }
 
@@ -202,7 +202,7 @@ fn a_node_cannot_be_demoted_or_moved_into_its_own_clone() {
 fn the_only_top_level_node_is_not_deleted() {
     let mut doc = Document::new_empty("");
     let a = doc.outline().root_position().unwrap();
-    let child = doc.insert_child(&a);
+    let child = doc.insert_child(&a).unwrap();
     doc.set_headline(&child, "kept");
     assert!(doc.delete_node(&a).is_none());
     assert_eq!(doc.outline().all_positions().len(), 2);
@@ -214,7 +214,7 @@ fn tops(names: &[&str]) -> (Document, Vec<Position>) {
     let mut p = doc.outline().root_position().unwrap();
     doc.set_headline(&p, names[0]);
     for name in &names[1..] {
-        p = doc.insert_node(&p);
+        p = doc.insert_node(&p).unwrap();
         doc.set_headline(&p, name);
     }
     doc.clear_undo();
@@ -278,8 +278,8 @@ fn an_edit_below_an_undeleted_node_dirties_its_file() {
     let mut doc = Document::new_empty("");
     let root = doc.outline().root_position().unwrap();
     doc.set_headline(&root, "@file f.py");
-    let a = doc.insert_child(&root);
-    let g = doc.insert_child(&a);
+    let a = doc.insert_child(&root).unwrap();
+    let g = doc.insert_child(&a).unwrap();
     doc.set_headline(&g, "g");
     doc.delete_node(&a);
     doc.undo();
@@ -306,7 +306,7 @@ fn clone_marked_from_inside_a_marked_tree_makes_no_cycle() {
     let mut doc = Document::new_empty("");
     let a = doc.outline().root_position().unwrap();
     doc.set_headline(&a, "a");
-    let b = doc.insert_child(&a);
+    let b = doc.insert_child(&a).unwrap();
     doc.toggle_marked(&a);
     assert!(doc.clone_marked(&b).is_some());
     assert!(!has_cycle(doc.outline()));
@@ -319,9 +319,9 @@ fn move_marked_after_a_clone_inside_the_moved_tree_makes_no_cycle() {
     let mut doc = Document::new_empty("");
     let m = doc.outline().root_position().unwrap();
     doc.set_headline(&m, "m");
-    let x = doc.insert_child(&m);
+    let x = doc.insert_child(&m).unwrap();
     doc.set_headline(&x, "x");
-    let y = doc.insert_child(&x);
+    let y = doc.insert_child(&x).unwrap();
     doc.set_headline(&y, "y");
     doc.toggle_marked(&m);
     let x = doc
@@ -330,7 +330,7 @@ fn move_marked_after_a_clone_inside_the_moved_tree_makes_no_cycle() {
         .into_iter()
         .find(|p| p.h(doc.outline()) == "x")
         .unwrap();
-    let xc = doc.clone_node(&x);
+    let xc = doc.clone_node(&x).unwrap();
     doc.move_node(&xc, &m, leolib::Place::After).unwrap();
     let y_under_top_x = doc
         .outline()

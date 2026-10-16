@@ -84,7 +84,8 @@ no hook.
 
 **Extension API.** These are public, in `leolib::ext`:
 - `Outline::detach_subtree_keeping_clones`;
-- `Outline::link_as_last_child_raw`;
+- `Outline::link_as_last_child_raw`, which refuses a link that would make a cycle;
+- `Vnode::children()` and `Vnode::parents()`, read-only: a plugin links nodes only through `Outline`;
 - import warnings, `refilled`, and `remember_read_path`;
 - `Error::Import` and `Error::Write`;
 - `read_file_to_string`, `util::split_lines`, and the language tables.

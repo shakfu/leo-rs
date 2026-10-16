@@ -13,7 +13,7 @@ use regex::Regex;
 
 use crate::error::{Error, Result};
 use crate::node::VnodeId;
-use crate::outline::Outline;
+use crate::outline::{Outline, MAX_DEPTH};
 use crate::position::Position;
 use crate::util;
 
@@ -204,6 +204,8 @@ pub fn read_into_root(o: &mut Outline, contents: &str, path: &str, root: &Positi
 struct Scanner<'a> {
     o: &'a mut Outline,
     root_v: VnodeId,
+    /// The root's depth in the outline, which the file's levels add to.
+    root_depth: usize,
     path: String,
     pats: Arc<Patterns>,
     warnings: Vec<String>,
@@ -213,6 +215,7 @@ impl<'a> Scanner<'a> {
     fn new(o: &'a mut Outline, root: &Position, path: &str) -> Self {
         Self {
             root_v: root.v,
+            root_depth: root.level() + 1,
             o,
             path: path.to_string(),
             pats: Patterns::new("#", ""),
@@ -377,6 +380,11 @@ impl<'a> Scanner<'a> {
                     continue;
                 }
 
+                if self.root_depth + level - 1 > MAX_DEPTH {
+                    return Err(format!(
+                        "nodes nested deeper than {MAX_DEPTH} levels in the outline"
+                    ));
+                }
                 let (stack_parent, stack_clone) = *level_stack
                     .get(level.saturating_sub(2))
                     .or_else(|| level_stack.last())
@@ -902,5 +910,41 @@ mod tests {
                 .collect();
             assert_eq!(heads, vec!["@file f.py", "keep"], "{g}");
         }
+    }
+
+    /// A sentinel file whose nodes nest `levels` deep, the root included.
+    fn nested(levels: usize) -> String {
+        let mut text = String::from("# @+leo-ver=5-thin\n# @+node:r.1: * @file f.py\n# @+others\n");
+        for level in 2..=levels {
+            let stars = match level {
+                2 => "**".to_string(),
+                n => format!("*{n}*"),
+            };
+            text.push_str(&format!("# @+node:n.{level}: {stars} h\n# @+others\n"));
+        }
+        text.push_str(&"# @-others\n".repeat(levels));
+        text.push_str("# @-leo\n");
+        text
+    }
+
+    #[test]
+    fn sentinels_nested_past_the_limit_are_refused() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@file f.py");
+        read_into_root(&mut o, &nested(MAX_DEPTH), "f.py", &root).unwrap();
+        let err = read_into_root(&mut o, &nested(MAX_DEPTH + 1), "f.py", &root).unwrap_err();
+        assert!(err.to_string().contains("deeper than 1000"), "{err}");
+
+        // The depth counts from the outline's top, not the @file node's.
+        let mut o = Outline::new_empty();
+        let mut root = o.root_position().unwrap();
+        for _ in 0..MAX_DEPTH - 2 {
+            root = o.insert_as_last_child(&root);
+        }
+        o.set_headline(&root, "@file f.py");
+        read_into_root(&mut o, &nested(2), "f.py", &root).unwrap();
+        let err = read_into_root(&mut o, &nested(3), "f.py", &root).unwrap_err();
+        assert!(err.to_string().contains("deeper than 1000"), "{err}");
     }
 }

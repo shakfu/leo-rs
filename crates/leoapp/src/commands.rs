@@ -142,7 +142,9 @@ pub static COMMANDS: &[Command] = &[
     // --- Structure --------------------------------------------------------
     c("insert-node", "insert a node after this one", |app, _| {
         let p = app.current.clone();
-        let new = app.doc.insert_node(&p);
+        let Some(new) = app.doc.insert_node(&p) else {
+            return;
+        };
         app.select(new);
         app.begin_headline_edit();
     }),
@@ -151,7 +153,9 @@ pub static COMMANDS: &[Command] = &[
         "insert a node before this one",
         |app, _| {
             let p = app.current.clone();
-            let new = app.doc.insert_node_before(&p);
+            let Some(new) = app.doc.insert_node_before(&p) else {
+                return;
+            };
             app.select(new);
             app.begin_headline_edit();
         },
@@ -161,7 +165,9 @@ pub static COMMANDS: &[Command] = &[
         "insert a node as the first child",
         |app, _| {
             let p = app.current.clone();
-            let new = app.doc.insert_child(&p);
+            let Some(new) = app.doc.insert_child(&p) else {
+                return;
+            };
             app.select(new);
             app.begin_headline_edit();
         },
@@ -219,8 +225,9 @@ pub static COMMANDS: &[Command] = &[
         if app.hoist_refuses(&p, false) {
             return;
         }
-        let new = app.doc.clone_node(&p);
-        app.select(new);
+        if let Some(new) = app.doc.clone_node(&p) {
+            app.select(new);
+        }
     }),
     c(
         "mark",

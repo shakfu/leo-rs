@@ -10,6 +10,8 @@
 //! holds [`DEFAULT_LIMIT`] beads; once older ones drop off, the vnodes only
 //! they named are freed (`Document`).
 
+use std::collections::HashMap;
+
 use crate::node::{status, VnodeId};
 use crate::outline::Outline;
 use crate::position::Position;
@@ -250,7 +252,9 @@ impl Undoer {
         self.index -= 1;
         self.version += 1;
         let bead = self.beads[self.index].1.clone();
-        apply(o, &bead, true)
+        let mut chosen = Vec::new();
+        apply(o, &bead, true, &mut chosen);
+        select(o, &chosen)
     }
 
     /// Redo one operation. Returns the node to select, if it still exists.
@@ -261,12 +265,19 @@ impl Undoer {
         let bead = self.beads[self.index].1.clone();
         self.index += 1;
         self.version += 1;
-        apply(o, &bead, false)
+        let mut chosen = Vec::new();
+        apply(o, &bead, false, &mut chosen);
+        select(o, &chosen)
     }
 }
 
-fn apply(o: &mut Outline, bead: &Bead, undo: bool) -> Option<Position> {
-    match bead {
+/// Apply one bead, pushing the node it would select onto `chosen`.
+///
+/// The selection is found once, by `select`, after the whole bead: finding
+/// it per bead walked the outline each time, and undoing `unmark_all` over
+/// 3,000 marks took 0.70 s.
+fn apply(o: &mut Outline, bead: &Bead, undo: bool, chosen: &mut Vec<VnodeId>) {
+    let v = match bead {
         Bead::Body { v, old, new } => {
             o.node_mut(*v).b = if undo { old.clone() } else { new.clone() };
             touch(o, *v)
@@ -278,19 +289,19 @@ fn apply(o: &mut Outline, bead: &Bead, undo: bool) -> Option<Position> {
         Bead::Insert { parent, index, v } => {
             if undo {
                 unlink(o, *parent, *index, *v);
-                position_of(o, *parent)
+                *parent
             } else {
                 relink(o, *parent, *index, *v);
-                position_of(o, *v)
+                *v
             }
         }
         Bead::Delete { parent, index, v } => {
             if undo {
                 relink(o, *parent, *index, *v);
-                position_of(o, *v)
+                *v
             } else {
                 unlink(o, *parent, *index, *v);
-                position_of(o, *parent)
+                *parent
             }
         }
         Bead::Move { v, from, to } => {
@@ -298,11 +309,11 @@ fn apply(o: &mut Outline, bead: &Bead, undo: bool) -> Option<Position> {
             if unlink(o, src.0, src.1, *v) {
                 relink(o, dst.0, dst.1, *v);
             }
-            position_of(o, *v)
+            *v
         }
         Bead::Sort { parent, old, new } => {
             set_children(o, *parent, if undo { old } else { new });
-            position_of(o, *parent)
+            *parent
         }
         Bead::Mark { v, was_marked } => {
             let marked = if undo { *was_marked } else { !*was_marked };
@@ -311,31 +322,45 @@ fn apply(o: &mut Outline, bead: &Bead, undo: bool) -> Option<Position> {
             } else {
                 o.node_mut(*v).clear_bit(status::MARKED);
             }
-            position_of(o, *v)
+            *v
         }
         Bead::Group { beads, .. } => {
             // Undo runs the group backwards; redo runs it forwards.
-            let mut last = None;
             if undo {
                 for b in beads.iter().rev() {
-                    last = apply(o, b, true).or(last);
+                    apply(o, b, true, chosen);
                 }
             } else {
                 for b in beads.iter() {
-                    last = apply(o, b, false).or(last);
+                    apply(o, b, false, chosen);
                 }
             }
-            last
+            return;
         }
-    }
+    };
+    chosen.push(v);
 }
 
-fn touch(o: &mut Outline, v: VnodeId) -> Option<Position> {
+/// The position of the last of `chosen` still in the tree, from one walk.
+fn select(o: &Outline, chosen: &[VnodeId]) -> Option<Position> {
+    if let [v] = chosen {
+        return position_of(o, *v);
+    }
+    let mut first: HashMap<VnodeId, Position> = HashMap::new();
+    for p in o.all_positions() {
+        first.entry(p.v).or_insert(p);
+    }
+    chosen.iter().rev().find_map(|v| match *v == o.hidden_root {
+        true => o.root_position(),
+        false => first.get(v).cloned(),
+    })
+}
+
+fn touch(o: &mut Outline, v: VnodeId) -> VnodeId {
     o.changed = true;
     o.generation += 1;
-    let p = position_of(o, v)?;
-    o.set_dirty(&p);
-    Some(p)
+    o.set_dirty_vnode(v);
+    v
 }
 
 /// False if the tree moved under us, and nothing was done.

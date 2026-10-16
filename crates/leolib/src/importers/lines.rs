@@ -5,6 +5,8 @@
 //! Each also needs its own writer, because the structure lines are consumed
 //! on read and must be put back on write.
 
+use std::collections::HashMap;
+
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -29,6 +31,9 @@ pub fn gen_block(im: &mut Importer, kind: LineImporter) {
 struct Builder {
     stack: Vec<VnodeId>,
     bodies: Vec<(VnodeId, Vec<String>)>,
+    /// Where each node's lines are in `bodies`. A scan per line was
+    /// quadratic: 20k headings took 2.29 s.
+    index: HashMap<VnodeId, usize>,
 }
 
 impl Builder {
@@ -36,6 +41,7 @@ impl Builder {
         Self {
             stack: vec![root],
             bodies: vec![(root, Vec::new())],
+            index: HashMap::from([(root, 0)]),
         }
     }
 
@@ -45,12 +51,12 @@ impl Builder {
     }
 
     fn body_of(&mut self, v: VnodeId) -> &mut Vec<String> {
-        if let Some(i) = self.bodies.iter().position(|(w, _)| *w == v) {
-            return &mut self.bodies[i].1;
+        let n = self.bodies.len();
+        let i = *self.index.entry(v).or_insert(n);
+        if i == n {
+            self.bodies.push((v, Vec::new()));
         }
-        self.bodies.push((v, Vec::new()));
-        let n = self.bodies.len() - 1;
-        &mut self.bodies[n].1
+        &mut self.bodies[i].1
     }
 
     /// Add nodes so the stack reaches `level`, as `i.create_placeholders`.

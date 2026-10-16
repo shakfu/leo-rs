@@ -1088,7 +1088,7 @@ fn bufdo_changes_a_cloned_body_once() {
     let mut app = app();
     let p = app.current.clone();
     app.doc.set_body(&p, "a\n");
-    app.doc.clone_node(&p);
+    app.doc.clone_node(&p).unwrap();
     app.run_command_line("bufdo %s/a/aa/");
     assert_eq!(p.b(app.outline()), "aa\n");
     assert_eq!(app.message, "1 substitution on 1 line in 1 node");

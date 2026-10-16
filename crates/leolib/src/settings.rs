@@ -50,18 +50,48 @@ pub fn use_user_settings(path: &Path) -> bool {
     USER.set(settings).is_ok()
 }
 
+/// Settings an outline may not turn on for itself: each removes a guard
+/// against what the outline's own headlines ask for. Leo honours them from
+/// any `@settings` tree; here only `myLeoSettings.leo` can.
+const USER_ONLY: &[&str] = &["createnonexistentdirectories"];
+
 /// Apply the user's settings, then the outline's own, to `o.config`.
-/// Returns a note for each setting whose value is not valid.
+/// Returns a note for each setting whose value is not valid, or that the
+/// outline may not set.
 pub(crate) fn apply(o: &mut Outline) -> Vec<FileNote> {
+    let user = USER.get().map_or(&[][..], Vec::as_slice);
+    apply_with(o, user)
+}
+
+fn apply_with(o: &mut Outline, user: &[Setting]) -> Vec<FileNote> {
     let own = collect(o, &o.file_name.clone());
     let mut notes = Vec::new();
-    for s in USER.get().into_iter().flatten().chain(&own) {
+    let mut note = |s: &Setting, message: String| {
+        notes.push(FileNote {
+            headline: s.headline.clone(),
+            path: s.path.clone(),
+            message,
+        })
+    };
+    for s in user {
         if let Err(message) = set(&mut o.config, s) {
-            notes.push(FileNote {
-                headline: s.headline.clone(),
-                path: s.path.clone(),
-                message,
-            });
+            note(s, message);
+        }
+    }
+    for s in &own {
+        let on = matches!(s.value.as_deref(), Some("True" | "true" | "1"));
+        if on && USER_ONLY.contains(&s.name.as_str()) {
+            note(
+                s,
+                format!(
+                    "{} is read from myLeoSettings.leo only: an outline may not turn off its own guards",
+                    s.name
+                ),
+            );
+            continue;
+        }
+        if let Err(message) = set(&mut o.config, s) {
+            note(s, message);
         }
     }
     notes
@@ -263,6 +293,28 @@ mod tests {
     }
 
     #[test]
+    fn only_the_users_settings_create_missing_directories() {
+        let setting = |value: &str| Setting {
+            kind: "bool".into(),
+            name: "createnonexistentdirectories".into(),
+            value: Some(value.into()),
+            headline: format!("@bool create-nonexistent-directories = {value}"),
+            path: "myLeoSettings.leo".into(),
+        };
+        let mut o = Outline::new_empty();
+        assert!(apply_with(&mut o, &[setting("True")]).is_empty());
+        assert!(o.config.create_nonexistent_directories);
+
+        // The outline may turn it off again, which keeps the guard.
+        let root = o.root_position().unwrap();
+        o.set_headline(&root, "@settings");
+        let p = o.insert_as_last_child(&root);
+        o.set_headline(&p, "@bool create-nonexistent-directories = False");
+        assert!(apply_with(&mut o, &[setting("True")]).is_empty());
+        assert!(!o.config.create_nonexistent_directories);
+    }
+
+    #[test]
     fn an_outlines_settings_set_its_config_and_bad_values_are_reported() {
         let mut o = Outline::new_empty();
         let root = o.root_position().unwrap();
@@ -286,13 +338,16 @@ mod tests {
         let notes = apply(&mut o);
         let c = &o.config;
         assert_eq!((c.tab_width, c.output_newline.as_str()), (8, "crlf"));
-        assert!(c.create_nonexistent_directories);
+        // An outline may not lift its own directory guard.
+        assert!(!c.create_nonexistent_directories);
         assert_eq!(c.page_width, Config::default().page_width);
         assert_eq!(c.target_language, Config::default().target_language);
         let messages: Vec<&str> = notes.iter().map(|n| n.message.as_str()).collect();
         assert_eq!(
             messages,
             [
+                "createnonexistentdirectories is read from myLeoSettings.leo only: \
+                 an outline may not turn off its own guards",
                 "wide is not a valid int for pagewidth",
                 "forcenewlinesinatnosentbodies must be an @bool, not an @string"
             ]

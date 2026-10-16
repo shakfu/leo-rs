@@ -873,7 +873,7 @@ impl App {
             marked: p.is_marked(o),
             dirty: p.is_dirty(o),
             cloned: p.is_cloned(o),
-            clones: o.node(p.v).parents.len(),
+            clones: o.node(p.v).parents().len(),
             is_file: p.is_any_at_file_node(o),
             has_body: !p.b(o).is_empty(),
             headline: p.h(o).to_string(),

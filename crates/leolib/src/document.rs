@@ -269,8 +269,12 @@ impl Document {
     // --- Editing the tree -------------------------------------------------
 
     /// Insert a node, as Leo's `insert-node`: as a first child of an expanded
-    /// parent, otherwise as the next sibling.
-    pub fn insert_node(&mut self, p: &Position) -> Position {
+    /// parent, otherwise as the next sibling. None if p no longer exists, as
+    /// for the other edits that take a position; see `delete_node`.
+    pub fn insert_node(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let as_child = p.has_children(&self.outline) && self.outline.is_expanded(p);
         let new = if as_child {
             self.outline.insert_as_nth_child(p, 0)
@@ -287,12 +291,17 @@ impl Document {
             },
         );
         self.outline.changed = true;
-        new
+        Some(new)
     }
 
     /// Delete p. Returns the position to select next; None, with nothing
-    /// deleted, if p is the only top-level node, as Leo refuses.
+    /// deleted, if p is the only top-level node, as Leo refuses, or if p no
+    /// longer exists. The moves, `promote`, `demote`, `cut_node`,
+    /// `paste_node` and the sorts refuse a stale p the same way.
     pub fn delete_node(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let parent = p.parent_vnode(&self.outline);
         if parent == self.outline.hidden_root && self.outline.node(parent).children.len() == 1 {
             return None;
@@ -317,8 +326,20 @@ impl Document {
             .or_else(|| self.outline.root_position())
     }
 
-    /// Clone p, as Leo's `clone-node`. Returns the clone, p's next sibling.
-    pub fn clone_node(&mut self, p: &Position) -> Position {
+    /// Whether p no longer names a place in the outline: an edit since it was
+    /// taken moved or removed it. Front ends keep positions across edits (an
+    /// MCP client's, a second view), and acting on one removes or moves
+    /// whatever node now sits at its index, or panics past the end.
+    fn stale(&self, p: &Position) -> bool {
+        !self.outline.position_exists(p)
+    }
+
+    /// Clone p, as Leo's `clone-node`. Returns the clone, p's next sibling;
+    /// None if p no longer exists.
+    pub fn clone_node(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let new = self.outline.clone_node(p);
         let parent = new.parent_vnode(&self.outline);
         self.push(
@@ -330,11 +351,15 @@ impl Document {
             },
         );
         self.outline.changed = true;
-        new
+        Some(new)
     }
 
-    /// Insert a node as p's first child, as Leo's `insert-child`.
-    pub fn insert_child(&mut self, p: &Position) -> Position {
+    /// Insert a node as p's first child, as Leo's `insert-child`. None if p
+    /// no longer exists.
+    pub fn insert_child(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let new = self.outline.insert_as_nth_child(p, 0);
         let parent = new.parent_vnode(&self.outline);
         self.push(
@@ -347,11 +372,15 @@ impl Document {
         );
         self.outline.expand(p);
         self.outline.changed = true;
-        new
+        Some(new)
     }
 
-    /// Insert a node before p, as Leo's `insert-node-before`.
-    pub fn insert_node_before(&mut self, p: &Position) -> Position {
+    /// Insert a node before p, as Leo's `insert-node-before`. None if p no
+    /// longer exists.
+    pub fn insert_node_before(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let new = self.outline.insert_before(p);
         let parent = new.parent_vnode(&self.outline);
         self.push(
@@ -363,7 +392,7 @@ impl Document {
             },
         );
         self.outline.changed = true;
-        new
+        Some(new)
     }
 
     /// Make all of p's following siblings its children.
@@ -373,6 +402,9 @@ impl Document {
     /// `checkMoveWithParentWithWarning` refuses, if a sibling is a clone of
     /// p or holds one: p would be inside itself.
     pub fn demote(&mut self, p: &Position) -> bool {
+        if self.stale(p) {
+            return false;
+        }
         let parent_v = p.parent_vnode(&self.outline);
         let following: Vec<VnodeId> =
             self.outline.node(parent_v).children[p.child_index + 1..].to_vec();
@@ -427,6 +459,9 @@ impl Document {
     ///
     /// False, and nothing recorded, when p has no children.
     pub fn promote(&mut self, p: &Position) -> bool {
+        if self.stale(p) {
+            return false;
+        }
         let parent_v = p.parent_vnode(&self.outline);
         let children = self.outline.node(p.v).children.clone();
         if children.is_empty() {
@@ -453,6 +488,9 @@ impl Document {
 
     /// Copy p to the clipboard, then delete it.
     pub fn cut_node(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         self.copy_node(p);
         self.delete_node(p)
     }
@@ -500,6 +538,9 @@ impl Document {
     }
 
     fn sort(&mut self, name: &str, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let parent = p.parent_vnode(&self.outline);
         let old = self.outline.node(parent).children.clone();
         let mut new = old.clone();
@@ -898,6 +939,9 @@ impl Document {
     /// Paste the copied tree after p. A second paste copies it again, so the
     /// clipboard can be pasted any number of times.
     pub fn paste_node(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let v = self.clipboard?;
         let copy = self.outline.copy_tree_of_vnode(v);
         let new = self.outline.paste_after(p, copy);
@@ -916,18 +960,27 @@ impl Document {
 
     /// Swap p with its previous sibling.
     pub fn move_up(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let back = p.back(&self.outline)?;
         Some(self.move_to(p, back.parent_vnode(&self.outline), back.child_index))
     }
 
     /// Swap p with its next sibling: move p to just after it.
     pub fn move_down(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let next = p.next(&self.outline)?;
         Some(self.move_to(p, next.parent_vnode(&self.outline), next.child_index + 1))
     }
 
     /// Make p the next sibling of its parent.
     pub fn move_left(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let parent = p.parent(&self.outline)?;
         let grandparent = parent.parent_vnode(&self.outline);
         Some(self.move_to(p, grandparent, parent.child_index + 1))
@@ -936,6 +989,9 @@ impl Document {
     /// Make p the last child of its previous sibling. None if that sibling
     /// is p's clone or holds one.
     pub fn move_right(&mut self, p: &Position) -> Option<Position> {
+        if self.stale(p) {
+            return None;
+        }
         let back = p.back(&self.outline)?;
         if back.v == p.v || self.outline.is_below(back.v, p.v) {
             return None;
@@ -947,6 +1003,9 @@ impl Document {
     /// Move p before, after or into `target`, as a dropped node lands. None
     /// if the place is inside p's own tree: the outline would hold itself.
     pub fn move_node(&mut self, p: &Position, target: &Position, place: Place) -> Option<Position> {
+        if self.stale(p) || self.stale(target) {
+            return None;
+        }
         let (parent, index) = match place {
             Place::Before => (target.parent_vnode(&self.outline), target.child_index),
             Place::After => (target.parent_vnode(&self.outline), target.child_index + 1),
@@ -1290,6 +1349,36 @@ mod tests {
         (d, all)
     }
 
+    #[test]
+    fn a_stale_position_changes_nothing() {
+        let (mut d, ps) = abc();
+        let (b, c) = (ps[1].clone(), ps[2].clone());
+        d.delete_node(&b).unwrap();
+        // `b` now names index 1, where c sits; `c` names index 2, past the end.
+        // They removed c, or panicked.
+        let before = heads(&d);
+        let target = d.outline.root_position().unwrap();
+        for p in [&b, &c] {
+            assert_eq!(d.delete_node(p), None);
+            assert_eq!(d.cut_node(p), None);
+            assert_eq!(d.move_up(p), None);
+            assert_eq!(d.move_down(p), None);
+            assert_eq!(d.move_left(p), None);
+            assert_eq!(d.move_right(p), None);
+            assert_eq!(d.move_node(p, &target, Place::Inside), None);
+            assert_eq!(d.move_node(&target, p, Place::After), None);
+            assert!(!d.promote(p) && !d.demote(p));
+            assert_eq!(d.sort_siblings(p), None);
+            assert_eq!(d.paste_node(p), None);
+            assert_eq!(d.insert_node(p), None);
+            assert_eq!(d.insert_node_before(p), None);
+            assert_eq!(d.insert_child(p), None);
+            assert_eq!(d.clone_node(p), None);
+        }
+        assert_eq!(heads(&d), before);
+        assert!(d.outline.position_exists(&target));
+    }
+
     fn heads(d: &Document) -> Vec<String> {
         d.outline
             .all_positions()
@@ -1375,7 +1464,7 @@ mod tests {
         // Three beads a round, so nine keep three whole rounds.
         d.set_undo_limit(9);
         for _ in 0..500 {
-            let p = d.insert_node(&all[0]);
+            let p = d.insert_node(&all[0]).unwrap();
             d.set_body(&p, &"x".repeat(1000));
             d.delete_node(&p);
         }
@@ -1388,7 +1477,7 @@ mod tests {
         assert!(!d.undoer.can_undo());
         assert_eq!(heads(&d), vec!["a", "b", "c"]);
         // A freed slot is reused with a gnx of its own.
-        let p = d.insert_node(&all[0]);
+        let p = d.insert_node(&all[0]).unwrap();
         assert_eq!(d.outline.find_gnx(p.gnx(&d.outline)), Some(p.v));
     }
 
@@ -1720,7 +1809,7 @@ mod tests {
     #[test]
     fn insert_child_goes_first_and_unfolds_the_parent() {
         let (mut d, all) = abc();
-        let child = d.insert_child(&all[0]);
+        let child = d.insert_child(&all[0]).unwrap();
         d.set_headline(&child, "child");
         assert_eq!(heads(&d), vec!["a", "  child", "b", "c"]);
         assert!(d.outline.is_expanded(&all[0]));

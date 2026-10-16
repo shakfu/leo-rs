@@ -14,7 +14,7 @@ use quick_xml::Reader;
 
 use crate::error::{Error, Result};
 use crate::node::{status, Ua, VnodeId};
-use crate::outline::{Outline, HIDDEN_ROOT_GNX};
+use crate::outline::{Outline, HIDDEN_ROOT_GNX, MAX_DEPTH};
 use crate::pickle;
 use crate::position::Position;
 use crate::util;
@@ -75,6 +75,7 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
     let mut buf = Vec::new();
     // A stack of elements under construction. The root is a sentinel.
     let mut stack: Vec<Element> = vec![Element::default()];
+    let mut depth = 0;
     loop {
         match reader.read_event_into(&mut buf) {
             Err(e) => {
@@ -86,6 +87,17 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
             Ok(Event::Start(e)) => {
                 let mut el = element_from_start(&e, &reader)?;
                 el.start = reader.buffer_position() as usize;
+                if el.name == "v" {
+                    depth += 1;
+                    if depth > MAX_DEPTH {
+                        return Err(Error::NotALeoFile {
+                            detail: format!(
+                                "nodes nested deeper than {MAX_DEPTH} levels, on line {}",
+                                line_at(contents, el.start)
+                            ),
+                        });
+                    }
+                }
                 stack.push(el);
             }
             Ok(Event::Empty(e)) => {
@@ -110,6 +122,9 @@ fn parse(contents: &str) -> Result<(Element, Element)> {
                 }
                 if stack.len() > 1 {
                     let el = stack.pop().unwrap();
+                    if el.name == "v" {
+                        depth -= 1;
+                    }
                     stack.last_mut().unwrap().children.push(el);
                 }
             }
@@ -970,6 +985,55 @@ mod tests {
         assert!(read_leo_string(&mut Outline::new(""), "\u{feff}<>uuuu").is_err());
         // And after a second BOM, which the reader skips as it did the first.
         assert!(read_leo_string(&mut Outline::new(""), "\u{feff}\u{feff}<>").is_err());
+    }
+
+    /// A `.leo` file whose nodes nest `depth` deep.
+    fn nested(depth: usize) -> String {
+        let mut xml = String::from("<?xml version=\"1.0\"?>\n<leo_file><vnodes>");
+        for i in 0..depth {
+            xml.push_str(&format!("<v t=\"a.{i}\"><vh>{i}</vh>"));
+        }
+        xml.push_str(&"</v>".repeat(depth));
+        xml.push_str("</vnodes><tnodes></tnodes></leo_file>\n");
+        xml
+    }
+
+    #[test]
+    fn nodes_nested_past_the_limit_are_refused_not_a_crash() {
+        // 100,000 levels overflowed the stack and aborted the process.
+        for depth in [MAX_DEPTH + 1, 100_000] {
+            let err = read_leo_string(&mut Outline::new(""), &nested(depth))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("nested deeper than 1000 levels"), "{err}");
+        }
+    }
+
+    #[test]
+    fn nodes_nested_to_the_limit_read_write_and_read_again() {
+        // On a test thread's 2 MiB stack, the smallest a front end runs on.
+        let mut o = Outline::new("");
+        read_leo_string(&mut o, &nested(MAX_DEPTH)).unwrap();
+        let xml = outline_to_xml_string(&mut o);
+        let mut again = Outline::new("");
+        read_leo_string(&mut again, &xml).unwrap();
+        let mut p = again.root_position().unwrap();
+        let mut levels = 1;
+        while let Some(child) = p.first_child(&again) {
+            p = child;
+            levels += 1;
+        }
+        assert_eq!(levels, MAX_DEPTH);
+        assert_eq!(p.h(&again), (MAX_DEPTH - 1).to_string());
+
+        // The sentinel writer recurses per level too.
+        let root = again.root_position().unwrap();
+        again.set_headline(&root, "@file deep.py");
+        for p in root.self_and_subtree(&again) {
+            again.set_body(&p, "@others\n");
+        }
+        let text = crate::atfile_write::at_file_to_string(&again, &root, true).unwrap();
+        assert_eq!(text.matches("@+node:").count(), MAX_DEPTH);
     }
 
     #[test]

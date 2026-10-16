@@ -28,26 +28,6 @@
 
 ### leolib
 
-- [ ] **An external `@clean` edit with an older mtime is skipped, and the next save overwrites it.** `atclean.rs` skips a file whose stamp is not newer, so `cp -p`, `rsync -t` or a restored backup goes unseen, and `seen()` records it. `mod_time_cache` is also set before the read succeeds. Skip only on an equal `FileStamp`; set the cache after a successful read.
-
-- [ ] **A failed `@auto` import is approved for writing without a round-trip check** (`external.rs`, after the import fails). Lines the writer treats as directives (`@c`, `@language x`) are dropped from the source on the first save. Call `remember_read_path` only when `write_string(body) == contents`, as `read_unknown_file_type` does.
-
-- [ ] **An outline's own `@settings` can turn off the directory-must-exist guard** (`createnonexistentdirectories`, used in `external.rs`). Honour it only from `myLeoSettings.leo` or `settings.toml`.
-
-- [ ] **A deeply nested `<v>` overflows the stack and aborts** (`leofile.rs` `VnodeVisitor::visit`; `atfile_write` `put_body` recurses too). 100,000 levels abort a debug build. Cap the depth in `parse`, or make `visit` iterative.
-
-- [ ] **A deep import uses memory quadratic in depth**: each `Position` clones its stack, and an otl file 20,000 tabs deep runs out of memory. `add_parent_links`, `cut_parent_links`, `copy_tree_helper`, `detach_subtree_keeping_clones` and `add_descendant_parent_links` recurse. Cap the import depth; make the helpers iterative.
-
-- [ ] **`Document::delete_node` and `move_to` trust stale positions**: an index panic, or the wrong child removed in release builds. Return `None` when `!position_exists(p)`.
-
-- [ ] **Undoing a large group is quadratic** (`undo.rs`: `position_of` per bead). Undoing `unmark_all` over 3,000 marks takes 0.70 s. Find the selection once, after the last bead.
-
-- [ ] **The line importers are quadratic in headings** (`importers/lines.rs` `body_of` scans). 20k headings take 2.29 s. Keep the body index on each stack entry.
-
-- [ ] **Make `Outline`'s link fields private before 1.0** (needs a decision; breaking). The `pub` link fields and `link_as_last_child_raw` let plugin code break invariants leolib cannot then defend; expose only checked operations.
-
-- [ ] Run the `fuzz/` targets under libFuzzer. They compile on stable but need nightly and `cargo-fuzz` to run, and neither was installed when they were written. A one-minute random-mutation run over `demo/` found the pickle allocation bug and nothing else.
-
 ### leoapp and leolsp (both frontends)
 
 - [ ] **A language-server edit lands at stale positions if the user edits within the 150 ms debounce.** `:lsp-rename g` then `dd` passes the version check, and `apply_edits` splices at shifted rows; `workspace/applyEdit` has no check at all (`app/lsp.rs`, `leolsp/src/lib.rs`). Call `sync_now` before `lsp.poll`, or compare the outline generation at request time.
@@ -72,8 +52,6 @@
 
 ### leomcp
 
-- [ ] **`mcp-edit` plus `mcp-save` let a client create files anywhere the user can write.** `may_overwrite` allows any path that does not exist, so a prompt-injected agent can rename a node to `@file ~/.ssh/authorized_keys` and save (`app/mcp.rs`). Confirm with the user before an MCP save writes outside the outline's directory, or document it.
-
 - [ ] **Changing `mcp-token` without the port keeps the old token valid** until restart (`app/mcp.rs` `set_mcp` returns early on an unchanged port). Restart the server on any MCP setting change.
 
 ### Plugins
@@ -87,10 +65,6 @@
 - [ ] **Renaming a parent wiki page breaks qualified links through it**: `[[Guide/Setup]]` is not rewritten when Guide is renamed (`leo-wiki/src/lib.rs`).
 
 ### Workspace
-
-- [ ] **Update `SECURITY.md`.** It says `@clean` and `@nosent` are exempt from `may_overwrite` (nothing is now), counts two fuzz targets (there are four), omits leo-markdown, leo-entangled and the language-server reader from the untrusted-input parsers, and does not mention the MCP server, the only network-facing component.
-
-## Low
 
 ### Leo coverage
 

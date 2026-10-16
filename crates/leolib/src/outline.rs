@@ -98,11 +98,14 @@ pub struct Outline {
     pub(crate) expanded: HashSet<String>,
     /// The window geometry the `.leo` file records.
     pub window_geometry: WindowGeometry,
-    /// Last-seen mtime per @clean node, so an unchanged file is not re-read.
-    pub(crate) mod_time_cache: HashMap<String, std::time::SystemTime>,
+    /// Last-seen stamp per @clean node, so an unchanged file is not re-read.
+    pub(crate) mod_time_cache: HashMap<String, util::FileStamp>,
     /// `(gnx, path, headline)` for every external file this outline has read
     /// or written. See [`Outline::may_overwrite`].
     pub(crate) read_paths: HashSet<(String, String, String)>,
+    /// Files that do not exist yet and wait for the user's approval to be
+    /// created. See [`Outline::hold_new_file`].
+    pub(crate) held_new: HashSet<String>,
     /// Per-gnx note from the last `@auto` import that normalized its file.
     pub(crate) import_warnings: HashMap<String, String>,
     /// File nodes a kind keeps unsaved after a read
@@ -127,6 +130,13 @@ pub struct Outline {
 /// The gnx of [`Outline::hidden_root`].
 pub const HIDDEN_ROOT_GNX: &str = "hidden-root-vnode-gnx";
 
+/// How deep a read may nest nodes, counting a top-level node as 1. Leo's
+/// recursive `.leo` reader stops near Python's default recursion limit of
+/// 1000. Here reading, writing and copying a tree recurse per level, and each
+/// `Position` holds its whole path, so a hostile file 100,000 deep aborted
+/// the process and an `@auto` file 20,000 deep ran out of memory.
+pub const MAX_DEPTH: usize = 1000;
+
 impl Outline {
     /// An outline with a hidden root and nothing else. Not a valid document yet.
     pub fn new(file_name: &str) -> Self {
@@ -146,6 +156,7 @@ impl Outline {
             dropped_descendent_uas: Vec::new(),
             failed_reads: HashSet::new(),
             read_paths: HashSet::new(),
+            held_new: HashSet::new(),
             import_warnings: HashMap::new(),
             refilled: HashSet::new(),
             kinds: std::sync::Arc::new(crate::ext::Kinds::empty()),
@@ -488,9 +499,38 @@ impl Outline {
 
     /// Link v as parent_v's last child. For the markdown readers, which give
     /// a labelled cell back the vnode it had, perhaps a clone elsewhere.
-    pub fn link_as_last_child_raw(&mut self, parent_v: VnodeId, v: VnodeId) {
+    ///
+    /// False, linking nothing, if parent_v is v or inside v's tree: the
+    /// outline would hold itself.
+    #[must_use]
+    pub fn link_as_last_child_raw(&mut self, parent_v: VnodeId, v: VnodeId) -> bool {
+        if parent_v == v || self.is_below(parent_v, v) {
+            return false;
+        }
         let n = self.node(parent_v).children.len();
         self.link_child_raw(parent_v, n, v);
+        true
+    }
+
+    /// How many levels v's subtree spans, v's own included. Iterative, and
+    /// each vnode measured once, so a deep or much-cloned tree costs O(nodes).
+    pub fn height(&self, v: VnodeId) -> usize {
+        let mut memo: HashMap<VnodeId, usize> = HashMap::new();
+        let mut todo = vec![(v, false)];
+        while let Some((w, done)) = todo.pop() {
+            if memo.contains_key(&w) {
+                continue;
+            }
+            let children = &self.node(w).children;
+            if done {
+                let below = children.iter().filter_map(|c| memo.get(c)).max();
+                memo.insert(w, 1 + below.copied().unwrap_or(0));
+            } else {
+                todo.push((w, true));
+                todo.extend(children.iter().map(|&c| (c, false)));
+            }
+        }
+        memo[&v]
     }
 
     /// Detach v's subtree, but not the inside of a vnode that keeps another
@@ -733,7 +773,7 @@ impl Outline {
     }
 
     /// Link an unlinked tree (from [`copy_tree`](Self::copy_tree)) after `p`.
-    pub fn paste_after(&mut self, p: &Position, v: VnodeId) -> Position {
+    pub(crate) fn paste_after(&mut self, p: &Position, v: VnodeId) -> Position {
         let parent_v = p.parent_vnode(self);
         let n = p.child_index + 1;
         self.link_copied_child(parent_v, n, v);
@@ -912,13 +952,23 @@ impl Outline {
     /// approval with `remember_read_path`. `@nosent` and `@asis` files are
     /// never read; [`crate::open_outline_with_kinds`] counts those the
     /// `.leo` file already had as read.
+    ///
+    /// A file that does not exist may be written, unless `hold_new_file`
+    /// holds it.
     pub fn may_overwrite(&self, p: &Position) -> bool {
         let path = self.full_path(p);
-        if !std::path::Path::new(&path).exists() {
+        let key = (self.gnx(p.v).to_string(), path, p.h(self).to_string());
+        if self.read_paths.contains(&key) {
             return true;
         }
-        let key = (self.gnx(p.v).to_string(), path, p.h(self).to_string());
-        self.read_paths.contains(&key)
+        !std::path::Path::new(&key.1).exists() && !self.held_new.contains(&key.1)
+    }
+
+    /// Refuse to create `path` until the user approves it, as a write to a
+    /// file this outline has not read is refused: `may_overwrite` is false,
+    /// and approval is `remember_read_path`.
+    pub fn hold_new_file(&mut self, path: &str) {
+        self.held_new.insert(path.to_string());
     }
 
     // --- Folds ------------------------------------------------------------
@@ -1587,6 +1637,19 @@ mod tests {
 
     /// The public moves panicked on the last index of p's own parent, and
     /// linked a node under its own child.
+    #[test]
+    fn a_raw_link_refuses_to_put_a_node_inside_itself() {
+        let mut o = Outline::new_empty();
+        let a = o.root_position().unwrap();
+        let b = o.insert_as_last_child(&a);
+        assert!(!o.link_as_last_child_raw(a.v, a.v));
+        assert!(!o.link_as_last_child_raw(b.v, a.v));
+        assert_eq!(o.node(b.v).children(), &[]);
+        // Elsewhere is fine: a clone of b under the hidden root.
+        assert!(o.link_as_last_child_raw(o.hidden_root, b.v));
+        assert_eq!(o.node(b.v).parents(), &[a.v, o.hidden_root]);
+    }
+
     #[test]
     fn a_move_clamps_its_index_and_refuses_to_put_a_node_inside_itself() {
         let mut o = Outline::new_empty();

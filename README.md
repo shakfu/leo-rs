@@ -307,7 +307,7 @@ With `mcp = true`, the running leotui or leogui serves its open outline to MCP c
 claude mcp add --transport http leo http://127.0.0.1:7341/mcp --header "Authorization: Bearer TOKEN"
 ```
 
-A client can read until the settings say more: `outline`, `read_node`, `search` and `selection` always; `set_headline`, `set_body`, `insert_node`, `delete_node`, `move_node` and `select_node` with `mcp-edit = true`; `save` with `mcp-save = true` as well. Nodes are named by gnx. Each edit is one undo step the user can take back with `u`, and the status line says what the client did; an edit waits while the user is typing. Only 127.0.0.1 is listened on, and a request whose `Host` or `Origin` is not local is refused, so a web page cannot reach the outline.
+A client can read until the settings say more: `outline`, `read_node`, `search` and `selection` always; `set_headline`, `set_body`, `insert_node`, `delete_node`, `move_node` and `select_node` with `mcp-edit = true`; `save` with `mcp-save = true` as well. Nodes are named by gnx. Each edit is one undo step the user can take back with `u`, and the status line says what the client did; an edit waits while the user is typing. A client's `save` asks the user before creating a file that does not exist, showing its full path, as it asks before overwriting one the outline has not read; a file declined stays held, so the user's own save asks again. Only 127.0.0.1 is listened on, and a request whose `Host` or `Origin` is not local is refused, so a web page cannot reach the outline.
 
 ## Language servers
 
@@ -417,7 +417,7 @@ Three guards narrow this without closing it:
 
 - A write refuses a file changed on disk since the outline read or wrote it (`Error::ChangedOnDisk`).
 
-- A write refuses a directory that does not exist, unless `Config::create_nonexistent_directories` is set. Leo's default is the same.
+- A write refuses a directory that does not exist, unless `Config::create_nonexistent_directories` is set. Leo's default is the same. Only `myLeoSettings.leo` can set it with `@bool create-nonexistent-directories = True`; an outline's own `@settings` cannot, unlike in Leo.
 
 None of them stops a new file in an existing directory. A front end handling untrusted outlines should check `Outline::full_path` against a directory of its own choosing before writing.
 

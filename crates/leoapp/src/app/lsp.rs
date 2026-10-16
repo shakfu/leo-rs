@@ -765,7 +765,7 @@ mod tests {
     fn references_are_cloned_under_a_found_node() {
         let mut app = app("count = 1\n");
         let root = app.current.clone();
-        let other = app.doc.insert_node(&root);
+        let other = app.doc.insert_node(&root).unwrap();
         app.doc.set_headline(&other, "user");
         app.select(root.clone());
         let gnx = |p: &leolib::Position, app: &App| p.gnx(app.outline()).to_string();
