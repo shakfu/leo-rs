@@ -1,14 +1,15 @@
 //! One language server: JSON-RPC over its stdin and stdout.
 //!
-//! A thread reads the server's messages into a channel, so a front end polls
-//! and never blocks on a server. Messages written before the server answers
-//! `initialize` wait in a queue, as the protocol requires.
+//! A thread reads the server's messages into a channel, and another writes
+//! ours from one, so a front end polls and never blocks on a server. Messages
+//! written before the server answers `initialize` wait in a queue, as the
+//! protocol requires.
 
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -77,8 +78,14 @@ pub enum Incoming {
     },
 }
 
+/// Messages waiting for the writer thread. A server that leaves this many
+/// unread has stopped reading, and is treated as dead.
+const OUTGOING: usize = 256;
+
 pub struct Server {
-    writer: Box<dyn Write + Send>,
+    /// To the writer thread. A blocking write on the caller's thread froze
+    /// the front end once a server stopped reading and its pipe filled.
+    outgoing: SyncSender<Value>,
     incoming: Receiver<Value>,
     child: Option<Child>,
     next_id: i64,
@@ -162,8 +169,18 @@ impl Server {
             }
             wake();
         });
+        let (outgoing, to_write) = mpsc::sync_channel::<Value>(OUTGOING);
+        std::thread::spawn(move || {
+            let mut writer = writer;
+            // A failed write ends the thread; the next send then fails.
+            while let Ok(msg) = to_write.recv() {
+                if write_message(&mut writer, &msg).is_err() {
+                    break;
+                }
+            }
+        });
         let mut server = Server {
-            writer: Box::new(writer),
+            outgoing,
             incoming: rx,
             child: None,
             next_id: 1,
@@ -238,22 +255,28 @@ impl Server {
         self.initialize_id = self.next_id;
         self.next_id += 1;
         let msg = json!({"jsonrpc": "2.0", "id": self.initialize_id, "method": "initialize", "params": params});
-        self.write(&msg);
+        self.write(msg);
     }
 
-    fn write(&mut self, msg: &Value) {
+    fn write(&mut self, msg: Value) {
         if self.error.is_some() {
             return;
         }
-        if let Err(e) = write_message(&mut self.writer, msg) {
-            self.error = Some(format!("language server stopped: {e}"));
+        match self.outgoing.try_send(msg) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                self.error = Some("language server stopped reading its input".to_string());
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.error = Some("language server stopped".to_string());
+            }
         }
     }
 
     /// Write `msg` now, or once the server is initialized.
     fn send(&mut self, msg: Value) {
         match self.initialized {
-            true => self.write(&msg),
+            true => self.write(msg),
             false => self.queue.push_back(msg),
         }
     }
@@ -319,7 +342,7 @@ impl Server {
 
     /// Answer request `id` of the server's.
     pub fn respond(&mut self, id: Value, result: Value) {
-        self.write(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
+        self.write(json!({"jsonrpc": "2.0", "id": id, "result": result}));
     }
 
     fn initialized(&mut self, result: Result<Value, String>) {
@@ -349,9 +372,9 @@ impl Server {
             self.token_modifiers = names(&tokens["legend"]["tokenModifiers"]);
         }
         self.initialized = true;
-        self.write(&json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
+        self.write(json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
         while let Some(msg) = self.queue.pop_front() {
-            self.write(&msg);
+            self.write(msg);
         }
     }
 }
@@ -399,12 +422,13 @@ impl Drop for Server {
     fn drop(&mut self) {
         if self.initialized {
             let shutdown = json!({"jsonrpc": "2.0", "id": self.next_id, "method": "shutdown"});
-            self.write(&shutdown);
-            self.write(&json!({"jsonrpc": "2.0", "method": "exit"}));
+            self.write(shutdown);
+            self.write(json!({"jsonrpc": "2.0", "method": "exit"}));
         }
         if let Some(mut child) = self.child.take() {
             // `exit` is a request to stop, not a promise; a server that keeps
-            // running is not left behind.
+            // running is not left behind. The kill also ends a writer thread
+            // stuck on a server that stopped reading.
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -525,5 +549,41 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A writer that blocks until its gate is dropped, as a full pipe does.
+    struct Stuck(Receiver<()>);
+
+    impl Write for Stuck {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            let _ = self.0.recv();
+            Err(io::Error::other("closed"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Writes were made on the caller's thread, so a server that stopped
+    /// reading froze the front end once its pipe filled.
+    #[test]
+    fn a_server_that_stops_reading_does_not_block_the_caller() {
+        let (gate, stuck) = mpsc::channel();
+        let mut server = Server::connect(
+            io::empty(),
+            Stuck(stuck),
+            Path::new("/tmp"),
+            Arc::new(|| {}),
+        );
+        server.initialized = true;
+        let text = "x".repeat(100_000);
+        let start = std::time::Instant::now();
+        for _ in 0..OUTGOING + 10 {
+            server.notify("textDocument/didChange", json!({"text": text}));
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        assert!(server.error.is_some());
+        drop(server);
+        drop(gate);
     }
 }

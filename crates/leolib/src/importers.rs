@@ -555,4 +555,35 @@ mod tests {
         import_string(&mut o, &root, text, "a.py").unwrap();
         assert_eq!(write_string(&o, &root, "a.py").unwrap(), text);
     }
+
+    /// Levels and escapes from the file: `level=0` and `%a\u{e9}` panicked,
+    /// and a huge level built a placeholder node per level.
+    #[test]
+    fn a_hostile_markdown_or_treepad_level_imports_a_small_tree() {
+        let cases = [
+            (
+                "a.md",
+                "<!-- leo-noheader level=0 headline=x -->\n".to_string(),
+            ),
+            (
+                "a.md",
+                "<!-- leo-noheader level=3000000 headline=x -->\n".to_string(),
+            ),
+            (
+                "a.md",
+                "<!-- leo-noheader level=1 headline=%a\u{e9}b -->\n".to_string(),
+            ),
+            (
+                "a.hjt",
+                "dt=Text\n<node>\nx\n3000000\nbody\n<end node> 5P9i0s8y19Z\n".to_string(),
+            ),
+        ];
+        for (name, text) in cases {
+            let mut o = Outline::new_empty();
+            let root = o.root_position().unwrap();
+            o.set_headline(&root, &format!("@auto {name}"));
+            import_string(&mut o, &root, &text, name).unwrap();
+            assert!(o.all_positions().len() < 10, "{text:?}");
+        }
+    }
 }

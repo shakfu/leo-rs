@@ -493,7 +493,12 @@ fn descendent_ua_attrs(o: &Outline, p: &Position, any_uas: bool) -> String {
     let mut out = String::new();
     for key in DESCENDENT_UA_KEYS {
         if let Some(ua) = o.node(p.v).uas.get(&format!("__native__{key}")) {
-            out.push_str(&format!(" {key}=\"{}\"", ua.as_file_text()));
+            // Escaped: the read unescaped it, and a raw `"` or `<` would
+            // leave the saved file unreadable.
+            out.push_str(&format!(
+                " {key}={}",
+                util::xml_quoteattr(ua.as_file_text())
+            ));
         }
     }
     // A blob still parked is one the read did not apply, either because it
@@ -1059,6 +1064,27 @@ mod tests {
     fn a_descendent_ua_blob_is_written_back_when_nothing_moved() {
         let mut o = outline_with_a_descendent_blob();
         assert!(outline_to_xml_string(&mut o).contains("descendentVnodeUnknownAttributes="));
+    }
+
+    /// The blob is unescaped on read; written back raw, the next open failed.
+    #[test]
+    fn a_descendent_ua_blob_with_markup_reads_back_after_a_save() {
+        let xml = "<?xml version=\"1.0\"?>\n<leo_file><vnodes>\
+             <v t=\"a.1\" descendentVnodeUnknownAttributes=\"x&quot;y&lt;\">\
+             <vh>@auto x.py</vh></v></vnodes><tnodes></tnodes></leo_file>\n";
+        let mut o = Outline::new("");
+        read_leo_string(&mut o, xml).unwrap();
+        let saved = outline_to_xml_string(&mut o);
+        let mut o2 = Outline::new("");
+        read_leo_string(&mut o2, &saved).unwrap();
+        assert_eq!(outline_to_xml_string(&mut o2), saved);
+    }
+
+    /// A non-ASCII uA once panicked every save, in the hex decoder.
+    #[test]
+    fn a_non_ascii_opaque_ua_saves() {
+        let mut o = read("<t tx=\"a.1\" foo=\"a\u{e9}b\"></t>").unwrap();
+        assert!(outline_to_xml_string(&mut o).contains("foo=\"a\u{e9}b\""));
     }
 
     #[test]

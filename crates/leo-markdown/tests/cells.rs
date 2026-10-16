@@ -329,7 +329,8 @@ fn literate(dir: &Path, clean_body: &str) -> (leolib::Document, String) {
     let load = find(d.outline(), "<< load >>");
     let copy = d.clone_node(&load);
     d.outline_mut_untracked()
-        .move_to_nth_child_of(&copy, &clean, 0);
+        .move_to_nth_child_of(&copy, &clean, 0)
+        .unwrap();
     let clean = find(d.outline(), "@clean analysis.py");
     d.set_body(&clean, clean_body);
     let saved = d.save_all(&leo);

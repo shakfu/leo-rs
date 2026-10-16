@@ -295,8 +295,9 @@ fn apply(o: &mut Outline, bead: &Bead, undo: bool) -> Option<Position> {
         }
         Bead::Move { v, from, to } => {
             let (src, dst) = if undo { (to, from) } else { (from, to) };
-            unlink(o, src.0, src.1, *v);
-            relink(o, dst.0, dst.1, *v);
+            if unlink(o, src.0, src.1, *v) {
+                relink(o, dst.0, dst.1, *v);
+            }
             position_of(o, *v)
         }
         Bead::Sort { parent, old, new } => {
@@ -337,29 +338,27 @@ fn touch(o: &mut Outline, v: VnodeId) -> Option<Position> {
     Some(p)
 }
 
-fn unlink(o: &mut Outline, parent: VnodeId, index: usize, v: VnodeId) {
+/// False if the tree moved under us, and nothing was done.
+fn unlink(o: &mut Outline, parent: VnodeId, index: usize, v: VnodeId) -> bool {
     if o.node(parent).children.get(index) != Some(&v) {
-        return; // The tree moved under us; do nothing rather than corrupt it.
+        return false; // Do nothing rather than corrupt it.
     }
     // The tree losing the node must be written again, as must the one gaining it.
     o.set_dirty_vnode(parent);
-    o.invalidate_descendent_uas(parent);
-    o.node_mut(parent).children.remove(index);
-    if let Some(i) = o.node(v).parents.iter().position(|x| *x == parent) {
-        o.node_mut(v).parents.remove(i);
-    }
+    // Through the outline's own primitive, which also cuts the descendants'
+    // parent links when v leaves the tree; splicing here left them stale.
+    o.cut_link(parent, index, v);
     o.changed = true;
-    o.generation += 1;
+    true
 }
 
 fn relink(o: &mut Outline, parent: VnodeId, index: usize, v: VnodeId) {
     let n = index.min(o.node(parent).children.len());
-    o.invalidate_descendent_uas(parent);
-    o.node_mut(parent).children.insert(n, v);
-    o.node_mut(v).parents.push(parent);
+    // Restores the descendants' parent links too: without them an edit below
+    // a node brought back by undo never dirtied its `@<file>`.
+    o.link_child(parent, n, v);
     o.set_dirty_vnode(v);
     o.changed = true;
-    o.generation += 1;
 }
 
 /// Put `parent`'s children in `order`, the same vnodes in another order.

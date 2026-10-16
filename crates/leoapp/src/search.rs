@@ -147,9 +147,11 @@ impl Find {
         compile(&self.as_regex())
     }
 
-    /// Whether node `p` has a match where this looks.
+    /// Whether node `p` has a match where this looks. A body is matched a
+    /// line at a time, as the editor shows it, so `^` and `$` mean line ends.
     pub fn matches(&self, re: &Regex, o: &Outline, p: &Position) -> bool {
-        (self.headlines && re.is_match(p.h(o))) || (self.bodies && re.is_match(p.b(o)))
+        (self.headlines && re.is_match(p.h(o)))
+            || (self.bodies && body_lines(p.b(o)).any(|line| re.is_match(line)))
     }
 }
 
@@ -194,16 +196,20 @@ fn places(o: &Outline, p: &Position, re: &Regex, scope: Scope) -> Vec<Place> {
         .find_iter(p.h(o))
         .map(|m| Place::Headline(m.start()))
         .collect();
-    let body = p.b(o);
-    if scope == Scope::All && re.is_match(body) {
-        // The body's lines as the editor splits them: a final newline ends
-        // the last line rather than starting another.
-        let body = body.strip_suffix('\n').unwrap_or(body);
-        for (row, line) in body.split('\n').enumerate() {
+    // Line by line, with no test of the whole body first: without multi-line
+    // mode, `^foo` and `x$` matched no body whose second line held them.
+    if scope == Scope::All {
+        for (row, line) in body_lines(p.b(o)).enumerate() {
             out.extend(re.find_iter(line).map(|m| Place::Body(row, m.start())));
         }
     }
     out
+}
+
+/// The body's lines as the editor splits them: a final newline ends the
+/// last line rather than starting another.
+fn body_lines(body: &str) -> std::str::Split<'_, char> {
+    body.strip_suffix('\n').unwrap_or(body).split('\n')
 }
 
 /// The first match after `from`, or the last before it going backward,

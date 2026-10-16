@@ -319,11 +319,21 @@ impl App {
     }
 
     pub fn request_quit(&mut self) {
+        self.commit_typing();
         if self.unsaved_work().is_empty() {
             self.quit = true;
             return;
         }
         self.open_mini(MiniKind::ConfirmQuit, String::new());
+    }
+
+    /// Commit text typed in INSERT, as Escape does. Until then it is only in
+    /// `buffer`, which `unsaved_work` and the recovery copy do not see, so a
+    /// window closed mid-edit lost it without asking.
+    fn commit_typing(&mut self) {
+        if self.mode == Mode::Insert {
+            self.insert_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        }
     }
 
     /// What quitting now would lose, or "" if nothing.
@@ -400,6 +410,7 @@ impl App {
     /// session ends without the user's say: a hangup, or a terminal gone.
     /// Returns the path written.
     pub fn write_recovery(&mut self) -> Option<std::path::PathBuf> {
+        self.commit_typing();
         if self.unsaved_work().is_empty() {
             return None;
         }

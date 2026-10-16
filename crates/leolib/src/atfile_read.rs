@@ -171,18 +171,18 @@ pub fn read_into_root(o: &mut Outline, contents: &str, path: &str, root: &Positi
     // Leo clears only the root's children, which leaves a re-read adding a
     // second parent link to every node below.
     o.detach_subtree(root.v);
-    let (ended, warnings) = {
+    let (scanned, warnings) = {
         let mut scanner = Scanner::new(o, root, path);
-        let ended = scanner.scan_lines(&header, &lines);
-        (ended, std::mem::take(&mut scanner.warnings))
+        let scanned = scanner.scan_lines(&header, &lines);
+        (scanned, std::mem::take(&mut scanner.warnings))
     };
-    // Leo's reader stops at `@-leo`. Without it the scan built nodes but no
-    // bodies; kept, they would be written over the file's code.
-    if !ended {
+    // Without `@-leo` the scan built nodes but no bodies; kept, they would be
+    // written over the file's code.
+    if let Err(detail) = scanned {
         o.detach_subtree(root.v);
         return Err(Error::Import {
             path: util::short_file_name(path),
-            detail: "no @-leo line: the file is cut short".to_string(),
+            detail,
         });
     }
     // The scan's own notes, on the channel the importers already use: a
@@ -220,8 +220,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// False if the file has no `@-leo` line: it was cut short.
-    fn scan_lines(&mut self, header: &Header, lines: &[String]) -> bool {
+    /// Why the tree cannot be kept: no `@-leo` line, or a node inside itself.
+    fn scan_lines(&mut self, header: &Header, lines: &[String]) -> std::result::Result<(), String> {
         // A python file's sentinels carry a space between the delimiter and
         // the `@`, and the `@+leo` line is the only place the reader can
         // learn that. Keep it for a delimiter a later `@comment` or `@delims`
@@ -383,6 +383,12 @@ impl<'a> Scanner<'a> {
                     .unwrap();
                 parent_v = stack_parent;
                 clone_v = stack_clone;
+                // Linking a node under itself would make the tree endless, and
+                // clearing an ancestor's children (the hidden root's) would
+                // empty the outline.
+                if existing.is_some_and(|v| self.is_ancestor(v, parent_v)) {
+                    return Err(format!("node {new_gnx} would be inside itself"));
+                }
 
                 // Case 2: inside the descendants of a clone. The last version
                 // of the body and headline in the file wins.
@@ -619,7 +625,7 @@ impl<'a> Scanner<'a> {
         }
 
         if !saw_at_leo {
-            return false;
+            return Err("no @-leo line: the file is cut short".to_string());
         }
         if !stack.is_empty() {
             self.warnings
@@ -653,7 +659,22 @@ impl<'a> Scanner<'a> {
             }
         }
         self.o.generation += 1;
-        true
+        Ok(())
+    }
+
+    /// Whether v is `parent_v` or one of its ancestors, the hidden root included.
+    fn is_ancestor(&self, v: VnodeId, parent_v: VnodeId) -> bool {
+        let mut todo = vec![parent_v];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(w) = todo.pop() {
+            if w == v {
+                return true;
+            }
+            if seen.insert(w) {
+                todo.extend(self.o.node(w).parents.iter().copied());
+            }
+        }
+        false
     }
 }
 
@@ -856,5 +877,30 @@ mod tests {
         assert!(read_into_root(&mut o2, &text, "test.py", &root2).is_ok());
         assert_eq!(o2.all_positions().len(), 3);
         assert_eq!(o2.all_unique_positions().len(), 2);
+    }
+
+    /// A sentinel naming the root's own gnx, or the hidden root's, once made
+    /// a cycle (the read hung) or emptied the outline (the save wrote nothing).
+    #[test]
+    fn a_node_inside_itself_is_refused_and_the_outline_kept() {
+        for g in ["r.1", crate::outline::HIDDEN_ROOT_GNX] {
+            let text = format!(
+                "# @+leo-ver=5-thin\n# @+node:r.1: * @file f.py\n# @+others\n\
+                 # @+node:{g}: ** loop\nx = 1\n# @-others\n# @-leo\n"
+            );
+            let mut o = Outline::new_empty();
+            let root = o.root_position().unwrap();
+            o.set_headline(&root, "@file f.py");
+            let keep = o.insert_after(&root);
+            o.set_headline(&keep, "keep");
+            let err = read_into_root(&mut o, &text, "f.py", &root).unwrap_err();
+            assert!(err.to_string().contains("inside itself"), "{g}: {err}");
+            let heads: Vec<_> = o
+                .all_positions()
+                .iter()
+                .map(|p| p.h(&o).to_string())
+                .collect();
+            assert_eq!(heads, vec!["@file f.py", "keep"], "{g}");
+        }
     }
 }

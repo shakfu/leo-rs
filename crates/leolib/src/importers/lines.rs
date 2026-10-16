@@ -75,6 +75,14 @@ impl Builder {
         child
     }
 
+    /// `add_node` for a level the file spells as a number. A gap needs no
+    /// placeholders when the file was written, so it is closed: `level=3000000`
+    /// built millions of nodes, and `level=0` emptied the stack.
+    fn add_numbered_node(&mut self, level: usize, headline: &str, o: &mut Outline) -> VnodeId {
+        let level = level.clamp(1, self.stack.len());
+        self.add_node(level, headline, o)
+    }
+
     fn finish(self, o: &mut Outline) {
         for (v, lines) in self.bodies {
             o.node_mut(v).b = lines.concat();
@@ -168,7 +176,7 @@ fn markdown(im: &mut Importer) {
             if let Some(m) = MD_NOHEADER.captures(line) {
                 let level: usize = m[1].parse().unwrap_or(1);
                 let name = percent_decode(&m[2]);
-                let v = b.add_node(level, &name, im.o);
+                let v = b.add_numbered_node(level, &name, im.o);
                 b.body_of(v).push("@noheader\n".to_string());
                 continue;
             }
@@ -210,7 +218,12 @@ fn percent_decode(s: &str) -> String {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0usize;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
+        // Checked as bytes first: slicing the str panicked on `%a\u{e9}`.
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+        {
             if let Some(v) = util::unhexlify(&s[i + 1..i + 3]) {
                 out.push(v[0]);
                 i += 3;
@@ -269,7 +282,7 @@ fn treepad(im: &mut Importer) {
         let v = if level == 0 {
             im.root.v // The root record names the @auto node itself.
         } else {
-            b.add_node(level, &headline, im.o)
+            b.add_numbered_node(level, &headline, im.o)
         };
         b.body_of(v).extend(body);
     }

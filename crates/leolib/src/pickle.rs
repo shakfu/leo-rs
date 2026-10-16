@@ -86,14 +86,8 @@ fn oops(detail: impl Into<String>) -> Unsupported {
 
 /// The hex string Leo writes, as a value.
 pub fn unhexlify_loads(hex: &str) -> Result<Value> {
-    if !hex.len().is_multiple_of(2) {
-        return Err(oops("odd number of hex digits"));
-    }
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for i in (0..hex.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| oops(e.to_string()))?;
-        bytes.push(byte);
-    }
+    // By bytes: slicing the str two at a time panicked on a non-ASCII uA.
+    let bytes = crate::util::unhexlify(hex).ok_or_else(|| oops("not an even run of hex digits"))?;
     loads(&bytes)
 }
 
@@ -651,5 +645,7 @@ mod tests {
         assert!(err.to_string().contains("unsupported pickle"), "{err}");
         assert!(loads(b"}q\x00").is_err(), "no STOP");
         assert!(unhexlify_loads("7d7").is_err(), "odd hex");
+        assert!(unhexlify_loads("a\u{e9}b").is_err(), "non-ASCII");
+        assert!(unhexlify_loads("+1").is_err(), "a sign is not a digit");
     }
 }

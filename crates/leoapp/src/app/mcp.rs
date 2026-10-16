@@ -161,13 +161,28 @@ impl App {
 
     fn by_gnx(&self, gnx: &str) -> Result<Position, String> {
         let o = self.outline();
-        if self.current.gnx(o) == gnx {
+        if self.current.gnx(o) == gnx && o.position_exists(&self.current) {
             return Ok(self.current.clone());
         }
         o.all_unique_positions()
             .into_iter()
             .find(|p| p.gnx(o) == gnx)
             .ok_or_else(|| format!("no node with gnx {gnx}"))
+    }
+
+    /// Point `current` at the user's node again after a client's structural
+    /// edit. A position is a path of child indexes, so an insert before it
+    /// left it naming another node, and the user's next delete removed that.
+    fn refind_current(&mut self) {
+        let o = self.outline();
+        if o.position_exists(&self.current) {
+            return;
+        }
+        let v = self.current.v;
+        match o.all_positions().into_iter().find(|q| q.v == v) {
+            Some(q) => self.current = q,
+            None => self.clamp_current(),
+        }
     }
 
     /// May a client change the outline now?
@@ -345,16 +360,7 @@ impl App {
                 // The user's selection stays, unless it was what went.
                 match current == p || p.is_ancestor_of(self.outline(), &current) {
                     true => self.select(next),
-                    false => {
-                        if let Some(q) = self
-                            .outline()
-                            .all_positions()
-                            .into_iter()
-                            .find(|q| q.v == current.v)
-                        {
-                            self.current = q;
-                        }
-                    }
+                    false => self.refind_current(),
                 }
             }
             "insert_node" => {
@@ -367,6 +373,7 @@ impl App {
                     self.doc.set_body(&new, body);
                 }
                 self.doc.end_group();
+                self.refind_current();
                 return Ok(json!({ "gnx": new.gnx(self.outline()) }));
             }
             "move_node" => {
@@ -375,6 +382,7 @@ impl App {
                     .doc
                     .move_node(&p, &target, place(args)?)
                     .ok_or("a node cannot move into its own tree")?;
+                self.refind_current();
                 return Ok(json!({ "gnx": moved.gnx(self.outline()) }));
             }
             _ => unreachable!("listed above"),
@@ -547,5 +555,32 @@ mod tests {
             ..McpSettings::default()
         };
         assert!(app.set_mcp(&no_token).is_err());
+    }
+
+    /// An insert before the user's node left `current` naming the new node,
+    /// so the user's next delete removed it instead of their own.
+    #[test]
+    fn a_client_insert_or_move_keeps_the_users_selection() {
+        let mut app = app();
+        app.mcp_access = Access {
+            edit: true,
+            save: false,
+        };
+        let alpha = app.current.gnx(app.outline()).to_string();
+        let beta = app.rows()[1].position.gnx(app.outline()).to_string();
+        app.mcp_tool(
+            "insert_node",
+            &json!({"gnx": alpha, "place": "before", "headline": "new"}),
+        )
+        .unwrap();
+        assert_eq!(app.current.h(app.outline()), "alpha");
+        assert!(app.outline().position_exists(&app.current));
+        app.mcp_tool(
+            "move_node",
+            &json!({"gnx": beta, "target": alpha, "place": "before"}),
+        )
+        .unwrap();
+        assert_eq!(app.current.h(app.outline()), "alpha");
+        assert!(app.outline().position_exists(&app.current));
     }
 }

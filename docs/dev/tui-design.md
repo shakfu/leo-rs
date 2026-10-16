@@ -458,14 +458,14 @@ The cost is Leo's `Ctrl-D`/`Ctrl-L`/`Ctrl-R`/`Ctrl-U` set for moving nodes. That
 
 ## 10. Configuration
 
-Settings live in `~/.config/leotui/config.toml`, read at startup. It is TOML, in the subset `theme.rs` already parses, and holds two settings: `theme` and `split-ratio`. An accepted `:theme` or `:set split=N` rewrites its line and leaves the rest of the file alone (section 19.7.3). A line the reader does not understand is reported on the status line and skipped.
+Settings live in `~/.config/leo-rs/settings.toml`, read at startup. It is TOML, in the subset `theme.rs` already parses, and holds two settings: `theme` and `split-ratio`. An accepted `:theme` or `:set split=N` rewrites its line and leaves the rest of the file alone (section 19.7.3). A line the reader does not understand is reported on the status line and skipped.
 
-Key bindings still ship as one built-in table. The override file proposed below predates `config.toml`; whether it keeps Leo's `@shortcuts` syntax or becomes a `[keys]` table there is open.
+Key bindings still ship as one built-in table. The override file proposed below predates `settings.toml`; whether it keeps Leo's `@shortcuts` syntax or becomes a `[keys]` table there is open.
 
 Proposed format, deliberately Leo's `@shortcuts` syntax so the file can be lifted from a Leo settings node:
 
 ```text
-# ~/.config/leotui/keys.conf
+# ~/.config/leo-rs/keys.conf
 [normal.tree]
 insert-node   = o
 insert-node   = Insert
@@ -811,7 +811,7 @@ Incremental re-parse would beat a cache. It costs threading `InputEdit` out of e
 
 Themes are read from Helix's files. Their scopes *are* tree-sitter capture names -- `keyword`, `type.builtin`, `variable.other.member` -- which is the vocabulary `treesit` already speaks, and resolution is longest-prefix, the rule tree-sitter already applies to captures. The two agree by construction, and a hundred themes exist that nobody here had to write.
 
-Nothing is vendored. `theme.rs` reads `~/.config/leotui/themes`, then `~/.config/helix/themes`, then `$HELIX_RUNTIME/themes`, so leotui carries no other project's files or licence. The theme comes from `--theme NAME`, then the `theme` line of `~/.config/leotui/config.toml`, then the default, `sonokai`. A missing default leaves the built-in sixteen colours, unannounced; a theme asked for by name reports that it is missing.
+Nothing is vendored. `theme.rs` reads `~/.config/leo-rs/themes`, then `~/.config/helix/themes`, then `$HELIX_RUNTIME/themes`, so leotui carries no other project's files or licence. The theme comes from `--theme NAME`, then the `theme` line of `~/.config/leo-rs/settings.toml`, then the default, `sonokai`. A missing default leaves the built-in sixteen colours, unannounced; a theme asked for by name reports that it is missing.
 
 The parser is by hand. A theme file uses three shapes -- `key = "value"`, `key = { fg = "value", modifiers = [..] }`, and a `[palette]` of names to hex -- against five crates for `toml` and `serde`. Anything it does not recognise is skipped: a theme is decoration, and refusing to start over one helps nobody. `inherits` is followed, parents first, capped at eight to survive a file that names itself.
 
@@ -849,7 +849,7 @@ Up and Down move the selection only while the drop-down is open, and walk the co
 
 #### 19.7.3 Keeping one
 
-An accepted `:theme NAME` writes `theme = "NAME"` to `~/.config/leotui/config.toml`, and startup reads it back. `--theme` wins for one launch and never writes. A preview and Escape never write.
+An accepted `:theme NAME` writes `theme = "NAME"` to `~/.config/leo-rs/settings.toml`, and startup reads it back. `--theme` wins for one launch and never writes. A preview and Escape never write.
 
 Only that line changes. `parse` obeys the last top-level `theme` line, so that is the one rewritten, keeping any comment after it. With none, the line goes in before the first `[table]`, where TOML still reads it as top-level. Every other line is kept byte for byte.
 

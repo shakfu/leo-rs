@@ -739,8 +739,24 @@ impl Document {
         if marked.is_empty() {
             return None;
         }
+        // A clone of a marked ancestor of p, linked under a node inside it,
+        // would make the outline hold itself: put the new node at top level.
+        let o = &self.outline;
+        let p_parent = p.parent_vnode(o);
+        let inside_marked = !copy
+            && marked
+                .iter()
+                .any(|&v| v == p_parent || o.is_below(p_parent, v));
+        let anchor = match inside_marked {
+            true => p
+                .self_and_parents(o)
+                .last()
+                .cloned()
+                .unwrap_or_else(|| p.clone()),
+            false => p.clone(),
+        };
         self.undoer.begin_group(name);
-        let parent = self.outline.insert_after(p);
+        let parent = self.outline.insert_after(&anchor);
         self.outline.set_headline(&parent, headline);
         self.push(
             name,
@@ -801,11 +817,16 @@ impl Document {
             moved += 1;
         }
         // After a position of `current`'s node outside the new tree, as Leo.
+        // By vnode, not position: through a clone, a position outside the new
+        // tree can still have a parent inside it, and moving there makes a cycle.
         let o = &self.outline;
         let after = o
             .all_positions()
             .into_iter()
-            .find(|q| q.v == current.v && !q.self_and_parents(o).iter().any(|a| a.v == parent.v))
+            .find(|q| {
+                let to = q.parent_vnode(o);
+                q.v == current.v && to != parent.v && !o.is_below(to, parent.v)
+            })
             .or_else(|| o.root_position()?.self_and_siblings(o).into_iter().last());
         let parent = match after {
             Some(q) if q.v != parent.v => {

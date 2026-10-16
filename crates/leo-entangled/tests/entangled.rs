@@ -721,7 +721,8 @@ fn a_skipped_level_survives_a_move_that_keeps_its_depth() {
     let b = find(doc.outline(), "B");
     // Deep moves from under A to under B: the same depth, so still `###`.
     doc.outline_mut_untracked()
-        .move_to_nth_child_of(&deep, &b, 0);
+        .move_to_nth_child_of(&deep, &b, 0)
+        .unwrap();
     assert_eq!(doc_written(&doc), "# A\n\n# B\n### Deep\n\nx\n\n");
 }
 

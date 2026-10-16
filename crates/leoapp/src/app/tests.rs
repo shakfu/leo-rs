@@ -2348,3 +2348,55 @@ fn dragging_a_chosen_row_moves_them_all_and_another_command_unchooses() {
         "one row left is no multiple selection"
     );
 }
+
+/// Typed text was only in `buffer`, which neither the quit check nor the
+/// recovery copy saw: closing the window mid-edit lost it without asking.
+#[test]
+fn text_typed_in_insert_counts_as_unsaved_at_quit_and_in_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("t.leo").to_string_lossy().to_string();
+    let mut doc = Document::new_empty(&leo);
+    doc.save(&leo).unwrap();
+    let mut app = App::new(doc);
+    press(&mut app, "Tab");
+    press(&mut app, "i");
+    type_text(&mut app, "hello");
+    assert_eq!(app.unsaved_work(), "");
+    app.request_quit();
+    assert!(!app.quit);
+    assert_eq!(app.mode, Mode::Confirm);
+    assert_eq!(app.current.b(app.outline()), "hello\n");
+
+    let mut doc = Document::new_empty(&leo);
+    doc.save(&leo).unwrap();
+    let mut app = App::new(doc);
+    press(&mut app, "Tab");
+    press(&mut app, "i");
+    type_text(&mut app, "precious");
+    let copy = app.write_recovery().unwrap();
+    assert!(std::fs::read_to_string(copy).unwrap().contains("precious"));
+}
+
+/// The whole body was tested before its lines, without multi-line mode, so
+/// `^` and `$` missed every line but the first and the last.
+#[test]
+fn anchored_patterns_match_inside_a_body() {
+    let mut app = app();
+    let rows = app.rows();
+    let b = rows[1].position.clone();
+    app.doc.set_body(&b, "one\nfoox\n");
+    press(&mut app, "/");
+    type_text(&mut app, "^foo");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.current.h(app.outline()), "b");
+    assert_eq!(app.editor.cursor, (1, 0));
+    let find = crate::search::Find {
+        pattern: "x$".to_string(),
+        regex: true,
+        ..Default::default()
+    };
+    let re = find.compile().unwrap();
+    assert!(find.matches(&re, app.outline(), &b));
+    app.run_command_line("bufdo %s/x$/Y/");
+    assert_eq!(b.b(app.outline()), "one\nfooY\n", "{}", app.message);
+}

@@ -519,7 +519,9 @@ impl App {
         let (mut count, mut lines_changed, mut nodes) = (0, 0, 0);
         self.doc.begin_group("substitute");
         for p in self.outline().all_positions() {
-            if !seen.insert(p.v) || !re.is_match(p.b(self.outline())) {
+            // No whole-body test first: `^` and `$` match at line ends only
+            // a line at a time, as `apply_with` reads the body.
+            if !seen.insert(p.v) {
                 continue;
             }
             let mut lines = editor::split(p.b(self.outline()));

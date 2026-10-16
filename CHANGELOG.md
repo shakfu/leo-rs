@@ -2,6 +2,32 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
+## [Unreleased]
+
+### Changed
+
+- **`Outline::move_to_nth_child_of` and `Outline::move_after` return `Option<Position>`.** They return None, changing nothing, when the target is inside the moved node's tree; they linked the node under itself. `move_to_nth_child_of` clamps its index to the end, where moving a node to the last place under its own parent panicked.
+
+### Fixed
+
+- **An `@file` sentinel naming an ancestor's gnx.** The hidden root's gnx emptied the outline, so the next save wrote an empty `.leo` file; the `@file` root's own gnx made a cycle, and the read hung. The read is now refused, as the `.leo` reader refuses a `<v>` inside itself.
+
+- **Undo and redo of a delete or insert left descendants' parent links wrong.** After undoing a delete, nodes below the restored one had no parent links, so editing them did not dirty their `@file`, and the edit was not saved. Undoing `clone-find-all` left every found node looking cloned.
+
+- **`clone-marked-nodes` and `move-marked-nodes` could make a cycle**: the first when the selection was inside a marked tree, the second through a clone of a node inside the moved tree.
+
+- **Saving panicked on a non-ASCII unknown attribute**, so the outline could not be saved. A parked `descendentVnodeUnknownAttributes` blob was written unescaped, so the saved file did not open.
+
+- **Markdown and treepad `@auto` levels from the file.** `level=0` panicked, a huge level built one placeholder node per level, and `%` before a non-ASCII character in a headline panicked.
+
+- **Text typed in INSERT was lost on quit.** Closing leogui's window or tab, `:q`, a hangup or a terminal signal ignored it: it was not committed, so the quit check and the recovery copy did not see it. It is now committed first, as Escape does.
+
+- **`^` and `$` in `/`, the find panel and `:bufdo`** missed every body line but the first and the last, because the whole body was matched before its lines.
+
+- **An MCP insert or move left the user's selection naming another node**, so the user's next delete removed the wrong node.
+
+- **A language server that stopped reading froze the front end.** Messages to it were written on the UI thread, which blocked once the pipe was full, and quitting blocked the same way. They now go through a writer thread; a server that leaves 256 messages unread is treated as stopped.
+
 ## [0.8.0]
 
 `@qmd` and `@rmd` (in `leo-markdown`) and `@wiki` (in `leo-wiki`) are registered in leotui and leogui through `leo-plugins`. `@entangled` is in the unpublished `leo-entangled` crate, and no binary registers it. What they do is in `docs/plugins.md`. leolib, leolsp and leoapp change their public APIs, hence the minor version.

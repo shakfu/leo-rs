@@ -394,7 +394,7 @@ impl Outline {
     // --- Links ------------------------------------------------------------
 
     /// Insert `child` as parent's nth child, keeping the parent lists correct.
-    fn link_child(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
+    pub(crate) fn link_child(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
         self.invalidate_descendent_uas(parent_v);
         self.link_child_raw(parent_v, n, child);
     }
@@ -434,7 +434,7 @@ impl Outline {
         self.node_mut(child).parents.push(parent_v);
     }
 
-    fn cut_link(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
+    pub(crate) fn cut_link(&mut self, parent_v: VnodeId, n: usize, child: VnodeId) {
         self.invalidate_descendent_uas(parent_v);
         self.generation += 1;
         debug_assert_eq!(self.node(parent_v).children[n], child);
@@ -590,26 +590,46 @@ impl Outline {
         self.cut_link(parent_v, p.child_index, p.v);
     }
 
-    /// Move p to be the nth child of `parent`. Returns p's new position.
-    pub fn move_to_nth_child_of(&mut self, p: &Position, parent: &Position, n: usize) -> Position {
+    /// Whether linking p's node under `parent_v` would put it inside itself.
+    fn would_hold_itself(&self, p: &Position, parent_v: VnodeId) -> bool {
+        parent_v == p.v || self.is_below(parent_v, p.v)
+    }
+
+    /// Move p to be the nth child of `parent`, n counted after p is taken
+    /// out and clamped to the end. Returns p's new position, or None, with
+    /// nothing changed, if `parent` is p's node or inside it.
+    pub fn move_to_nth_child_of(
+        &mut self,
+        p: &Position,
+        parent: &Position,
+        n: usize,
+    ) -> Option<Position> {
+        if self.would_hold_itself(p, parent.v) {
+            return None;
+        }
         let parent = adjust_before_unlink(self, parent, p);
         let parent_v = p.parent_vnode(self);
         self.cut_link(parent_v, p.child_index, p.v);
+        let n = n.min(self.node(parent.v).children.len());
         self.link_child(parent.v, n, p.v);
         let mut stack = parent.stack.clone();
         stack.push((parent.v, parent.child_index));
-        Position::new(p.v, n, stack)
+        Some(Position::new(p.v, n, stack))
     }
 
-    /// Move p to just after `a`. Returns p's new position.
-    pub fn move_after(&mut self, p: &Position, a: &Position) -> Position {
+    /// Move p to just after `a`. Returns p's new position, or None, with
+    /// nothing changed, if `a` is inside p's tree.
+    pub fn move_after(&mut self, p: &Position, a: &Position) -> Option<Position> {
+        if self.would_hold_itself(p, a.parent_vnode(self)) {
+            return None;
+        }
         let a = adjust_before_unlink(self, a, p);
         let parent_v = p.parent_vnode(self);
         self.cut_link(parent_v, p.child_index, p.v);
         let a_parent_v = a.parent_vnode(self);
         let n = a.child_index + 1;
         self.link_child(a_parent_v, n, p.v);
-        Position::new(p.v, n, a.stack.clone())
+        Some(Position::new(p.v, n, a.stack.clone()))
     }
 
     /// Move p to be the first top-level node. Returns p's new position.
@@ -1560,9 +1580,30 @@ mod tests {
         let c = o.insert_as_last_child(&root);
         o.set_headline(&c, "c");
         // Move a after c: a is before c, so c's index shifts down by one.
-        o.move_after(&a, &c);
+        o.move_after(&a, &c).unwrap();
         let heads: Vec<&str> = root.children(&o).iter().map(|p| p.h(&o)).collect();
         assert_eq!(heads, vec!["b", "c", "a"]);
+    }
+
+    /// The public moves panicked on the last index of p's own parent, and
+    /// linked a node under its own child.
+    #[test]
+    fn a_move_clamps_its_index_and_refuses_to_put_a_node_inside_itself() {
+        let mut o = Outline::new_empty();
+        let root = o.root_position().unwrap();
+        let a = o.insert_as_last_child(&root);
+        o.set_headline(&a, "a");
+        let b = o.insert_as_last_child(&root);
+        o.set_headline(&b, "b");
+        let a = o.move_to_nth_child_of(&a, &root, 2).unwrap();
+        let heads: Vec<&str> = root.children(&o).iter().map(|p| p.h(&o)).collect();
+        assert_eq!(heads, vec!["b", "a"]);
+        let a1 = o.insert_as_last_child(&a);
+        assert!(o.move_to_nth_child_of(&a, &a1, 0).is_none());
+        assert!(o.move_to_nth_child_of(&a, &a, 0).is_none());
+        let a2 = o.insert_as_last_child(&a1);
+        assert!(o.move_after(&a, &a2).is_none());
+        assert_eq!(o.all_positions().len(), 5);
     }
 
     #[test]
