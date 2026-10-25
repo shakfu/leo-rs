@@ -149,7 +149,7 @@ pub const AT_FILE_NAMES: &[&str] = &[
 ];
 
 /// Skip an identifier, also accepting the characters in `extra`.
-fn skip_id(s: &str, mut i: usize, extra: &str) -> usize {
+pub(crate) fn skip_id(s: &str, mut i: usize, extra: &str) -> usize {
     let b = s.as_bytes();
     while i < b.len() {
         let c = b[i] as char;

@@ -652,6 +652,52 @@ fn a_block_named_by_its_include_target_cannot_be_renamed() {
 }
 
 #[test]
+fn an_include_outside_the_markdown_files_directory_is_refused() {
+    let outer = tempfile::tempdir().unwrap();
+    fs::write(outer.path().join("secret"), "key\n").unwrap();
+    let dir = outer.path().join("repo");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("sub/lib.py"), "x = 1\n").unwrap();
+    let absolute = outer.path().join("secret").to_string_lossy().to_string();
+    for target in [absolute.as_str(), "../secret", "sub/../../secret"] {
+        let why = leo_entangled::include_text(&dir, target).unwrap_err();
+        assert!(why.contains("refused"), "{target}: {why}");
+    }
+    assert_eq!(
+        leo_entangled::include_text(&dir, "sub/lib.py").unwrap(),
+        "x = 1\n"
+    );
+    // Read through an outline, the fence keeps its text and the read warns.
+    let doc = "```python include=../secret\nkept\n```\n";
+    let leo = outline_over(&dir, "doc.md", doc);
+    let (o, report) = leolib::open_outline_with_kinds(&leo, true, kinds()).unwrap();
+    assert_eq!(find(&o, "<< ../secret >>").b(&o), "kept\n");
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("refused")),
+        "{:?}",
+        report.warnings
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_include_through_a_symlink_out_of_the_directory_is_refused() {
+    let outer = tempfile::tempdir().unwrap();
+    fs::write(outer.path().join("secret"), "key\n").unwrap();
+    let dir = outer.path().join("repo");
+    fs::create_dir(&dir).unwrap();
+    std::os::unix::fs::symlink(outer.path().join("secret"), dir.join("lib.py")).unwrap();
+    std::os::unix::fs::symlink(outer.path(), dir.join("up")).unwrap();
+    for target in ["lib.py", "up/secret"] {
+        let why = leo_entangled::include_text(&dir, target).unwrap_err();
+        assert!(why.contains("refused"), "{target}: {why}");
+    }
+}
+
+#[test]
 fn include_is_knitrs_own_option_in_an_rmd_file() {
     let dir = tempfile::tempdir().unwrap();
     let doc = "```{python, include=FALSE}\nhidden\n```\n";

@@ -39,7 +39,7 @@ Directives and node kinds are not commands, and are counted apart. A body direct
 
 | kind | in Leo | as in Leo | partly | not |
 |-|-|-|-|-|
-| `@<file>` kinds | 19 | 16 | 0 | 3 (`@auto-rst`, `@jupytext`, `@shadow`) |
+| `@<file>` kinds | 19 | 16 | 1 (`@jupytext`) | 2 (`@auto-rst`, `@shadow`) |
 | other headline kinds | 10 | 0 | 0 | 10 |
 
 leolib recognises every body directive Leo does, so a sentinel file writes each as a directive and never as text. "Full" means the directive also has its effect. Scripting, plugins and the settings tree are covered under the last section.
@@ -461,7 +461,7 @@ Leo's `atFileNames` and `atAutoNames`, and the `@auto-<name>` spellings its impo
 | `@edit` | The whole file in one body. | Read and written. |
 | `@asis`, `@file-asis` | Written verbatim; never read. | Written. |
 | `@nosent`, `@file-nosent` | Written without sentinels; never read. | Written. |
-| `@jupytext` | A notebook, through jupytext. | Refused on read and write. |
+| `@jupytext` | A notebook, through jupytext, as `@clean` over its `py:percent` text. | Read and written, converted in Rust; a write keeps each cell's outputs. Only `py:percent`, with headlines cut at 60 characters: the `jupytext-fmt`, `jupytext-max-headline-length` and `jupyter-prefix` settings are not read. Some notebooks are refused (`porting-notes.md`). |
 | `@shadow` | Deprecated. | Not ported (`porting-notes.md`). |
 
 ### Other headline kinds

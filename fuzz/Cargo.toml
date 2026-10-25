@@ -4,6 +4,10 @@
 #     cargo +nightly fuzz run pickle
 #     cargo +nightly fuzz run read_leo
 #     cargo +nightly fuzz run markdown
+#     cargo +nightly fuzz run markdown_rename
+#     cargo +nightly fuzz run line_import
+#     cargo +nightly fuzz run undo
+#     cargo +nightly fuzz run jupytext
 #
 # Outside the workspace, as cargo-fuzz expects: it needs nightly, and the
 # workspace builds on stable.
@@ -48,6 +52,34 @@ bench = false
 [[bin]]
 name = "markdown"
 path = "fuzz_targets/markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "markdown_rename"
+path = "fuzz_targets/markdown_rename.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "line_import"
+path = "fuzz_targets/line_import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "undo"
+path = "fuzz_targets/undo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jupytext"
+path = "fuzz_targets/jupytext.rs"
 test = false
 doc = false
 bench = false

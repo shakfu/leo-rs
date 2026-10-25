@@ -331,6 +331,7 @@ impl Gui {
                     Action::Preedit(text) => self.editor.preedit = text,
                     Action::Focused => {
                         self.app.check_disk();
+                        self.rendered.refresh();
                         self.app.log_message();
                     }
                 }

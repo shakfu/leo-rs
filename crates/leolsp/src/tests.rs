@@ -729,3 +729,232 @@ fn semantic_tokens_are_asked_for_once_and_land_in_their_bodies() {
         .count();
     assert_eq!(asked, 1, "unchanged text is not asked about again");
 }
+
+/// `dd` inside the front end's debounce changed the outline and sent
+/// nothing, so the version check passed and the rename landed on shifted rows.
+#[test]
+fn a_rename_answered_before_an_edit_is_sent_is_refused() {
+    let mut lsp = lsp(Default::default());
+    let (mut o, _, f) = outline();
+    lsp.sync(&o, &f);
+    lsp.request(f.gnx(&o), 0, 4, Request::Rename("g".into()))
+        .unwrap();
+    o.set_body(&f, "\ndef f():\n    return 1\n");
+    let rename = wait(&mut lsp, &o, |e| matches!(e, Event::Rename(_)));
+    assert!(matches!(rename, Event::Rename(Err(_))), "{rename:?}");
+}
+
+#[test]
+fn an_edit_a_server_asks_for_over_unsent_text_is_refused() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (mut o, _, f) = outline();
+    lsp.sync(&o, &f);
+    let command = lsp_types::Command {
+        title: "organize".into(),
+        command: "organize".into(),
+        arguments: None,
+    };
+    lsp.execute(f.gnx(&o), &command).unwrap();
+    o.set_body(&f, "\ndef f():\n    return 1\n");
+    let edit = wait(&mut lsp, &o, |e| matches!(e, Event::Edit(..)));
+    assert!(matches!(edit, Event::Edit(_, Err(_))), "{edit:?}");
+    for _ in 0..100 {
+        if seen.lock().unwrap().iter().any(|m| m["id"] == 77) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let seen = seen.lock().unwrap();
+    let answer = seen.iter().find(|m| m["id"] == 77).expect("answered");
+    assert_eq!(answer["result"]["applied"], false);
+}
+
+/// A versioned edit made for text the server has since been sent changed
+/// is refused; one for the current version applies.
+#[test]
+fn an_edit_for_an_older_version_is_refused() {
+    let mut lsp = lsp(Default::default());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    let key = lsp.node_docs[f.gnx(&o)].clone();
+    let (uri, version) = (lsp.docs[&key].uri.clone(), lsp.docs[&key].version);
+    let edit = |v: i32| -> WorkspaceEdit {
+        serde_json::from_value(json!({"documentChanges": [{
+            "textDocument": {"uri": uri, "version": v},
+            "edits": [{"range": {"start": {"line": 0, "character": 7},
+                                 "end": {"line": 0, "character": 9}}, "newText": "sys"}],
+        }]}))
+        .unwrap()
+    };
+    let err = lsp
+        .body_edits(edit(version - 1), Encoding::Utf16)
+        .unwrap_err();
+    assert!(err.contains("version"), "{err}");
+    assert!(lsp.body_edits(edit(version), Encoding::Utf16).is_ok());
+}
+
+/// `1 << i` past 32 modifiers panicked in a debug build, and `start + ds`
+/// overflowed on a server's absurd deltas.
+#[test]
+fn semantic_tokens_past_u32_are_dropped_not_overflowed() {
+    let mut lsp = lsp(Default::default());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lsp.status()[0].1 != ServerState::Running {
+        assert!(std::time::Instant::now() < deadline, "not started");
+        lsp.poll(&o);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let names: Vec<String> = (0..40).map(|i| format!("m{i}")).collect();
+    lsp.servers.get_mut("python").unwrap().token_modifiers = names.clone();
+    let key = lsp.node_docs[f.gnx(&o)].clone();
+    let pending = Pending {
+        request: Request::SemanticTokens,
+        version: lsp.docs[&key].version,
+        key: key.clone(),
+    };
+    // `return` with every bit set, then a start and a line past u32.
+    let max = u32::MAX;
+    let data = json!({"data": [3, 8, 6, 0, max, 0, max, 1, 0, 0, max, 0, 1, 0, 0]});
+    lsp.store_tokens("python", &pending, &data);
+    let tokens = &lsp.tokens[&key].1[f.gnx(&o)];
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].modifiers, names[..32]);
+}
+
+/// What servers were sent, by language.
+type SeenBy = Arc<Mutex<Vec<(String, Value)>>>;
+
+/// An `Lsp` with a fake for python and one for rust, which answer nothing.
+fn two_servers(seen: SeenBy) -> Lsp {
+    let configs = ["python", "rust"]
+        .map(|language| ServerConfig {
+            language: language.into(),
+            command: "fake".into(),
+        })
+        .to_vec();
+    let connect: Connect = Box::new(move |cfg, _, _| {
+        let (seen, language) = (seen.clone(), cfg.language.clone());
+        Ok(server::fake::server(
+            Box::new(move |msg| {
+                seen.lock().unwrap().push((language.clone(), msg.clone()));
+                vec![]
+            }),
+            "utf-16",
+        ))
+    });
+    Lsp::with_connect(configs, PathBuf::from("/tmp"), Arc::new(|| {}), connect)
+}
+
+/// The URIs of the `method` messages `language`'s server was sent, polling
+/// a little for `want` of them: nothing goes out until `initialize` is answered.
+fn sent(
+    lsp: &mut Lsp,
+    o: &Outline,
+    seen: &SeenBy,
+    language: &str,
+    method: &str,
+    want: usize,
+) -> Vec<String> {
+    let find = || -> Vec<String> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|(l, m)| l == language && m["method"] == method)
+            .map(|(_, m)| m["params"]["textDocument"]["uri"].as_str().unwrap().into())
+            .collect()
+    };
+    for _ in 0..200 {
+        if find().len() >= want {
+            break;
+        }
+        lsp.poll(o);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    find()
+}
+
+#[test]
+fn a_change_of_language_closes_the_document_and_opens_it_on_the_new_server() {
+    let seen: SeenBy = Default::default();
+    let mut lsp = two_servers(seen.clone());
+    let mut o = Outline::new_empty();
+    let p = o.root_position().unwrap();
+    o.set_body(&p, "@language python\nx = 1\n");
+    lsp.sync(&o, &p);
+    o.set_body(&p, "@language rust\nlet x = 1;\n");
+    lsp.sync(&o, &p);
+    let uri = format!("untitled:leo/{}", p.gnx(&o));
+    assert_eq!(
+        sent(&mut lsp, &o, &seen, "python", "textDocument/didClose", 1),
+        [uri.as_str()]
+    );
+    assert_eq!(
+        sent(&mut lsp, &o, &seen, "rust", "textDocument/didOpen", 1),
+        [uri.as_str()]
+    );
+    assert!(sent(&mut lsp, &o, &seen, "rust", "textDocument/didChange", 0).is_empty());
+}
+
+#[test]
+fn a_deleted_nodes_document_is_closed() {
+    let seen: SeenBy = Default::default();
+    let mut lsp = two_servers(seen.clone());
+    let mut o = Outline::new_empty();
+    let first = o.root_position().unwrap();
+    let p = o.insert_after(&first);
+    o.set_body(&p, "@language python\nx = 1\n");
+    lsp.sync(&o, &p);
+    let gnx = p.gnx(&o).to_string();
+    assert!(lsp.serves(&gnx));
+    o.delete_position(&p);
+    lsp.sync(&o, &first);
+    let uri = format!("untitled:leo/{gnx}");
+    assert_eq!(
+        sent(&mut lsp, &o, &seen, "python", "textDocument/didClose", 1),
+        [uri]
+    );
+    assert!(!lsp.serves(&gnx));
+}
+
+#[test]
+fn a_dead_servers_documents_are_forgotten_and_a_restart_reopens_them() {
+    let seen: Seen = Default::default();
+    let mut lsp = lsp(seen.clone());
+    let (o, _, f) = outline();
+    lsp.sync(&o, &f);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    assert_eq!(lsp.diagnostics(f.gnx(&o)).len(), 1);
+    // The fake stops on `exit`.
+    let server = lsp.servers.get_mut("python").unwrap();
+    server.notify("exit", Value::Null);
+    wait(&mut lsp, &o, |e| matches!(e, Event::Message(_)));
+    assert!(lsp.diagnostics(f.gnx(&o)).is_empty());
+    assert!(!lsp.serves(f.gnx(&o)));
+    assert!(lsp.docs.is_empty() && lsp.node_docs.is_empty());
+    assert!(matches!(lsp.status()[0].1, ServerState::Failed(_)));
+    lsp.restart();
+    assert_eq!(lsp.status()[0].1, ServerState::NotStarted);
+    lsp.sync(&o, &f);
+    wait(&mut lsp, &o, |e| *e == Event::Diagnostics);
+    assert_eq!(lsp.diagnostics(f.gnx(&o)).len(), 1);
+    assert_eq!(opened(&seen).len(), 2);
+}
+
+/// A server that resolves links names files under the real root, which
+/// matched none of our keys.
+#[cfg(unix)]
+#[test]
+fn a_file_under_a_linked_root_keys_as_ours() {
+    let dir = std::env::temp_dir().join(format!("leolsp-link-{}", std::process::id()));
+    let (real, link) = (dir.join("real"), dir.join("link"));
+    std::fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let lsp = Lsp::new(vec![], link.clone(), Arc::new(|| {}));
+    let ours = lsp.key_of(&uri::from_path(&link.join("x.py")));
+    let theirs = lsp.key_of(&uri::from_path(&real.join("x.py")));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(ours, theirs);
+}

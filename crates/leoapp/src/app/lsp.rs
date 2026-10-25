@@ -522,6 +522,20 @@ impl App {
         self.mode = Mode::Help;
     }
 
+    /// `:lsp-restart`: stop the servers; each starts again, a failed one too,
+    /// when a node in its language is next visited.
+    pub fn restart_lsp(&mut self) {
+        let Some(lsp) = self.lsp.as_mut() else {
+            self.message =
+                "no language server: name one in the settings, as lsp-python = \"pylsp\"".into();
+            return;
+        };
+        lsp.restart();
+        self.diagnostics.clear();
+        self.lsp_synced = None;
+        self.message = "language servers restarted".into();
+    }
+
     /// `:lsp-diagnostics`: this body's diagnostics, in the help overlay.
     pub fn show_diagnostics(&mut self) {
         let lines = match self.diagnostics.is_empty() {
@@ -872,6 +886,29 @@ mod tests {
             lines[0]
         );
         assert_eq!(lines.last().unwrap(), "nothing logged");
+    }
+
+    #[test]
+    fn a_restart_tries_a_failed_server_again() {
+        let mut app = app("@language python\nx = 1\n");
+        app.run_command_line("lsp-restart");
+        assert!(app.message.contains("lsp-python"), "{}", app.message);
+        let settings = crate::config::Config {
+            servers: vec![leolsp::ServerConfig {
+                language: "python".into(),
+                command: "/nonexistent/leolsp-server".into(),
+            }],
+            ..Default::default()
+        };
+        app.set_lsp(&settings, std::sync::Arc::new(|| {}));
+        app.poll();
+        assert_eq!(app.servers(), Some(Servers::Failed));
+        app.run_command_line("lsp-restart");
+        assert_eq!(app.message, "language servers restarted");
+        assert_eq!(app.servers(), Some(Servers::Idle));
+        // The next poll starts it again, and it fails again.
+        app.poll();
+        assert_eq!(app.servers(), Some(Servers::Failed));
     }
 
     #[test]

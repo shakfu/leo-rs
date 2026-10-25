@@ -94,10 +94,7 @@ pub fn remember(list: &mut Vec<String>, file: &str) {
 }
 
 pub fn save_recent(path: &Path, list: &[String]) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, list.join("\n") + "\n")
+    crate::session::write_atomic(path, &(list.join("\n") + "\n"))
 }
 
 /// Ask for an outline to open, starting where `near` is.
@@ -162,7 +159,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("leogui-recent-{}", std::process::id()));
         let path = dir.join("sub/recent-outlines");
         assert!(load_recent(&path).is_empty());
-        let list = vec!["/a b.leo".to_string(), "/c.leo".to_string()];
+        let list = vec!["/a b.leo".to_string(), " /c.leo ".to_string()];
         save_recent(&path, &list).unwrap();
         let back = load_recent(&path);
         std::fs::remove_dir_all(&dir).unwrap();

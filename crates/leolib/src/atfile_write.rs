@@ -735,9 +735,11 @@ impl<'a> AtWrite<'a> {
     /// With no single-line delimiter, a headline containing the block delims
     /// would end the sentinel early and split the node in two on read.
     fn remove_comment_delims(&self, p: &Position) -> String {
-        let h = p.h(self.o);
+        // A newline would end the sentinel. `set_headline` drops it, as Leo's
+        // `setHeadString`; a `.leo` file's `<vh>` can still hold one.
+        let h = p.h(self.o).replace('\n', "");
         if self.end_comment.is_empty() {
-            return h.to_string();
+            return h;
         }
         h.replace(&self.start_comment, "")
             .replace(&self.end_comment, "")
@@ -946,6 +948,25 @@ mod tests {
         assert!(s.contains("# @+others\n"), "{s}");
         assert!(s.contains("print(1)\n"));
         assert!(s.trim_end().ends_with("# @-leo"), "{s}");
+    }
+
+    /// A `.leo` file's `<vh>` can hold `&#10;`. The newline split the
+    /// sentinel, and its second half joined the root's body on each read.
+    #[test]
+    fn a_newline_in_a_headline_does_not_split_its_sentinel() {
+        let (mut o, root) = python_outline();
+        let child = o.insert_as_last_child(&root);
+        o.node_mut(child.v).h = "a\nb".to_string();
+        o.set_body(&child, "print(1)\n");
+        let s = tangle(&o, &root).unwrap();
+        let mut again = Outline::new_empty();
+        let p = again.root_position().unwrap();
+        again.set_headline(&p, "@file test.py");
+        crate::atfile_read::read_into_root(&mut again, &s, "test.py", &p).unwrap();
+        assert_eq!(p.b(&again), "@others\n");
+        let child = p.first_child(&again).unwrap();
+        assert_eq!(child.h(&again), "ab");
+        assert_eq!(tangle(&again, &p).unwrap(), s);
     }
 
     #[test]

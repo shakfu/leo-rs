@@ -26,6 +26,7 @@ pub mod fuzz;
 pub mod gnx;
 pub mod goto;
 pub mod importers;
+pub(crate) mod jupytext;
 pub mod langdata;
 pub mod leofile;
 pub mod node;

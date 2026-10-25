@@ -737,6 +737,11 @@ pub static COMMANDS: &[Command] = &[
         |app, _| app.show_lsp_status(),
     ),
     c(
+        "lsp-restart",
+        "stop the language servers; each starts again when next needed",
+        |app, _| app.restart_lsp(),
+    ),
+    c(
         "lsp-code-action",
         "the language server's fixes here; :lsp-code-action N applies one",
         |app, _| app.lsp_request(leolsp::Request::CodeActions),

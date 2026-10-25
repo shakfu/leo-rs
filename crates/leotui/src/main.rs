@@ -14,6 +14,9 @@
 mod ui;
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crossterm::event::{
     self, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
@@ -170,6 +173,9 @@ struct TerminalGuard {
     kitty_keys: bool,
 }
 
+/// Set while the terminal is ours: by `new`, cleared by the first `restore`.
+static TAKEN: AtomicBool = AtomicBool::new(false);
+
 impl TerminalGuard {
     /// Take over the terminal.
     ///
@@ -182,6 +188,7 @@ impl TerminalGuard {
     /// simply never fire.
     fn new(kitty_keys: bool) -> io::Result<Self> {
         enable_raw_mode()?;
+        TAKEN.store(true, Ordering::SeqCst);
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
         // Without bracketed paste a pasted newline is Enter, and the rest of
@@ -196,15 +203,66 @@ impl TerminalGuard {
         Ok(Self { kitty_keys })
     }
 
-    /// Undo everything `new` did, in reverse.
+    /// Undo everything `new` did, in reverse, once: the panic hook and the
+    /// drop both call this, and a second pop would take the shell's flags.
     fn restore(kitty_keys: bool) {
-        let mut stdout = io::stdout();
-        if kitty_keys {
-            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+        if undo(&TAKEN, &mut io::stdout(), kitty_keys) {
+            let _ = disable_raw_mode();
         }
-        let _ = execute!(stdout, DisableFocusChange, DisableBracketedPaste);
-        let _ = execute!(stdout, LeaveAlternateScreen);
-        let _ = disable_raw_mode();
+    }
+}
+
+/// Write to `out` what undoes `new`'s escapes, if `taken` was set; clear it.
+fn undo(taken: &AtomicBool, out: &mut impl io::Write, kitty_keys: bool) -> bool {
+    if !taken.swap(false, Ordering::SeqCst) {
+        return false;
+    }
+    if kitty_keys {
+        let _ = execute!(out, PopKeyboardEnhancementFlags);
+    }
+    let _ = execute!(out, DisableFocusChange, DisableBracketedPaste);
+    let _ = execute!(out, LeaveAlternateScreen);
+    true
+}
+
+/// Run `restore` only on the thread `main` names. Another thread's panic may
+/// be caught, as the highlight worker's is, and the session goes on.
+fn on_main_thread(main: std::thread::ThreadId, restore: impl FnOnce()) {
+    if std::thread::current().id() == main {
+        restore();
+    }
+}
+
+/// Call `exit` `grace` after `ended` is set, but not while a recovery write
+/// holds `writing`.
+fn watchdog(
+    ended: Arc<AtomicBool>,
+    writing: Arc<Mutex<()>>,
+    grace: Duration,
+    exit: impl FnOnce() + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        while !ended.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(200).min(grace));
+        }
+        std::thread::sleep(grace);
+        // A poisoned lock still holds it.
+        let _held = writing.lock();
+        exit();
+    })
+}
+
+/// Write the recovery file, if there is unsaved work, and say where.
+fn recover(app: &mut App, writing: &Mutex<()>) {
+    let _held = writing.lock();
+    if let Some(path) = app.write_recovery() {
+        // After a hangup stderr may be gone; `eprintln!` would panic.
+        use std::io::Write;
+        let _ = writeln!(
+            io::stderr(),
+            "leotui: unsaved work written to {}",
+            path.display()
+        );
     }
 }
 
@@ -219,8 +277,9 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
     // and the alternate screen: the message would be invisible and the shell
     // unusable.
     let previous_hook = std::panic::take_hook();
+    let main = std::thread::current().id();
     std::panic::set_hook(Box::new(move |info| {
-        TerminalGuard::restore(kitty_keys);
+        on_main_thread(main, || TerminalGuard::restore(kitty_keys));
         previous_hook(info);
     }));
 
@@ -238,21 +297,20 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
     };
     // A hangup (a dropped ssh session) or a kill ends the loop, not the
     // process, so the work can be kept.
-    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ended = Arc::new(AtomicBool::new(false));
     #[cfg(unix)]
     for signal in [signal_hook::consts::SIGHUP, signal_hook::consts::SIGTERM] {
-        let _ = signal_hook::flag::register(signal, std::sync::Arc::clone(&ended));
+        let _ = signal_hook::flag::register(signal, Arc::clone(&ended));
     }
     // The handler replaces dying, so a loop stuck on a dead terminal would
     // never end: once asked, the process goes within five seconds regardless.
-    let watched = std::sync::Arc::clone(&ended);
-    std::thread::spawn(move || {
-        while !watched.load(std::sync::atomic::Ordering::SeqCst) {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        std::process::exit(1);
-    });
+    let writing = Arc::new(Mutex::new(()));
+    watchdog(
+        Arc::clone(&ended),
+        Arc::clone(&writing),
+        Duration::from_secs(5),
+        || std::process::exit(1),
+    );
     let result =
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| event_loop(app, &ended))) {
             Ok(result) => result,
@@ -260,29 +318,14 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
             // the outline holds, then go on dying.
             Err(panic) => {
                 drop(guard);
-                if let Some(path) = app.write_recovery() {
-                    use std::io::Write;
-                    let _ = writeln!(
-                        io::stderr(),
-                        "leotui: unsaved work written to {}",
-                        path.display()
-                    );
-                }
+                recover(app, &writing);
                 std::panic::resume_unwind(panic);
             }
         };
     drop(guard);
-    let lost = result.is_err() || ended.load(std::sync::atomic::Ordering::SeqCst);
+    let lost = result.is_err() || ended.load(Ordering::SeqCst);
     if lost {
-        if let Some(path) = app.write_recovery() {
-            // After a hangup stderr may be gone; `eprintln!` would panic.
-            use std::io::Write;
-            let _ = writeln!(
-                io::stderr(),
-                "leotui: unsaved work written to {}",
-                path.display()
-            );
-        }
+        recover(app, &writing);
     }
     match result {
         Ok(()) if !lost => 0,
@@ -295,11 +338,11 @@ fn run(app: &mut App, kitty_keys: bool) -> i32 {
     }
 }
 
-fn event_loop(app: &mut App, ended: &std::sync::atomic::AtomicBool) -> io::Result<()> {
+fn event_loop(app: &mut App, ended: &AtomicBool) -> io::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     let mut redraw = true;
-    while !app.quit && !ended.load(std::sync::atomic::Ordering::SeqCst) {
+    while !app.quit && !ended.load(Ordering::SeqCst) {
         if redraw {
             terminal.draw(|f| ui::draw(f, app))?;
         }
@@ -381,6 +424,49 @@ mod tests {
     use leoapp::keys::{KeyCode, KeyEvent, KeyModifiers};
     use leolib::{Document, Outline};
     use ratatui::style::Color;
+
+    #[test]
+    fn the_terminal_is_restored_once() {
+        let taken = AtomicBool::new(true);
+        let mut first = Vec::new();
+        assert!(undo(&taken, &mut first, true));
+        #[cfg(unix)]
+        assert!(String::from_utf8_lossy(&first).contains("\x1b[<1u"));
+        // A second pop would take the parent shell's keyboard flags.
+        let mut second = Vec::new();
+        assert!(!undo(&taken, &mut second, true));
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn only_a_main_thread_panic_restores_the_terminal() {
+        let main = std::thread::current().id();
+        let restored = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            s.spawn(|| on_main_thread(main, || restored.store(true, Ordering::SeqCst)));
+        });
+        assert!(!restored.load(Ordering::SeqCst));
+        on_main_thread(main, || restored.store(true, Ordering::SeqCst));
+        assert!(restored.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_watchdog_waits_for_the_recovery_write() {
+        let ended = Arc::new(AtomicBool::new(false));
+        let writing = Arc::new(Mutex::new(()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let held = writing.lock().unwrap();
+        watchdog(
+            Arc::clone(&ended),
+            Arc::clone(&writing),
+            Duration::from_millis(20),
+            move || tx.send(()).unwrap(),
+        );
+        ended.store(true, Ordering::SeqCst);
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+        drop(held);
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
 
     #[test]
     fn a_crossterm_key_converts_with_every_modifier() {

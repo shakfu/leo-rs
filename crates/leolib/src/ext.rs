@@ -169,7 +169,8 @@ impl Kinds {
         if leo {
             return Err(format!("{d} is Leo's"));
         }
-        if !d.starts_with('@') || d.contains(char::is_whitespace) {
+        // Only what `find_at_file_name` reads as one word: `@my.kind` never matches.
+        if !d.starts_with('@') || d.len() < 2 || crate::node::skip_id(d, 1, "-") != d.len() {
             return Err(format!("{d:?} is not a directive"));
         }
         let taken = self

@@ -2400,3 +2400,182 @@ fn anchored_patterns_match_inside_a_body() {
     app.run_command_line("bufdo %s/x$/Y/");
     assert_eq!(b.b(app.outline()), "one\nfooY\n", "{}", app.message);
 }
+
+/// A kind whose every node is read-only, as `@entangled` keeps an
+/// `include=` fence node.
+struct ReadOnlyKind;
+
+impl leolib::ext::FileKind for ReadOnlyKind {
+    fn directive(&self) -> &'static str {
+        "@frozen"
+    }
+    fn read(&self, _o: &mut Outline, _p: &Position) -> leolib::Result<bool> {
+        Ok(false)
+    }
+    fn write(&self, o: &Outline, p: &Position) -> leolib::Result<String> {
+        Ok(p.b(o).to_string())
+    }
+    fn read_only(&self, _o: &Outline, _p: &Position) -> Option<String> {
+        Some("read-only: frozen".to_string())
+    }
+}
+
+#[test]
+fn bufdo_leaves_a_read_only_node_and_says_so() {
+    let mut app = app();
+    let rows = app.rows();
+    let (a, b) = (rows[0].position.clone(), rows[1].position.clone());
+    let kinds = leolib::ext::Kinds::empty().with(ReadOnlyKind).unwrap();
+    app.doc
+        .outline_mut_untracked()
+        .set_kinds(std::sync::Arc::new(kinds));
+    app.doc.set_headline(&b, "@frozen x");
+    app.doc.set_body(&a, "old\n");
+    app.doc.set_body(&b, "old\n");
+    app.run_command_line("bufdo %s/old/new/");
+    assert_eq!(a.b(app.outline()), "new\n");
+    assert_eq!(b.b(app.outline()), "old\n");
+    assert_eq!(
+        app.message,
+        "1 substitution on 1 line in 1 node; 1 node not changed: read-only"
+    );
+    app.doc.set_body(&a, "kept\n");
+    app.run_command_line("bufdo %s/old/new/");
+    assert_eq!(b.b(app.outline()), "old\n");
+    assert_eq!(app.message, "1 node not changed: read-only");
+    // Counting changes nothing, so a read-only node counts.
+    app.run_command_line("bufdo %s/old//n");
+    assert_eq!(app.message, "1 match on 1 line in 1 node");
+}
+
+#[test]
+fn replace_all_leaves_a_read_only_node_and_says_so() {
+    let mut app = app();
+    let rows = app.rows();
+    let (a, b) = (rows[0].position.clone(), rows[1].position.clone());
+    let kinds = leolib::ext::Kinds::empty().with(ReadOnlyKind).unwrap();
+    app.doc
+        .outline_mut_untracked()
+        .set_kinds(std::sync::Arc::new(kinds));
+    app.doc.set_headline(&b, "@frozen old");
+    app.doc.set_body(&a, "old\n");
+    app.doc.set_body(&b, "old\n");
+    let find = crate::search::Find {
+        pattern: "old".into(),
+        ..Default::default()
+    };
+    app.replace_all(&find, "new");
+    assert_eq!(a.b(app.outline()), "new\n");
+    assert_eq!(
+        (b.h(app.outline()), b.b(app.outline())),
+        ("@frozen old", "old\n")
+    );
+    assert_eq!(
+        app.message,
+        "replaced 1 match in 1 node; 1 node not changed: read-only"
+    );
+}
+
+#[test]
+fn a_second_recovery_copy_moves_the_first_aside() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("w.leo").to_string_lossy().to_string();
+    let mut doc = Document::new_empty(&leo);
+    doc.save(&leo).unwrap();
+    let root = doc.outline().root_position().unwrap();
+    doc.set_headline(&root, "first");
+    let mut app = App::new(doc);
+    let first = app.write_recovery().unwrap();
+    app.doc.set_headline(&root, "second");
+    assert_eq!(app.write_recovery().unwrap(), first);
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap();
+    assert!(read(&first).contains("second"));
+    assert!(read(&dir.path().join("w.recovered.1.leo")).contains("first"));
+    app.write_recovery().unwrap();
+    assert!(read(&dir.path().join("w.recovered.2.leo")).contains("second"));
+    let notice = super::files::recovery_notice(&leo).unwrap();
+    assert!(
+        notice.ends_with("; 2 older copies, w.recovered.N.leo"),
+        "{notice}"
+    );
+    // With .1 deleted, the next copy still goes past the highest, and the
+    // notice counts what is there.
+    std::fs::remove_file(dir.path().join("w.recovered.1.leo")).unwrap();
+    app.write_recovery().unwrap();
+    assert!(dir.path().join("w.recovered.3.leo").exists());
+    assert!(!dir.path().join("w.recovered.1.leo").exists());
+    let notice = super::files::recovery_notice(&leo).unwrap();
+    assert!(
+        notice.ends_with("; 2 older copies, w.recovered.N.leo"),
+        "{notice}"
+    );
+}
+
+#[test]
+fn a_body_edit_keeps_whether_the_body_ends_with_a_newline() {
+    // Typing then deleting it leaves the body "\n" as it was, with no undo.
+    let mut app = body_app("\n");
+    press(&mut app, "ix");
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(body(&app), "\n");
+    assert!(!app.doc.undoer().can_undo());
+    let mut app = body_app("one");
+    press(&mut app, "x");
+    assert_eq!(body(&app), "ne");
+    // Replacing a character with itself changes nothing, so leaves no undo.
+    app.doc.clear_undo();
+    press(&mut app, "rn");
+    assert_eq!(body(&app), "ne");
+    assert!(!app.doc.undoer().can_undo());
+    // An empty body gains a newline once it has text, as before.
+    let mut app = body_app("");
+    press(&mut app, "ix");
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(body(&app), "x\n");
+}
+
+#[test]
+fn a_counted_put_repeats_the_register_in_order_and_has_a_limit() {
+    let mut app = body_app("a\nb\n");
+    press(&mut app, "yj");
+    press(&mut app, "G2p");
+    assert_eq!(body(&app), "a\nb\na\nb\na\nb\n");
+    assert_eq!(app.editor.cursor, (2, 0));
+    let mut app = body_app("xy\n");
+    press(&mut app, "y$");
+    press(&mut app, "$2P");
+    assert_eq!(body(&app), "xxyxyy\n");
+    // 64 lines 99,999 times is over the limit: refused, and nothing changes.
+    let text = "l\n".repeat(64);
+    let mut app = body_app(&text);
+    press(&mut app, "yG");
+    press(&mut app, "99999p");
+    assert!(app.message.starts_with("put refused"), "{}", app.message);
+    assert_eq!(body(&app), text);
+}
+
+#[test]
+fn a_counted_insert_repeats_its_text_once_and_has_a_limit() {
+    let mut app = body_app("[]\n");
+    press(&mut app, "l3iab");
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(body(&app), "[ababab]\n");
+    assert_eq!(app.editor.cursor, (0, 6));
+    press(&mut app, "2.");
+    assert_eq!(body(&app), "[ababaababb]\n");
+    let mut app = body_app("[]\n");
+    press(&mut app, "l2ia");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(body(&app), "[a\na\n]\n");
+    // 64 lines 99,999 times is over the limit: the text stays typed once.
+    let mut app = body_app("\n");
+    press(&mut app, "99999i");
+    for _ in 0..64 {
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.message.starts_with("insert refused"), "{}", app.message);
+    assert_eq!(body(&app), "\n".repeat(65));
+}

@@ -304,6 +304,7 @@ mod tests {
         "lsp-rename",
         "lsp-code-action",
         "lsp-status",
+        "lsp-restart",
         "lsp-diagnostics",
         "goto-visible-row",
         "theme",

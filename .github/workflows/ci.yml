@@ -19,10 +19,10 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # leogui's window libraries, as eframe's README lists them.
       - name: Install the GUI build libraries
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
@@ -32,30 +32,53 @@ jobs:
       - name: leo-plugins without its default features
         run: cargo test -p leo-plugins --no-default-features
 
+  # Each declared rust-version builds. Keep in step with the Cargo.toml files.
+  msrv:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { toolchain: "1.89", packages: "-p leolib" }
+          - { toolchain: "1.90", packages: "--workspace --exclude leogui --features leo-entangled/leoapp" }
+          - { toolchain: "1.95", packages: "-p leogui" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the toolchain
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: msrv-${{ matrix.toolchain }}
+      - name: Install the GUI build libraries
+        if: matrix.toolchain == '1.95'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - name: cargo check
+        run: cargo +${{ matrix.toolchain }} check --locked ${{ matrix.packages }}
+
   fuzz:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install nightly and cargo-fuzz
         run: rustup toolchain install nightly --profile minimal && cargo install cargo-fuzz --locked
       - name: Fuzz each target for a minute
         working-directory: fuzz
         run: |
-          for t in read_into_root pickle read_leo markdown; do
+          for t in read_into_root pickle read_leo markdown markdown_rename line_import undo jupytext; do
             cargo +nightly fuzz run "$t" -- -max_total_time=60
           done
 
   corpus:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out leo-editor
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.LEO_EDITOR_REPO }}
           ref: ${{ env.LEO_EDITOR_REF }}
           path: leo-editor
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - name: make corpus

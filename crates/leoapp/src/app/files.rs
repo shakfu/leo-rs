@@ -379,6 +379,7 @@ pub(super) fn save_failed(e: &leolib::Error) -> String {
 
 /// Where a recovery copy of the outline at `file_name` goes: beside it as
 /// `NAME.recovered.leo`, or in the settings directory for one never saved.
+/// An older copy there is moved aside first, by [`recovery_aside`].
 pub fn recovery_path(file_name: &str) -> Option<std::path::PathBuf> {
     match file_name.is_empty() {
         true => crate::config::dir().map(|d| d.join("recovered.leo")),
@@ -390,6 +391,36 @@ pub fn recovery_path(file_name: &str) -> Option<std::path::PathBuf> {
     }
 }
 
+/// Where a recovery copy at `copy` is moved aside to before a newer one
+/// replaces it: `NAME.recovered.N.leo`, N one past the highest, so N grows
+/// with age even after a copy is deleted.
+fn recovery_aside(copy: &std::path::Path) -> std::path::PathBuf {
+    let stem = copy.file_stem().unwrap_or_default().to_string_lossy();
+    let next = older_recoveries(copy).into_iter().max().unwrap_or(0) + 1;
+    (next..)
+        .map(|n| copy.with_file_name(format!("{stem}.{n}.leo")))
+        .find(|p| !p.exists())
+        .expect("a free name")
+}
+
+/// The N of each `NAME.recovered.N.leo` beside the recovery copy `copy`.
+fn older_recoveries(copy: &std::path::Path) -> Vec<u64> {
+    let stem = copy.file_stem().unwrap_or_default().to_string_lossy();
+    let prefix = format!("{stem}.");
+    let Some(entries) = copy.parent().and_then(|d| std::fs::read_dir(d).ok()) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            let n = name.strip_prefix(&prefix)?.strip_suffix(".leo")?;
+            n.bytes()
+                .all(|b| b.is_ascii_digit())
+                .then(|| n.parse().ok())?
+        })
+        .collect()
+}
+
 /// The status line's word on a recovery copy of `file_name` newer than the
 /// outline itself, or None.
 pub fn recovery_notice(file_name: &str) -> Option<String> {
@@ -399,8 +430,14 @@ pub fn recovery_notice(file_name: &str) -> Option<String> {
     if saved.is_some_and(|s| s >= copied) {
         return None;
     }
+    let stem = copy.file_stem().unwrap_or_default().to_string_lossy();
+    let older = match older_recoveries(&copy).len() {
+        0 => String::new(),
+        1 => format!("; 1 older copy, {stem}.N.leo"),
+        n => format!("; {n} older copies, {stem}.N.leo"),
+    };
     Some(format!(
-        "{} holds work from a session that ended unsaved; open it to copy back what you need",
+        "{} holds work from a session that ended unsaved; open it to copy back what you need{older}",
         copy.display()
     ))
 }
@@ -419,6 +456,18 @@ impl App {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
+        // An earlier copy may not have been opened yet: keep it, and if it
+        // cannot be moved, write beside it instead.
+        let path = match path.exists() {
+            true => {
+                let aside = recovery_aside(&path);
+                match std::fs::rename(&path, &aside) {
+                    Ok(()) => path,
+                    Err(_) => aside,
+                }
+            }
+            false => path,
+        };
         let name = match file_name.is_empty() {
             true => "an unsaved outline".to_string(),
             false => leolib::util::short_file_name(&file_name),

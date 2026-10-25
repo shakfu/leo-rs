@@ -50,22 +50,43 @@ pub fn load(path: &Path) -> Option<Session> {
 }
 
 pub fn save(path: &Path, session: &Session) -> std::io::Result<()> {
+    write_atomic(path, &render(session))
+}
+
+/// Write `text` to a file beside `path` and rename it over `path`, so a
+/// crash or a full disk leaves the old file whole. Makes the directory.
+pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, render(session))
+    // A renamed link would become a copy; write to what it points at.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = path.with_file_name(name);
+    let written = std::fs::File::create(&tmp).and_then(|mut file| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, &path)
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 pub fn parse(text: &str) -> Session {
     let mut s = Session::default();
     for line in text.lines() {
-        let line = line.trim();
-        let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
-        let rest = rest.trim();
+        // A path may start or end with a space, so only `outline`'s is untrimmed.
+        let line = line.trim_start();
+        let (word, path) = line.split_once(' ').unwrap_or((line, ""));
+        let rest = path.trim();
         let last = s.outlines.last_mut();
         match (word, last) {
             ("outline", _) if !rest.is_empty() => s.outlines.push(SavedOutline {
-                path: rest.to_string(),
+                path: path.to_string(),
                 ..Default::default()
             }),
             ("active", Some(_)) => s.active = s.outlines.len() - 1,
@@ -138,7 +159,7 @@ mod tests {
                     tabs: vec![("x.1".into(), false), ("x.2".into(), true)],
                 },
                 SavedOutline {
-                    path: "/two.leo".into(),
+                    path: " /two.leo ".into(),
                     ..Default::default()
                 },
             ],
@@ -171,5 +192,24 @@ mod tests {
         let back = load(&path);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(back, Some(s));
+    }
+
+    #[test]
+    fn a_save_replaces_the_file_rather_than_rewriting_it() {
+        let dir = std::env::temp_dir().join(format!("leogui-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session");
+        std::fs::write(&path, "old\n").unwrap();
+        // A second name for the old file sees whether it was written in place.
+        let link = dir.join("old");
+        std::fs::hard_link(&path, &link).unwrap();
+        save(&path, &Session::default()).unwrap();
+        let old = std::fs::read_to_string(&link).unwrap();
+        let names = std::fs::read_dir(&dir).unwrap().count();
+        let back = load(&path);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(old, "old\n");
+        assert_eq!(names, 2, "no temporary file is left");
+        assert_eq!(back, Some(Session::default()));
     }
 }

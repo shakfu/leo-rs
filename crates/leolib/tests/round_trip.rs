@@ -757,29 +757,197 @@ fn an_auto_rst_file_is_reported_and_never_overwritten() {
     );
 }
 
-#[test]
-fn an_at_jupytext_notebook_is_neither_read_nor_written() {
-    let dir = tempfile::tempdir().unwrap();
-    let mine = "{\"cells\": []}\n";
-    let leo_path = outline_over_existing_file(dir.path(), "@jupytext nb.ipynb", "nb.ipynb", mine);
+/// A file from `tests/jupytext`, made with jupytext by
+/// `scripts/make_jupytext_fixtures.py`.
+fn jupytext_fixture(name: &str) -> String {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/jupytext");
+    fs::read_to_string(dir.join(name)).unwrap()
+}
 
-    let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
-    assert!(
-        matches!(report.errors[..], [ref e] if matches!(e.error, Error::Unsupported { .. })),
-        "{:?}",
-        report.errors
-    );
+/// An outline whose `@jupytext` node has read `case`'s notebook.
+fn jupytext_outline(dir: &std::path::Path, case: &str) -> (Outline, String) {
+    let nb = jupytext_fixture(&format!("{case}.ipynb"));
+    let leo_path = outline_over_existing_file(dir, "@jupytext nb.ipynb", "nb.ipynb", &nb);
+    let (o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    (o, dir.join("nb.ipynb").to_string_lossy().to_string())
+}
+
+#[test]
+fn an_at_jupytext_notebook_reads_as_clean_over_its_percent_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let (o, _) = jupytext_outline(dir.path(), "python");
     let root = o.root_position().unwrap();
-    o.set_body(&root, "x = 1\n");
-    o.set_dirty(&root);
-    // Approval does not help: the kind itself is refused.
-    o.remember_read_path(&root, &dir.path().join("nb.ipynb").to_string_lossy());
-    let result = external::write_external_files(&mut o, false);
-    assert!(result.written.is_empty(), "{:?}", result.written);
     assert_eq!(
-        fs::read_to_string(dir.path().join("nb.ipynb")).unwrap(),
-        mine
+        root.b(&o),
+        "<< prefix >>\n@others\n@language jupytext\n@tabwidth -4\n"
     );
+    let heads: Vec<&str> = root.children(&o).iter().map(|p| p.h(&o)).collect();
+    assert_eq!(
+        heads,
+        [
+            "<< prefix >>",
+            "# Title",
+            "import os",
+            "def f():",
+            "f()",
+            "raw text",
+            "echo hi",
+            "Cell 7",
+            "# A note",
+            "y = 2",
+            "!ls",
+        ]
+    );
+    let kids = root.children(&o);
+    assert!(kids[0].b(&o).ends_with("# ---\n\n"), "{}", kids[0].b(&o));
+    assert_eq!(kids[4].b(&o), "# %%\nf()\n\n");
+    let text = leolib::external::file_contents(&o, &root).unwrap().0;
+    assert_eq!(text, jupytext_fixture("python.ipynb"));
+}
+
+#[test]
+fn an_unchanged_at_jupytext_tree_writes_the_notebook_back_byte_for_byte() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut o, path) = jupytext_outline(dir.path(), "python");
+    let root = o.root_position().unwrap();
+    o.set_dirty(&root);
+    let result = external::write_external_files(&mut o, false);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.unchanged, 1);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        jupytext_fixture("python.ipynb")
+    );
+}
+
+#[test]
+fn an_edited_cell_node_keeps_the_cell_s_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut o, path) = jupytext_outline(dir.path(), "python");
+    let root = o.root_position().unwrap();
+    let cell = root.children(&o)[4].clone();
+    o.set_body(&cell, "# %%\nf() + 1\n\n");
+    let result = external::write_external_files(&mut o, true);
+    assert_eq!(
+        result.written,
+        std::slice::from_ref(&path),
+        "{:?}",
+        result.errors
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        jupytext_fixture("python.edit.ipynb")
+    );
+
+    // The next read finds the tree already matching the notebook.
+    let before = digest(&o);
+    let report = external::refresh_files(&mut o, vec![root]);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(digest(&o), before);
+}
+
+#[test]
+fn added_and_deleted_cell_nodes_add_and_delete_cells() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut o, path) = jupytext_outline(dir.path(), "python");
+    let root = o.root_position().unwrap();
+    let kids = root.children(&o);
+    o.delete_position(&kids[5]);
+    let new = o.insert_as_last_child(&root);
+    o.set_body(&new, "\n# %%\nz = 3\n");
+    let result = external::write_external_files(&mut o, true);
+    assert_eq!(
+        result.written,
+        std::slice::from_ref(&path),
+        "{:?}",
+        result.errors
+    );
+    let nb: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let cells = nb["cells"].as_array().unwrap();
+    let old: serde_json::Value = serde_json::from_str(&jupytext_fixture("python.ipynb")).unwrap();
+    let old = old["cells"].as_array().unwrap();
+    assert_eq!(cells.len(), old.len());
+    assert!(!cells.iter().any(|c| c["cell_type"] == "raw"));
+    // Every old cell but the raw one is there whole, outputs and id kept.
+    for c in old.iter().filter(|c| c["cell_type"] != "raw") {
+        assert!(cells.contains(c), "{c}");
+    }
+    let last = cells.last().unwrap();
+    assert_eq!(last["source"], serde_json::json!(["z = 3"]));
+    assert_eq!(last["outputs"], serde_json::json!([]));
+    assert!(last["execution_count"].is_null());
+    let id = last["id"].as_str().unwrap();
+    assert!(
+        id.len() == 8 && id.chars().all(|c| c.is_ascii_hexdigit()),
+        "{id}"
+    );
+}
+
+#[test]
+fn an_at_jupytext_tree_survives_save_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut o, _) = jupytext_outline(dir.path(), "header");
+    let before = digest(&o);
+    let leo_path = o.file_name.clone();
+    leolib::save(&mut o, &leo_path).unwrap();
+    let (o2, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(digest(&o2), before);
+}
+
+#[test]
+fn a_notebook_a_write_would_change_is_read_with_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let nb = jupytext_fixture("r.ipynb");
+    let leo_path = outline_over_existing_file(dir.path(), "@jupytext nb.ipynb", "nb.ipynb", &nb);
+    let (_, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+}
+
+#[test]
+fn a_notebook_that_does_not_convert_is_reported_and_never_overwritten() {
+    for mine in [
+        "{\"cells\": [\n",
+        "{\"nbformat\": 4, \"nbformat_minor\": 5, \"metadata\": {\"jupytext\": \
+         {\"cell_markers\": \"\\\"\\\"\\\"\"}}, \"cells\": []}\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let leo_path =
+            outline_over_existing_file(dir.path(), "@jupytext nb.ipynb", "nb.ipynb", mine);
+        let (mut o, report) = leolib::open_outline_with_report(&leo_path, true).unwrap();
+        assert!(
+            matches!(report.errors[..], [ref e] if matches!(e.error, Error::Import { .. })),
+            "{:?}",
+            report.errors
+        );
+        let root = o.root_position().unwrap();
+        o.set_body(&root, "# %%\nx = 1\n");
+        let result = external::write_external_files(&mut o, false);
+        assert!(result.written.is_empty(), "{:?}", result.written);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("nb.ipynb")).unwrap(),
+            mine
+        );
+    }
+}
+
+#[test]
+fn a_new_at_jupytext_node_writes_a_new_notebook() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = Outline::new_empty();
+    o.file_name = dir.path().join("test.leo").to_string_lossy().to_string();
+    let root = o.root_position().unwrap();
+    o.set_headline(&root, "@jupytext new.ipynb");
+    o.set_body(&root, &jupytext_fixture("python.py"));
+    let result = external::write_external_files(&mut o, false);
+    assert_eq!(result.written.len(), 1, "{:?}", result.errors);
+    let nb: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.path().join("new.ipynb")).unwrap()).unwrap();
+    assert_eq!(nb["nbformat_minor"], 5);
+    assert_eq!(nb["cells"].as_array().unwrap().len(), 10);
+    assert_eq!(nb["metadata"]["kernelspec"]["name"], "python3");
 }
 
 #[test]

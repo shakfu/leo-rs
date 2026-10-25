@@ -124,12 +124,13 @@ fn mark_includes(o: &mut Outline, p: &Position, style: Style) {
 /// The file an `include=` fence names, `path` or `path#anchor`, read from
 /// `dir`: the whole file, or the lines between `ANCHOR: anchor` and
 /// `ANCHOR_END: anchor`, without any anchor lines, as mdBook takes them.
+/// A path that is absolute, has `..`, or resolves outside `dir` is refused.
 pub fn include_text(dir: &std::path::Path, target: &str) -> std::result::Result<String, String> {
     let (file, anchor) = match target.split_once('#') {
         Some((f, a)) => (f, Some(a)),
         None => (target, None),
     };
-    let path = dir.join(file);
+    let path = contained(dir, file).map_err(|why| format!("include={target}: {why}"))?;
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("include={target}: {}: {e}", path.display()))?
         .replace('\r', "");
@@ -153,6 +154,39 @@ pub fn include_text(dir: &std::path::Path, target: &str) -> std::result::Result<
         .filter(|l| !l.contains("ANCHOR:") && !l.contains("ANCHOR_END:"))
         .map(String::as_str)
         .collect())
+}
+
+/// `dir/file`, if `file` is relative, has no `..`, and stays in `dir` once
+/// symlinks are resolved: a cloned repo must not include `~/.aws/credentials`.
+fn contained(dir: &std::path::Path, file: &str) -> std::result::Result<std::path::PathBuf, String> {
+    use std::path::Component;
+    let relative = std::path::Path::new(file);
+    if !relative
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(format!(
+            "{file}: refused, a path must stay in the markdown file's directory"
+        ));
+    }
+    let dir = if dir.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        dir
+    };
+    let path = dir.join(relative);
+    let real = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let base = dir
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    if !real.starts_with(&base) {
+        return Err(format!(
+            "{file}: refused, it resolves outside the markdown file's directory"
+        ));
+    }
+    Ok(real)
 }
 
 /// Read the `@entangled` file at p into its tree, then fill its `include=`

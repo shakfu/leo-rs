@@ -76,6 +76,38 @@ fn links_are_read_with_their_wiki_path_and_label_outside_code() {
 }
 
 #[test]
+fn a_fence_closed_by_a_no_break_space_line_stays_open() {
+    // CommonMark 4.5: only spaces and tabs may follow a closing fence.
+    let body = "```\n```\u{a0}\n[[code]]\n``` \t\n[[Page]]\n";
+    let found = links(body);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].whole, ["Page"]);
+    // Export leaves a heading in the code where it is.
+    let code = "```\n```\u{a0}\n# code\n```\n";
+    let doc = outline(&[(0, "@wiki w", ""), (1, "Page", code)]);
+    let o = doc.outline();
+    let text = export(o, &find(o, "@wiki w")).unwrap();
+    assert_eq!(text, format!("# Page\n\n{code}"));
+}
+
+#[test]
+fn a_backtick_run_whose_info_holds_a_backtick_opens_no_fence() {
+    // CommonMark 4.5: such a line is text, so what follows is not code.
+    let body = "```a`b\n[[Page]]\n~~~a`b\n[[code]]\n~~~\n";
+    let found = links(body);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].whole, ["Page"]);
+    // Export treats a heading after it as one, as after any text line.
+    let exported = |body: &str| {
+        let doc = outline(&[(0, "@wiki w", ""), (1, "Page", body)]);
+        let o = doc.outline();
+        export(o, &find(o, "@wiki w")).unwrap()
+    };
+    let text = exported("```a`b\n# H\n");
+    assert_eq!(text.replace("```a`b", "x"), exported("x\n# H\n"));
+}
+
+#[test]
 fn a_link_resolves_by_the_end_of_its_path_in_its_own_wiki_or_another() {
     let doc = notes();
     let o = doc.outline();
@@ -170,6 +202,52 @@ fn renaming_a_page_rewrites_every_link_to_it_as_one_undo() {
         find(o, "Intro").b(o),
         "See [[Setup|how to set up]] and [[Guide/Setup]].\n"
     );
+}
+
+#[test]
+fn renaming_a_parent_rewrites_the_links_through_it() {
+    let mut doc = outline(&[
+        (
+            0,
+            "@wiki notes",
+            "See [[Guide/Setup]], [[Setup]] and [[Guide]].\n",
+        ),
+        (1, "Guide", ""),
+        (2, "Setup", ""),
+        (3, "Steps", ""),
+        (
+            0,
+            "@wiki other",
+            "Back to [[notes:Guide/Setup/Steps|steps]].\n",
+        ),
+    ]);
+    let guide = find(doc.outline(), "Guide");
+    let plan = doc.rename_block(&guide, "Handbook").unwrap().unwrap();
+    assert_eq!((plan.references, plan.note), (3, None));
+    let o = doc.outline();
+    assert_eq!(
+        find(o, "@wiki notes").b(o),
+        "See [[Handbook/Setup]], [[Setup]] and [[Handbook]].\n"
+    );
+    assert_eq!(
+        find(o, "@wiki other").b(o),
+        "Back to [[notes:Handbook/Setup/Steps|steps]].\n"
+    );
+}
+
+#[test]
+fn renaming_a_page_to_another_pages_headline_warns_of_the_links_made_ambiguous() {
+    let mut doc = notes();
+    let intro = find(doc.outline(), "Intro");
+    let plan = doc.rename_block(&intro, "Setup").unwrap().unwrap();
+    let note = plan.note.unwrap();
+    for link in ["[[Setup]]", "[[Setup|how to set up]]", "[[notes:Setup]]"] {
+        assert!(note.contains(link), "{link}: {note}");
+    }
+    assert!(!note.contains("Guide/Setup"), "{note}");
+    // The rename stands: two pages may share a headline.
+    let o = doc.outline();
+    assert_eq!(find(o, "@wiki notes").b(o), "Start at [[Setup]].\n");
 }
 
 #[test]

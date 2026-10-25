@@ -83,6 +83,10 @@ fn current_root(app: &mut App) -> Option<Position> {
     root
 }
 
+/// The first line of every file `:export-wiki` writes: a later export
+/// replaces only a file that starts with it. Markdown renders it as nothing.
+pub const MARKER: &str = "<!-- written by :export-wiki from a leo-rs @wiki; edits here are lost on the next export -->\n";
+
 fn export_wiki(app: &mut App) {
     let Some(root) = current_root(app) else {
         return;
@@ -98,11 +102,26 @@ fn export_wiki(app: &mut App) {
         app.message = format!("not exported: {path} is an @<file> node's file");
         return;
     }
+    // Only a file an earlier export wrote, which starts with MARKER, is replaced.
+    match std::fs::read(&path) {
+        Ok(old) if !old.starts_with(MARKER.as_bytes()) => {
+            app.message =
+                format!("not exported: {path} exists and was not written by :export-wiki");
+            return;
+        }
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            app.message = format!("not exported: {path}: {e}");
+            return;
+        }
+        _ => {}
+    }
     app.message = match export(o, &root) {
-        Ok(text) => match leolib::external::replace_file(&path, &text, false) {
-            Ok(_) => format!("exported {path}"),
-            Err(e) => format!("not exported: {e}"),
-        },
+        Ok(text) => {
+            match leolib::external::replace_file(&path, &(MARKER.to_string() + &text), false) {
+                Ok(_) => format!("exported {path}"),
+                Err(e) => format!("not exported: {e}"),
+            }
+        }
         Err(problems) => format!("not exported: {}", problems.join("; ")),
     };
 }

@@ -31,7 +31,7 @@ becomes a heading node `Adding` whose body keeps the fence lines around a `<< ad
 - A fence node is in its fence's language (`python`, `py`, `{.rust}`), for colouring and the language servers, so an example gets completion and diagnostics.
 - Saving writes the file back as it was, with edited code and headings in place. A file that would not read back exactly opens as one node, with an error. A heading or fence node deleted from the tree stops the write rather than drop text.
 - The `.leo` file stores only the `@entangled` node; the tree is read from the markdown on every open.
-- `include=lib.py` or `include=lib.py#name` fills a fence from a file you test on its own: all of it, or the lines between `ANCHOR: name` and `ANCHOR_END: name` comments. The file is the source, so the node is read-only, and the fence is refilled on every read and save; the path starts from the markdown file's directory.
+- `include=lib.py` or `include=lib.py#name` fills a fence from a file you test on its own: all of it, or the lines between `ANCHOR: name` and `ANCHOR_END: name` comments. The file is the source, so the node is read-only, and the fence is refilled on every read and save; the path starts from the markdown file's directory, and must stay in it: an absolute path, `..`, or a symlink leading out is refused, and the fence keeps its text.
 - Moving a heading node to another depth changes its level by as much (`##` under `##` becomes `###`), its subheadings with it; a heading not moved is written as the file had it.
 - A name is one block: a file whose fences share a name opens as one node with an error, though entangled would join them, as Leo refuses a section defined twice.
 - Editing a fence node's headline renames the block, as one undo: its fence, and entangled's `<<name>>` and `<<doc.md#name>>` references in every `@entangled` document in the outline. Documents outside the outline are not checked: run `:entangled-check`.
@@ -84,8 +84,8 @@ A node headlined `@wiki NAME` is a wiki; its descendants are pages, written in m
 - `Enter` in NORMAL, with the cursor on a link, follows it; `gd` is the same. In leogui, a click on a link in the body or the rendered view follows it too. `Enter` and `gd` also follow Leo's `gnx:GNX`, `unl:gnx://#GNX` and `unl://#Parent-->Page` links, anywhere.
 - `Ctrl-o`, in either pane, goes back to the node a link was followed from, however it was followed. `L` in the outline goes forward again.
 - In INSERT, `[[` offers the wiki's pages.
-- Renaming a page rewrites every link to it, from any wiki, as one undo step; renaming a wiki rewrites `[[old:...]]`.
-- `:export-wiki` writes `NAME.md` beside the outline (or in the `@path` in effect): the root's body, then each page under a heading of its depth, links as `[text](#anchor)` with GitHub's anchors. A link naming no page or several, or a page deeper than six levels, refuses the export and says which.
+- Renaming a page rewrites every link to it or through it (`[[Guide/Setup]]` when Guide is renamed), from any wiki, as one undo step, and names the links the new headline makes ambiguous; renaming a wiki rewrites `[[old:...]]`.
+- `:export-wiki` writes `NAME.md` beside the outline (or in the `@path` in effect): the root's body, then each page under a heading of its depth, links as `[text](#anchor)` with GitHub's anchors. Its first line is an `<!-- written by :export-wiki ... -->` comment, and it replaces only a file that starts with one. A link naming no page or several, or a page deeper than six levels, refuses the export and says which.
 - `:convert-wikilinks-to-unls` rewrites the wiki's links as Leo's `unl:gnx://` links, for an outline shared with Leo.
 - The rules: no wiki inside another, no page a clone, no page headline starting with `@`, no directive in a page, and a name without `:`, `/` or `\`. An edit that breaks one is undone and the message names it; `:check-wiki` lists what an outline opened from elsewhere breaks.
 

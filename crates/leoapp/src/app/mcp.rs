@@ -61,7 +61,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "set_headline",
-            description: "Change a node's headline. Needs mcp-edit.",
+            description: "Change a node's headline; `note` is a warning about references it rewrote, if any. Needs mcp-edit.",
             input_schema: schema(json!({"gnx": gnx, "headline": {"type": "string"}}), &["gnx", "headline"]),
         },
         Tool {
@@ -127,15 +127,19 @@ impl App {
             save: settings.save && settings.edit,
         };
         let want = settings.enabled.then_some(settings.port);
-        if self.mcp.as_ref().map(|s| s.port()) == want && self.mcp.is_some() {
+        let token = settings.token.clone().unwrap_or_default();
+        if want.is_some() && token.is_empty() {
+            self.mcp = None;
+            return Err("MCP needs a token; the settings make one".into());
+        }
+        // A restart on the same port would race the old listener, which
+        // frees it only after its next accept, so change the token in place.
+        if let Some(server) = self.mcp.as_ref().filter(|s| Some(s.port()) == want) {
+            server.set_token(&token);
             return Ok(());
         }
         self.mcp = None;
         let Some(port) = want else { return Ok(()) };
-        let token = settings.token.clone().unwrap_or_default();
-        if token.is_empty() {
-            return Err("MCP needs a token; the settings make one".into());
-        }
         match Server::start(port, &token, tools(), "leo") {
             Ok(server) => {
                 self.mcp = Some(server);
@@ -355,8 +359,10 @@ impl App {
         match name {
             "set_headline" => {
                 let headline = string(args, "headline")?;
-                if self.doc.rename_block(&p, headline)?.is_none() {
-                    self.doc.set_headline(&p, headline);
+                match self.doc.rename_block(&p, headline)? {
+                    // The kind's warning, such as links a wiki rename made ambiguous.
+                    Some(plan) => return Ok(json!({ "ok": true, "note": plan.note })),
+                    None => self.doc.set_headline(&p, headline),
                 }
             }
             "set_body" => self.doc.set_body(&p, string(args, "body")?),
@@ -569,6 +575,61 @@ mod tests {
         assert!(app.mcp_tool("selection", &json!({})).is_ok());
     }
 
+    /// A kind whose every rename comes with a note.
+    struct Noting;
+
+    impl leolib::ext::FileKind for Noting {
+        fn directive(&self) -> &'static str {
+            "@noting"
+        }
+        fn read(&self, _o: &mut leolib::Outline, _p: &leolib::Position) -> leolib::Result<bool> {
+            Ok(false)
+        }
+        fn write(&self, o: &leolib::Outline, p: &leolib::Position) -> leolib::Result<String> {
+            Ok(p.b(o).to_string())
+        }
+        fn plan_rename(
+            &self,
+            o: &leolib::Outline,
+            p: &leolib::Position,
+            headline: &str,
+        ) -> Option<Result<leolib::ext::Rename, String>> {
+            Some(Ok(leolib::ext::Rename {
+                old: p.h(o).to_string(),
+                new: headline.to_string(),
+                fences: 0,
+                references: 0,
+                note: Some("[[x]] now names several pages".into()),
+                edits: vec![(p.clone(), Some(headline.to_string()), None)],
+            }))
+        }
+    }
+
+    #[test]
+    fn a_rename_returns_its_note() {
+        let mut app = app();
+        app.mcp_access = Access {
+            edit: true,
+            save: false,
+        };
+        let kinds = leolib::ext::Kinds::empty().with(Noting).unwrap();
+        (app.doc.outline_mut_untracked()).set_kinds(std::sync::Arc::new(kinds));
+        let gnx = gnx_of(&app, "alpha");
+        app.mcp_tool(
+            "set_headline",
+            &json!({"gnx": gnx, "headline": "@noting a"}),
+        )
+        .unwrap();
+        let reply = app
+            .mcp_tool(
+                "set_headline",
+                &json!({"gnx": gnx, "headline": "@noting b"}),
+            )
+            .unwrap();
+        assert_eq!(reply["note"], "[[x]] now names several pages");
+        assert_eq!(gnx_of(&app, "@noting b"), gnx);
+    }
+
     #[test]
     fn a_move_into_its_own_tree_is_refused() {
         let mut app = app();
@@ -610,6 +671,37 @@ mod tests {
             ..McpSettings::default()
         };
         assert!(app.set_mcp(&no_token).is_err());
+    }
+
+    /// The status a ping with `token` gets from 127.0.0.1:`port`.
+    fn ping(port: u16, token: &str) -> String {
+        use std::io::{BufRead, Write};
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(s, "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut status = String::new();
+        std::io::BufReader::new(s).read_line(&mut status).unwrap();
+        status
+    }
+
+    /// `set_mcp` returned early on an unchanged port, so the old token
+    /// stayed valid until a restart.
+    #[test]
+    fn a_changed_token_takes_effect_on_the_same_port() {
+        let mut app = app();
+        let mut settings = McpSettings {
+            enabled: true,
+            port: 0,
+            token: Some("old".into()),
+            ..McpSettings::default()
+        };
+        app.set_mcp(&settings).unwrap();
+        settings.port = app.mcp.as_ref().unwrap().port();
+        settings.token = Some("new".into());
+        app.set_mcp(&settings).unwrap();
+        assert_eq!(app.mcp.as_ref().unwrap().port(), settings.port);
+        assert!(ping(settings.port, "old").contains("401"));
+        assert!(ping(settings.port, "new").contains("200"));
     }
 
     /// An insert before the user's node left `current` naming the new node,

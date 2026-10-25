@@ -322,6 +322,7 @@ fn apply(o: &mut Outline, bead: &Bead, undo: bool, chosen: &mut Vec<VnodeId>) {
             } else {
                 o.node_mut(*v).clear_bit(status::MARKED);
             }
+            o.changed = true;
             *v
         }
         Bead::Group { beads, .. } => {

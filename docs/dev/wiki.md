@@ -137,7 +137,7 @@ One function, `wiki::check(outline) -> Vec<Violation>`, is called from three pla
 
 - **Directory.** The `@path` in effect at the root, else the directory of the `.leo` file.
 
-- **Overwrite check.** Refuse if the target file belongs to an `@<file>` node in the outline.
+- **Overwrite check.** Refuse if the target file belongs to an `@<file>` node in the outline, or exists and does not start with the marker comment every export writes first. A marker in the file, not a list in the outline, also recognises an export made from another copy of the outline.
 
 - **Layout.** The root body comes first, then each page in outline order. A page's heading is its headline, with `#` repeated to its depth below the root.
 

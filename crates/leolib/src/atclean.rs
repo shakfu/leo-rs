@@ -130,26 +130,42 @@ pub fn read_one_at_clean_node(o: &mut Outline, root: &Position) -> Result<bool> 
     }
 
     let contents = crate::external::read_file_to_string(&path)?.replace("\r\n", "\n");
-    let new_public_lines = util::split_lines(&contents);
+    let read = match update_from_text(o, root, &path, &contents)? {
+        Some(read) => read,
+        None => {
+            // Nothing to thread sentinels through: the file becomes one node.
+            o.set_body(root, &contents);
+            true
+        }
+    };
+    seen(o);
+    Ok(read)
+}
+
+/// Update the tree at `root` from `contents`, the text of its file at
+/// `path`. True if the tree changed; None if the tree is empty, so there is
+/// nothing to thread sentinels through and the caller fills it.
+pub fn update_from_text(
+    o: &mut Outline,
+    root: &Position,
+    path: &str,
+    contents: &str,
+) -> Result<Option<bool>> {
+    let new_public_lines = util::split_lines(contents);
     let private = atfile_write::at_file_to_string(o, root, true)?;
     let old_private_lines = util::split_lines(&private);
     let marker = Marker::from_file_lines(&old_private_lines);
     let (old_public_lines, _) = separate_sentinels(&old_private_lines, &marker);
     if old_public_lines.is_empty() {
-        // Nothing to thread sentinels through: the file becomes one node.
-        o.set_body(root, &new_public_lines.concat());
-        seen(o);
-        return Ok(true);
+        return Ok(None);
     }
     let new_private_lines = propagate_changed_lines(&new_public_lines, &old_private_lines, &marker);
     if new_private_lines == old_private_lines {
-        seen(o);
-        return Ok(false);
+        return Ok(Some(false));
     }
     let text = new_private_lines.concat();
-    atfile_read::read_into_root(o, &text, &path, root)?;
-    seen(o);
-    Ok(true)
+    atfile_read::read_into_root(o, &text, path, root)?;
+    Ok(Some(true))
 }
 
 /// Split lines into (regular, sentinel).

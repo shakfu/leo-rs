@@ -83,7 +83,7 @@ impl App {
             return;
         }
         let p = self.current.clone();
-        let text = editor::join(lines);
+        let text = editor::rejoin(lines, p.b(self.outline()));
         self.doc.set_body(&p, &text);
         self.buffer = None;
     }
@@ -244,7 +244,11 @@ impl App {
     fn run_change(&mut self, change: Change, screen: (usize, usize)) {
         let lines = self.body_buffer();
         let Some(new_lines) = self.editor.apply_change(&lines, &change, screen) else {
-            self.message = "nothing to do".to_string();
+            self.message = self
+                .editor
+                .refused
+                .take()
+                .unwrap_or_else(|| "nothing to do".into());
             return;
         };
         self.commit_body(&new_lines);
@@ -283,6 +287,9 @@ impl App {
                 self.signature = None;
                 self.editor.end_insert(&mut lines);
                 self.commit_body(&lines);
+                if let Some(why) = self.editor.refused.take() {
+                    self.message = why;
+                }
                 self.mode = Mode::Normal;
                 self.editor.clamp(&lines);
                 return;

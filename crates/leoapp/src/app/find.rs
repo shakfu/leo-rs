@@ -82,10 +82,14 @@ impl App {
         };
         let mut seen = std::collections::HashSet::new();
         let mut edits = Vec::new();
-        let mut count = 0;
+        let (mut count, mut read_only) = (0, 0);
         let o = self.outline();
         for p in self.find_nodes(find.scope) {
             if !seen.insert(p.v) {
+                continue;
+            }
+            if leolib::ext::kind_at(o, &p).is_some_and(|k| k.read_only(o, &p).is_some()) {
+                read_only += usize::from(find.matches(&re, o, &p));
                 continue;
             }
             let h = match find.headlines {
@@ -116,6 +120,10 @@ impl App {
         let lines = self.body_buffer();
         self.editor.clamp(&lines);
         self.message = format!("replaced {} in {}", matches(count), plural(nodes, "node"));
+        if read_only > 0 {
+            let skipped = plural(read_only, "node");
+            self.message = format!("{}; {skipped} not changed: read-only", self.message);
+        }
         self.remember_find(find, re);
     }
 

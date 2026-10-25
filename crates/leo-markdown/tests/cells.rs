@@ -753,6 +753,83 @@ fn an_underlined_heading_renamed_to_a_list_item_is_written_with_hashes() {
 }
 
 #[test]
+fn a_renamed_heading_reads_back_as_the_same_heading() {
+    let dir = tempfile::tempdir().unwrap();
+    // Underlined, `<!-- draft` would open a comment holding the rest.
+    let mut d = doc(dir.path(), "u.qmd", "Title\n-----\n\ntext\n\n## B\n");
+    let p = find(d.outline(), "Title");
+    d.set_headline(&p, "<!-- draft");
+    let text = written(d.outline());
+    assert_eq!(text, "## <!-- draft\n\ntext\n\n## B\n");
+    assert_eq!(
+        shape(&open(dir.path(), "r1.qmd", &text)),
+        ["<!-- draft", "B"]
+    );
+    // A trailing ` #` would read as a closing sequence.
+    let mut d = doc(dir.path(), "a.qmd", "# Issue\n\ntext\n");
+    let p = find(d.outline(), "Issue");
+    d.set_headline(&p, "Issue #");
+    let text = written(d.outline());
+    assert_eq!(text, "# Issue # #\n\ntext\n");
+    assert_eq!(shape(&open(dir.path(), "r2.qmd", &text)), ["Issue #"]);
+    // Underlined, `---` would underline the line above it.
+    let mut d = doc(
+        dir.path(),
+        "s.qmd",
+        "intro
+
+Title
+=====
+",
+    );
+    let p = find(d.outline(), "Title");
+    d.set_headline(&p, "---");
+    let text = written(d.outline());
+    assert_eq!(
+        text,
+        "intro
+
+# ---
+"
+    );
+    assert_eq!(shape(&open(dir.path(), "r3.qmd", &text)), ["---"]);
+    // Under an unclosed `---` at the top, the underline would close it.
+    let mut d = doc(dir.path(), "f.qmd", "---\n\nTitle\n-----\n");
+    let p = find(d.outline(), "Title");
+    d.set_headline(&p, "E");
+    let text = written(d.outline());
+    assert_eq!(text, "---\n\n## E\n");
+    assert_eq!(shape(&open(dir.path(), "r4.qmd", &text)), ["E"]);
+}
+
+#[test]
+fn a_heading_keeps_a_no_break_space_at_either_end() {
+    let dir = tempfile::tempdir().unwrap();
+    // CommonMark strips only spaces and tabs from heading text.
+    let text = "# \u{a0}A\u{a0} \n\n\u{a0}B\u{a0}\t\n--\n";
+    let o = open(dir.path(), "h.qmd", text);
+    assert_eq!(shape(&o), ["\u{a0}A\u{a0}", "  \u{a0}B\u{a0}"]);
+    assert_eq!(written(&o), text);
+    let mut d = doc(dir.path(), "r.qmd", "# A\n");
+    let a = find(d.outline(), "A");
+    d.set_headline(&a, "\u{a0}A\u{a0}");
+    let text = written(d.outline());
+    assert_eq!(text, "# \u{a0}A\u{a0}\n");
+    assert_eq!(shape(&open(dir.path(), "r2.qmd", &text)), ["\u{a0}A\u{a0}"]);
+}
+
+#[test]
+fn only_spaces_and_tabs_may_follow_a_closing_fence() {
+    let dir = tempfile::tempdir().unwrap();
+    // CommonMark 4.5: "```\u{a0}" closes nothing, so the cell runs on.
+    let text = "```{python}\nx\n```\u{a0}\ny\n``` \t\n\n```\u{a0}{python}\nz\n```\n";
+    let o = open(dir.path(), "n.qmd", text);
+    assert_eq!(shape(&o), ["<< python cell 1 >>"]);
+    assert_eq!(find(&o, "<< python cell 1 >>").b(&o), "x\n```\u{a0}\ny\n");
+    assert_eq!(written(&o), text);
+}
+
+#[test]
 fn edits_that_would_change_the_tree_on_reread_are_refused() {
     let dir = tempfile::tempdir().unwrap();
     let mut d = doc(dir.path(), "e.qmd", "# A\n\n```{python}\nx\n```\n");
@@ -770,4 +847,9 @@ fn edits_that_would_change_the_tree_on_reread_are_refused() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("needs a headline"), "{err}");
+    d.set_headline(&a, "A\rB");
+    let err = leo_markdown::write_string(d.outline(), &r)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("carriage return"), "{err}");
 }

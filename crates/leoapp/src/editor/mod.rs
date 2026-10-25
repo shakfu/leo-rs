@@ -27,7 +27,14 @@ pub struct Editor {
     pub last_find: Option<Motion>,
     /// Text typed since INSERT began, and where it began.
     insert: Option<InsertState>,
+    /// Why the last change was refused, for the status line.
+    pub refused: Option<String>,
 }
+
+/// The most lines one counted put or insert adds: about 4 million.
+pub const MAX_PUT_LINES: usize = 1 << 22;
+/// The most bytes one counted put or insert adds.
+pub const MAX_PUT_BYTES: usize = 256 << 20;
 
 struct InsertState {
     at: InsertAt,
@@ -122,9 +129,8 @@ impl Editor {
             Change::Simple { count, edit } => self.run_simple(&mut lines, edit, *count)?,
             Change::Insert { at, text, count } => {
                 self.position_for_insert(&mut lines, *at);
-                for _ in 0..*count {
-                    insert_text(&mut lines, &mut self.cursor, text);
-                }
+                let text = self.repeated("insert", text, *count)?;
+                insert_text(&mut lines, &mut self.cursor, &text);
                 // vim leaves the cursor on the last inserted character.
                 self.cursor.1 = self.cursor.1.saturating_sub(1);
             }
@@ -310,40 +316,56 @@ impl Editor {
                 if self.register.text.is_empty() {
                     return None;
                 }
-                for _ in 0..count {
-                    self.put(lines, *before);
-                }
+                self.put(lines, *before, count)?;
             }
         }
         Some(())
     }
 
-    fn put(&mut self, lines: &mut Vec<String>, before: bool) {
-        let text = self.register.text.clone();
-        if self.register.linewise {
+    /// Put the register `count` times as one text, as vim does: `2p` of
+    /// lines `a` and `b` gives `a b a b`. None if that is too large.
+    fn put(&mut self, lines: &mut Vec<String>, before: bool, count: usize) -> Option<()> {
+        let text = &self.register.text;
+        let linewise = self.register.linewise;
+        let one = match linewise {
+            true => text.strip_suffix('\n').unwrap_or(text),
+            false => text.as_str(),
+        };
+        if let Some(why) = over_limit("put", one, count) {
+            self.refused = Some(why);
+            return None;
+        }
+        if linewise {
             let at = if before {
                 self.cursor.0
             } else {
                 self.cursor.0 + 1
             };
-            let new: Vec<String> = text
-                .strip_suffix('\n')
-                .unwrap_or(&text)
-                .split('\n')
-                .map(|s| s.to_string())
-                .collect();
             let at = at.min(lines.len());
-            for (i, line) in new.iter().enumerate() {
-                lines.insert(at + i, line.clone());
-            }
+            let new = (0..count).flat_map(|_| one.split('\n').map(str::to_string));
+            lines.splice(at..at, new);
             self.cursor = (at, 0);
         } else {
+            let text = one.repeat(count);
             let (row, col) = self.cursor;
             let col = if before { col } else { col + 1 };
             let col = col.min(line_len(lines, row));
             let mut cursor = (row, col);
             insert_text(lines, &mut cursor, &text);
             self.cursor = (cursor.0, cursor.1.saturating_sub(1));
+        }
+        Some(())
+    }
+
+    /// `text` repeated `count` times, built once: inserting each copy in
+    /// turn is quadratic. None, and `refused` set, past the put limits.
+    fn repeated(&mut self, what: &str, text: &str, count: usize) -> Option<String> {
+        match over_limit(what, text, count) {
+            Some(why) => {
+                self.refused = Some(why);
+                None
+            }
+            None => Some(text.repeat(count)),
         }
     }
 
@@ -438,11 +460,11 @@ impl Editor {
     /// Finish an INSERT session, returning the change it made.
     pub fn end_insert(&mut self, lines: &mut Vec<String>) -> Option<Change> {
         let state = self.insert.take()?;
-        // vim's `3ifoo<Esc>` inserts foo three times.
-        for _ in 1..state.count {
-            let mut cursor = self.cursor;
-            insert_text(lines, &mut cursor, &state.text);
-            self.cursor = cursor;
+        // vim's `3ifoo<Esc>` inserts foo three times. Past the limits it
+        // stays typed once.
+        let more = state.count.saturating_sub(1);
+        if let Some(text) = self.repeated("insert", &state.text, more) {
+            insert_text(lines, &mut self.cursor, &text);
         }
         self.cursor.1 = self.cursor.1.saturating_sub(1);
         let change = match state.operator {
@@ -650,28 +672,39 @@ fn remove_char(lines: &mut [String], (row, col): Pos) {
 }
 
 /// Insert text at the cursor, moving it past what was inserted.
+/// Why `what` of `text` repeated `count` times is refused, if it passes the
+/// put limits.
+fn over_limit(what: &str, text: &str, count: usize) -> Option<String> {
+    let rows = text.matches('\n').count() + 1;
+    let over = rows.saturating_mul(count) > MAX_PUT_LINES
+        || text.len().saturating_mul(count) > MAX_PUT_BYTES;
+    over.then(|| {
+        format!(
+            "{what} refused: over {MAX_PUT_LINES} lines or {} MiB",
+            MAX_PUT_BYTES >> 20
+        )
+    })
+}
+
 fn insert_text(lines: &mut Vec<String>, cursor: &mut Pos, text: &str) {
-    for (n, part) in text.split('\n').enumerate() {
-        if n > 0 {
-            let (row, col) = *cursor;
-            let line = lines[row].clone();
-            let i = byte_index(&line, col);
-            let (head, tail) = line.split_at(i);
-            lines[row] = head.to_string();
-            lines.insert(row + 1, tail.to_string());
-            *cursor = (row + 1, 0);
-        }
-        if part.is_empty() {
-            continue;
-        }
-        let (row, col) = *cursor;
-        while lines.len() <= row {
-            lines.push(String::new());
-        }
-        let i = byte_index(&lines[row], col);
-        lines[row].insert_str(i, part);
-        *cursor = (row, col + part.chars().count());
+    let (row, col) = *cursor;
+    while lines.len() <= row {
+        lines.push(String::new());
     }
+    let i = byte_index(&lines[row], col);
+    let Some((first, rest)) = text.split_once('\n') else {
+        lines[row].insert_str(i, text);
+        *cursor = (row, col + text.chars().count());
+        return;
+    };
+    // One splice, so a long text costs time linear in its length.
+    let tail = lines[row].split_off(i);
+    lines[row].push_str(first);
+    let new: Vec<String> = rest.split('\n').map(str::to_string).collect();
+    let last = row + new.len();
+    lines.splice(row + 1..row + 1, new);
+    *cursor = (last, lines[last].chars().count());
+    lines[last].push_str(&tail);
 }
 
 /// Split a body into editable lines, and join them back.
@@ -695,11 +728,23 @@ pub fn line_count(body: &str) -> usize {
     }
 }
 
+/// `lines` as a body that ends with a newline, as vim's `fixeol` writes one.
 pub fn join(lines: &[String]) -> String {
+    rejoin(lines, "")
+}
+
+/// `lines` as a body, ending with a newline as `original` did; an empty
+/// `original` gets one, as [`join`] gives.
+pub fn rejoin(lines: &[String], original: &str) -> String {
     if lines.len() == 1 && lines[0].is_empty() {
-        return String::new();
+        // `split` reads both "" and "\n" as one empty line.
+        return if original == "\n" { "\n" } else { "" }.to_string();
     }
-    format!("{}\n", lines.join("\n"))
+    let mut text = lines.join("\n");
+    if original.is_empty() || original.ends_with('\n') {
+        text.push('\n');
+    }
+    text
 }
 
 #[cfg(test)]

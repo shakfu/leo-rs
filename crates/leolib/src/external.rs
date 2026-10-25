@@ -377,6 +377,9 @@ fn read_file_by_kind(o: &mut Outline, p: &Position) -> Result<bool> {
     if p.is_at_clean_node(o) {
         return atclean::read_one_at_clean_node(o, p);
     }
+    if p.is_at_jupytext_node(o) {
+        return crate::jupytext::read_one_at_jupytext_node(o, p);
+    }
     if p.is_at_edit_node(o) {
         return read_one_at_edit_node(o, p);
     }
@@ -387,20 +390,9 @@ fn read_file_by_kind(o: &mut Outline, p: &Position) -> Result<bool> {
 }
 
 /// The error for an `@<file>` kind this port neither reads nor writes.
-///
-/// Leo converts an `@jupytext` notebook to and from Python text with the
-/// jupytext package, which has no Rust counterpart. Read as an `@file`, the
-/// notebook's JSON would be overwritten with sentinel text.
 fn unsupported_kind(o: &Outline, p: &Position) -> Option<Error> {
-    let detail = if p.is_at_shadow_file_node(o) {
-        "@shadow is deprecated and not supported"
-    } else if p.is_at_jupytext_node(o) {
-        "@jupytext is not supported: it needs the jupytext package"
-    } else {
-        return None;
-    };
-    Some(Error::Unsupported {
-        detail: detail.to_string(),
+    p.is_at_shadow_file_node(o).then(|| Error::Unsupported {
+        detail: "@shadow is deprecated and not supported".to_string(),
     })
 }
 
@@ -887,6 +879,9 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     if p.is_at_asis_node(o) {
         return Ok((write_asis(o, p), newline, encoding));
     }
+    if p.is_at_jupytext_node(o) {
+        return Ok((write_at_jupytext(o, p)?, newline, encoding));
+    }
     if p.is_at_edit_node(o) {
         // Leo's `writeOneAtEditNode`: only the node's own body reaches the
         // file, so writing one with children would drop every child's text.
@@ -902,6 +897,20 @@ pub fn file_contents(o: &Outline, p: &Position) -> Result<(String, String, Strin
     let sentinels = !(p.is_at_clean_node(o) || p.is_at_nosent_node(o));
     let contents = atfile_write::file_to_write(o, p, sentinels)?;
     Ok((contents, newline, encoding))
+}
+
+/// An `@jupytext` file is the notebook on disk with the cells of the tree's
+/// `py:percent` text, each keeping the outputs of the cell it matches.
+fn write_at_jupytext(o: &Outline, p: &Position) -> Result<String> {
+    let text = atfile_write::file_to_write(o, p, false)?;
+    let path = o.full_path(p);
+    let old = match std::path::Path::new(&path).exists() {
+        true => Some(read_file_to_string(&path)?),
+        false => None,
+    };
+    crate::jupytext::text_to_notebook(&text, old.as_deref()).map_err(|detail| Error::Write {
+        detail: format!("{}: {detail}", util::short_file_name(&path)),
+    })
 }
 
 /// An `@asis` file is the tree's text with nothing added.
@@ -970,7 +979,9 @@ fn strip_cr(b: &[u8]) -> Vec<u8> {
 /// leaves the original intact rather than a truncated source file.
 ///
 /// The temporary file takes the original's permissions before the rename,
-/// or rewriting an executable script would leave it without `+x`.
+/// or rewriting an executable script would leave it without `+x`. On unix it
+/// also takes the owner and group where the user may set them, and the
+/// extended attributes, which hold Linux's ACLs; macOS ACLs are lost.
 ///
 /// A symlink is written through, as Leo's `os.path.realpath`: renaming onto
 /// the link would replace it with a copy and leave its target stale. A
@@ -1019,11 +1030,21 @@ pub fn replace_file(path: &str, contents: &str, ignore_line_endings: bool) -> Re
             .map(|()| true)
             .map_err(|e| Error::io(path, e));
     }
-    let (tmp, mut file) = create_temp_beside(path).map_err(|e| Error::io(path, e))?;
+    let old = std::fs::metadata(path).ok();
+    let (tmp, mut file) =
+        create_temp_beside(path, old.is_some()).map_err(|e| Error::io(path, e))?;
     let mut finish = || -> std::io::Result<()> {
         use std::io::Write;
         file.write_all(contents.as_bytes())?;
-        if let Ok(meta) = std::fs::metadata(path) {
+        if let Some(meta) = &old {
+            // Before the mode, which a chown may clear setuid bits from. Best
+            // effort: only root may give a file away, so EPERM is expected.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let _ = std::os::unix::fs::fchown(&file, Some(meta.uid()), Some(meta.gid()));
+                copy_xattrs(path, &file);
+            }
             file.set_permissions(meta.permissions())?;
         }
         // On disk before the rename, so a crash leaves the old file or the
@@ -1040,9 +1061,28 @@ pub fn replace_file(path: &str, contents: &str, ignore_line_endings: bool) -> Re
     Ok(true)
 }
 
+/// Copy `path`'s extended attributes to `file`, which on Linux include its
+/// POSIX ACLs. Best effort: `security.*` and `trusted.*` may need privileges.
+#[cfg(unix)]
+fn copy_xattrs(path: &str, file: &std::fs::File) {
+    use xattr::FileExt;
+    let Ok(names) = xattr::list(path) else {
+        return;
+    };
+    for name in names {
+        if let Ok(Some(value)) = xattr::get(path, &name) {
+            let _ = file.set_xattr(&name, &value);
+        }
+    }
+}
+
 /// A new file in `path`'s directory to write before renaming over `path`,
-/// named for this process so two writers never share one.
-fn create_temp_beside(path: &str) -> std::io::Result<(std::path::PathBuf, std::fs::File)> {
+/// named for this process so two writers never share one. A `private` one is
+/// mode 0600 on unix until the caller copies the replaced file's mode.
+fn create_temp_beside(
+    path: &str,
+    private: bool,
+) -> std::io::Result<(std::path::PathBuf, std::fs::File)> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let target = std::path::Path::new(path);
@@ -1050,11 +1090,16 @@ fn create_temp_beside(path: &str) -> std::io::Result<(std::path::PathBuf, std::f
     loop {
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         let tmp = target.with_file_name(format!(".{name}.{}-{n}.leo-rs-tmp", std::process::id()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-        {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        match options.open(&tmp) {
             Ok(file) => return Ok((tmp, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
@@ -1108,6 +1153,78 @@ mod tests {
             err.contains("b.txt") && !err.contains("leo-rs-tmp"),
             "{err}"
         );
+    }
+
+    /// The temporary file of a replaced file was umask-readable until its
+    /// mode was copied, so a 0600 file's new contents were briefly 0644.
+    #[cfg(unix)]
+    #[test]
+    fn the_temp_file_of_a_replaced_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt").to_string_lossy().to_string();
+        let (tmp, file) = create_temp_beside(&path, true).unwrap();
+        let mode = file.metadata().unwrap().permissions().mode();
+        std::fs::remove_file(tmp).unwrap();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+        // A new file keeps the umask's mode, as `fs::write` gives it.
+        std::fs::write(&path, "x\n").unwrap();
+        let want = std::fs::metadata(&path).unwrap().permissions().mode();
+        std::fs::remove_file(&path).unwrap();
+        assert!(replace_file(&path, "y\n", false).unwrap());
+        let got = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(got, want, "{got:o} {want:o}");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(replace_file(&path, "z\n", false).unwrap());
+        let got = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(got & 0o777, 0o640, "{got:o}");
+    }
+
+    /// A rewrite took the writer's primary group. Skipped for a user in one
+    /// group, who has no other group to give the file.
+    #[cfg(unix)]
+    #[test]
+    fn a_replaced_file_keeps_its_group() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt").to_string_lossy().to_string();
+        std::fs::write(&path, "x\n").unwrap();
+        let mine = std::fs::metadata(&path).unwrap().gid();
+        let groups = std::process::Command::new("id").arg("-G").output();
+        let groups = groups.map(|o| String::from_utf8_lossy(&o.stdout).to_string());
+        let other = groups.unwrap_or_default().split_whitespace().find_map(|g| {
+            let g: u32 = g.parse().ok()?;
+            (g != mine && std::os::unix::fs::chown(&path, None, Some(g)).is_ok()).then_some(g)
+        });
+        let Some(other) = other else { return };
+        assert!(replace_file(&path, "y\n", false).unwrap());
+        assert_eq!(std::fs::metadata(&path).unwrap().gid(), other);
+    }
+
+    /// A rewrite dropped extended attributes, and with them Linux ACLs.
+    /// Each half is skipped where the filesystem or `setfacl` lacks it.
+    #[cfg(unix)]
+    #[test]
+    fn a_replaced_file_keeps_its_extended_attributes_and_acl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt").to_string_lossy().to_string();
+        std::fs::write(&path, "x\n").unwrap();
+        let tagged = xattr::set(&path, "user.leo-rs", b"kept").is_ok();
+        let acl = std::process::Command::new("setfacl")
+            .args(["-m", "u:nobody:r", &path])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(replace_file(&path, "y\n", false).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "y\n");
+        if tagged {
+            let value = xattr::get(&path, "user.leo-rs").unwrap();
+            assert_eq!(value.as_deref(), Some(&b"kept"[..]));
+        }
+        if acl {
+            let out = std::process::Command::new("getfacl").arg(&path).output();
+            let text = String::from_utf8_lossy(&out.unwrap().stdout).to_string();
+            assert!(text.contains("user:nobody:r--"), "{text}");
+        }
     }
 
     #[test]

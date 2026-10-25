@@ -88,35 +88,6 @@ fn edit(doc: &mut Document, rng: &mut Rng, step: usize) -> String {
     label
 }
 
-/// Whether every node in the tree lists each parent once per link from it.
-///
-/// A stale or missing parent link leaves an edit below it not dirtying its
-/// `@<file>`, so the edit is never saved.
-fn links_agree(o: &Outline) -> Result<(), String> {
-    let mut want: std::collections::HashMap<leolib::VnodeId, Vec<leolib::VnodeId>> =
-        std::collections::HashMap::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut todo = vec![o.hidden_root];
-    while let Some(u) = todo.pop() {
-        if !seen.insert(u) {
-            continue;
-        }
-        for &c in o.node(u).children() {
-            want.entry(c).or_default().push(u);
-            todo.push(c);
-        }
-    }
-    for (v, mut w) in want {
-        let mut got = o.node(v).parents().to_vec();
-        w.sort();
-        got.sort();
-        if got != w {
-            return Err(format!("{v:?} has parents {got:?}, links from {w:?}"));
-        }
-    }
-    Ok(())
-}
-
 /// Whether some node is its own descendant, which makes the outline endless.
 fn has_cycle(o: &Outline) -> bool {
     fn reaches(o: &Outline, from: leolib::VnodeId, target: leolib::VnodeId, depth: usize) -> bool {
@@ -157,21 +128,21 @@ fn undoing_every_step_restores_the_start_and_redoing_restores_the_end() {
                 !has_cycle(doc.outline()),
                 "seed {seed} step {step}: {op} made a cycle"
             );
-            if let Err(e) = links_agree(doc.outline()) {
+            if let Err(e) = doc.outline().links_agree() {
                 panic!("seed {seed} step {step}: {op}: {e}");
             }
         }
         let end = digest(doc.outline());
         while doc.undoer().can_undo() {
             doc.undo();
-            if let Err(e) = links_agree(doc.outline()) {
+            if let Err(e) = doc.outline().links_agree() {
                 panic!("seed {seed}: undo: {e}");
             }
         }
         assert_eq!(digest(doc.outline()), start, "seed {seed}: undo all");
         while doc.undoer().can_redo() {
             doc.redo();
-            if let Err(e) = links_agree(doc.outline()) {
+            if let Err(e) = doc.outline().links_agree() {
                 panic!("seed {seed}: redo: {e}");
             }
         }
@@ -283,7 +254,7 @@ fn an_edit_below_an_undeleted_node_dirties_its_file() {
     doc.set_headline(&g, "g");
     doc.delete_node(&a);
     doc.undo();
-    links_agree(doc.outline()).unwrap();
+    doc.outline().links_agree().unwrap();
     let root = doc.outline().root_position().unwrap();
     doc.outline_mut_untracked().clear_dirty_in_tree(&root);
     let g = doc
@@ -310,7 +281,7 @@ fn clone_marked_from_inside_a_marked_tree_makes_no_cycle() {
     doc.toggle_marked(&a);
     assert!(doc.clone_marked(&b).is_some());
     assert!(!has_cycle(doc.outline()));
-    links_agree(doc.outline()).unwrap();
+    doc.outline().links_agree().unwrap();
 }
 
 /// Through a clone, the place after `current` had a parent inside the new tree.
@@ -340,5 +311,5 @@ fn move_marked_after_a_clone_inside_the_moved_tree_makes_no_cycle() {
         .unwrap();
     assert!(doc.move_marked(&y_under_top_x).is_some());
     assert!(!has_cycle(doc.outline()));
-    links_agree(doc.outline()).unwrap();
+    doc.outline().links_agree().unwrap();
 }

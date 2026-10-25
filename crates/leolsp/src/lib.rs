@@ -236,6 +236,9 @@ pub type Connect = Box<dyn FnMut(&ServerConfig, &Path, Wake) -> io::Result<Serve
 pub struct Lsp {
     configs: Vec<ServerConfig>,
     root: PathBuf,
+    /// `root` with its links resolved, when that differs: a server that
+    /// resolves them names files under it.
+    real_root: Option<PathBuf>,
     wake: Wake,
     connect: Connect,
     /// By language.
@@ -258,15 +261,6 @@ pub struct Lsp {
     tokens: HashMap<String, (i32, HashMap<String, Vec<BodyToken>>)>,
     /// Documents whose tokens are asked for and not yet answered.
     tokens_asked: HashSet<String>,
-}
-
-/// The key a URI is filed under. A server may spell a path's URI otherwise
-/// than we did, so a file is known by its path.
-fn key_of(uri: &str) -> String {
-    match uri::to_path(uri) {
-        Some(path) => path.to_string_lossy().into_owned(),
-        None => uri.to_string(),
-    }
 }
 
 /// The LSP language identifier of Leo's language name.
@@ -377,9 +371,11 @@ impl Lsp {
         wake: Wake,
         connect: Connect,
     ) -> Lsp {
+        let real_root = uri::real(&root).filter(|r| root.is_absolute() && *r != root);
         Lsp {
             configs,
             root,
+            real_root,
             wake,
             connect,
             servers: HashMap::new(),
@@ -393,6 +389,26 @@ impl Lsp {
             tokens: HashMap::new(),
             tokens_asked: HashSet::new(),
             synced: None,
+        }
+    }
+
+    /// The path a `file:` URI names, a path under the resolved root put back
+    /// under `root`.
+    fn path_of(&self, uri: &str) -> Option<PathBuf> {
+        let path = uri::to_path(uri)?;
+        match self.real_root.as_ref().map(|r| path.strip_prefix(r)) {
+            // Through a URI, so the separators are those of our own keys.
+            Some(Ok(rest)) => uri::to_path(&uri::from_path(&self.root.join(rest))),
+            _ => Some(path),
+        }
+    }
+
+    /// The key a URI is filed under. A server may spell a path's URI otherwise
+    /// than we did, so a file is known by its path.
+    fn key_of(&self, uri: &str) -> String {
+        match self.path_of(uri) {
+            Some(path) => uri::key(&path),
+            None => uri.to_string(),
         }
     }
 
@@ -461,17 +477,21 @@ impl Lsp {
             return events;
         }
         self.synced = Some(o.generation);
-        let open: Vec<(Source, Position, u64)> = self
+        let open: Vec<(String, Source, Position, u64)> = self
             .docs
-            .values()
-            .map(|d| (d.source.clone(), d.root.clone(), d.fingerprint))
+            .iter()
+            .map(|(k, d)| (k.clone(), d.source.clone(), d.root.clone(), d.fingerprint))
             .collect();
-        for (source, root, seen) in open {
+        for (key, source, root, seen) in open {
             let root = match is_root(o, &root, &source) {
                 true => root,
                 false => match locate(o, &source) {
                     Some(root) => root,
-                    None => continue,
+                    // Its node was deleted.
+                    None => {
+                        self.close(&key);
+                        continue;
+                    }
                 },
             };
             if fingerprint(o, &root) == seen {
@@ -494,7 +514,11 @@ impl Lsp {
             language,
             doc,
         } = r;
-        let key = key_of(&uri);
+        let key = self.key_of(&uri);
+        // Its `@language` changed: the old server lets go of it.
+        if self.docs.get(&key).is_some_and(|d| d.language != language) {
+            self.close(&key);
+        }
         match &doc.mapping {
             Mapping::File(map) => {
                 for line in &map.lines {
@@ -546,6 +570,49 @@ impl Lsp {
                 self.docs.insert(key, open);
             }
         }
+    }
+
+    /// Forget document `key`, and what its server said of it.
+    fn forget(&mut self, key: &str) -> Option<Open> {
+        let open = self.docs.remove(key)?;
+        self.node_docs.retain(|_, k| k != key);
+        self.diagnostics.remove(key);
+        self.tokens.remove(key);
+        self.tokens_asked.remove(key);
+        self.pending.retain(|_, p| p.key != key);
+        Some(open)
+    }
+
+    /// Close document `key` on its server.
+    fn close(&mut self, key: &str) {
+        let Some(open) = self.forget(key) else { return };
+        if let Some(server) = self.servers.get_mut(&open.language) {
+            let params = json!({"textDocument": {"uri": open.uri}});
+            server.notify("textDocument/didClose", params);
+        }
+    }
+
+    /// Stop every server, and start each again when a node in its language
+    /// is next synced; one that failed is tried again.
+    pub fn restart(&mut self) {
+        let languages: Vec<String> = self
+            .servers
+            .keys()
+            .chain(self.failed.keys())
+            .cloned()
+            .collect();
+        for language in languages {
+            self.note(&language, "restarted");
+        }
+        self.servers.clear();
+        self.failed.clear();
+        let keys: Vec<String> = self.docs.keys().cloned().collect();
+        for key in keys {
+            self.forget(&key);
+        }
+        self.pending.clear();
+        self.executing.clear();
+        self.synced = None;
     }
 
     /// Whether node `gnx` is in a document a server has.
@@ -720,22 +787,35 @@ impl Lsp {
         let mut by_node: HashMap<String, Vec<BodyToken>> = HashMap::new();
         let (mut line, mut start) = (0u32, 0u32);
         for &[dl, ds, len, kind, mods] in data.as_chunks::<5>().0 {
-            start = if dl == 0 { start + ds } else { ds };
-            line += dl;
+            // A position past u32 is no place in the document, nor any after.
+            let next = match dl {
+                0 => start.checked_add(ds),
+                _ => Some(ds),
+            };
+            let (Some(s), Some(l)) = (next, line.checked_add(dl)) else {
+                break;
+            };
+            (start, line) = (s, l);
             let Some(kind) = server.token_types.get(kind as usize) else {
                 continue;
             };
             let (Some(a), Some(b)) = (
                 open.doc.to_body(line, start, enc),
-                open.doc.to_body(line, start + len, enc),
+                start
+                    .checked_add(len)
+                    .and_then(|end| open.doc.to_body(line, end, enc)),
             ) else {
                 continue;
             };
             if a.gnx != b.gnx || a.row != b.row {
                 continue;
             }
+            // `mods` has 32 bits; a legend's modifiers past them are never set.
             let modifiers = (0..server.token_modifiers.len())
-                .filter(|i| mods & (1 << i) != 0)
+                .filter(|&i| {
+                    let bit = u32::try_from(i).ok().and_then(|i| 1u32.checked_shl(i));
+                    bit.is_some_and(|bit| mods & bit != 0)
+                })
                 .map(|i| server.token_modifiers[i].clone())
                 .collect();
             by_node.entry(a.gnx).or_default().push(BodyToken {
@@ -777,12 +857,7 @@ impl Lsp {
             let server = self.servers.get_mut(&language).expect("listed");
             let incoming = server.poll();
             let encoding = server.encoding;
-            if let Some(error) = server.error.take() {
-                self.servers.remove(&language);
-                self.note(&language, &error);
-                self.failed.insert(language.clone(), error.clone());
-                events.push(Event::Message(error));
-            }
+            let error = server.error.take();
             for msg in incoming {
                 match msg {
                     Incoming::Notification { method, params } => {
@@ -791,7 +866,7 @@ impl Lsp {
                         }
                     }
                     Incoming::Request { id, method, params } => {
-                        let (event, result) = self.server_request(&method, params, encoding);
+                        let (event, result) = self.server_request(o, &method, params, encoding);
                         let server = self.servers.get_mut(&language).expect("listed");
                         server.respond(id, result);
                         events.extend(event);
@@ -821,6 +896,24 @@ impl Lsp {
                     }
                 }
             }
+            // Dead, after what it sent last: its documents and answers go.
+            if let Some(error) = error {
+                self.servers.remove(&language);
+                let keys: Vec<String> = self
+                    .docs
+                    .iter()
+                    .filter(|(_, d)| d.language == language)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in keys {
+                    self.forget(&key);
+                }
+                self.pending.retain(|(l, _), _| *l != language);
+                self.executing.retain(|(l, _)| *l != language);
+                self.note(&language, &error);
+                self.failed.insert(language.clone(), error.clone());
+                events.push(Event::Message(error));
+            }
         }
         events
     }
@@ -830,13 +923,22 @@ impl Lsp {
     /// `workspace/applyEdit` is answered applied when its edit maps to
     /// bodies: the front end applies it on the next poll unless the user is
     /// typing, and the next sync sends the server the text either way.
-    fn server_request(&self, method: &str, params: Value, enc: Encoding) -> (Option<Event>, Value) {
+    fn server_request(
+        &self,
+        o: &Outline,
+        method: &str,
+        params: Value,
+        enc: Encoding,
+    ) -> (Option<Event>, Value) {
         match method {
             "workspace/applyEdit" => {
                 let label = params["label"].as_str().unwrap_or("edit").to_string();
                 let edits = serde_json::from_value::<WorkspaceEdit>(params["edit"].clone())
                     .map_err(|e| format!("a malformed edit: {e}"))
-                    .and_then(|edit| self.body_edits(edit, enc));
+                    .and_then(|edit| match self.synced == Some(o.generation) {
+                        true => self.body_edits(edit, enc),
+                        false => Err("the text changed since the server saw it".into()),
+                    });
                 let answer = match &edits {
                     Ok(_) => json!({"applied": true}),
                     Err(e) => json!({"applied": false, "failureReason": e}),
@@ -888,7 +990,7 @@ impl Lsp {
             "textDocument/publishDiagnostics" => {
                 let params: PublishDiagnosticsParams = serde_json::from_value(params).ok()?;
                 self.diagnostics
-                    .insert(key_of(params.uri.as_str()), params.diagnostics);
+                    .insert(self.key_of(params.uri.as_str()), params.diagnostics);
                 Some(Event::Diagnostics)
             }
             "window/showMessage" => {
@@ -902,6 +1004,13 @@ impl Lsp {
             }
             _ => None,
         }
+    }
+
+    /// Whether the text changed since `pending` was asked: in a document
+    /// sent since, or in the outline and not yet sent.
+    fn stale(&self, o: &Outline, pending: &Pending) -> bool {
+        self.synced != Some(o.generation)
+            || self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version)
     }
 
     fn response(&self, o: &Outline, pending: Pending, value: Value, enc: Encoding) -> Event {
@@ -983,7 +1092,7 @@ impl Lsp {
                 Event::Completions(completions)
             }
             Request::CodeActions => {
-                if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
+                if self.stale(o, &pending) {
                     return Event::Message(
                         "the text changed while the server worked; ask again".into(),
                     );
@@ -1034,7 +1143,7 @@ impl Lsp {
             }
             Request::Format { .. } => {
                 let label = "format document".to_string();
-                if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
+                if self.stale(o, &pending) {
                     return Event::Edit(
                         label,
                         Err("the text changed while the server worked; format again".into()),
@@ -1050,7 +1159,7 @@ impl Lsp {
                 Event::Edit(label, self.text_edits(&uri, edits.unwrap_or_default(), enc))
             }
             Request::Rename(_) => {
-                if self.docs.get(&pending.key).map(|d| d.version) != Some(pending.version) {
+                if self.stale(o, &pending) {
                     return Event::Rename(Err(
                         "the text changed while the server worked; rename again".into(),
                     ));
@@ -1072,14 +1181,14 @@ impl Lsp {
         at: lsp_types::Position,
         enc: Encoding,
     ) -> Option<Target> {
-        let key = key_of(uri);
+        let key = self.key_of(uri);
         let body = |doc: &Doc| doc.to_body(at.line, at.character, enc).map(Target::Body);
         if let Some(open) = self.docs.get(&key) {
             if let Some(t) = body(&open.doc) {
                 return Some(t);
             }
         }
-        let path = uri::to_path(uri)?;
+        let path = self.path_of(uri)?;
         let held = locate(o, &Source::File(path.clone()))
             .and_then(|root| goto::line_map_of(o, &root))
             .and_then(|map| body(&Doc::new(map.text.clone(), Mapping::File(map))));
@@ -1106,6 +1215,15 @@ impl Lsp {
             None => {}
             Some(DocumentChanges::Edits(edits)) => {
                 for e in edits {
+                    let uri = e.text_document.uri.as_str();
+                    let sent = self.docs.get(&self.key_of(uri)).map(|d| d.version);
+                    if let (Some(v), Some(sent)) = (e.text_document.version, sent) {
+                        if v != sent {
+                            return Err(format!(
+                                "the edit is for version {v} of the text, which is now {sent}"
+                            ));
+                        }
+                    }
                     let edits = e
                         .edits
                         .into_iter()
@@ -1137,7 +1255,7 @@ impl Lsp {
     ) -> Result<Vec<BodyEdit>, String> {
         let mut out = Vec::new();
         {
-            let open = self.docs.get(&key_of(uri)).ok_or_else(|| {
+            let open = self.docs.get(&self.key_of(uri)).ok_or_else(|| {
                 format!("the edit reaches a file this outline does not hold: {uri}")
             })?;
             for e in edits {

@@ -31,6 +31,9 @@ pub fn write_message(w: &mut dyn Write, msg: &Value) -> io::Result<()> {
     w.flush()
 }
 
+/// The longest message read, as leomcp's: a larger length is not believed.
+const MAX_MESSAGE: usize = 16 << 20;
+
 /// Read one message, or None at the end of the stream.
 pub fn read_message(r: &mut dyn BufRead) -> io::Result<Option<Value>> {
     let mut length = None;
@@ -50,6 +53,9 @@ pub fn read_message(r: &mut dyn BufRead) -> io::Result<Option<Value>> {
         }
     }
     let length = length.ok_or_else(|| io::Error::other("message without Content-Length"))?;
+    if length > MAX_MESSAGE {
+        return Err(io::Error::other("message too large"));
+    }
     let mut body = vec![0; length];
     r.read_exact(&mut body)?;
     serde_json::from_slice(&body)
@@ -248,6 +254,8 @@ impl Server {
                     "workspaceFolders": true,
                     "configuration": true,
                     "applyEdit": true,
+                    // Versioned edits, so one made for text since changed is caught.
+                    "workspaceEdit": {"documentChanges": true},
                     "executeCommand": {},
                 },
             },
@@ -503,6 +511,16 @@ mod tests {
         let mut r = io::Cursor::new(buf);
         assert_eq!(read_message(&mut r).unwrap(), Some(msg));
         assert_eq!(read_message(&mut r).unwrap(), None);
+    }
+
+    #[test]
+    fn an_absurd_length_is_refused_before_it_is_allocated() {
+        let mut r = io::Cursor::new(format!("Content-Length: {}\r\n\r\n{{}}", usize::MAX));
+        let e = read_message(&mut r).unwrap_err();
+        assert_eq!(e.to_string(), "message too large");
+        let over = format!("Content-Length: {}\r\n\r\n{{}}", MAX_MESSAGE + 1);
+        let e = read_message(&mut io::Cursor::new(over)).unwrap_err();
+        assert_eq!(e.to_string(), "message too large");
     }
 
     #[test]

@@ -22,6 +22,10 @@ pub const DIRECTIVE: &str = "@wiki";
 /// export.
 const MAX_DEPTH: usize = 6;
 
+/// What may follow a closing fence, as CommonMark has it: spaces and tabs,
+/// and the line's newline. Not U+00A0.
+const BLANK: [char; 3] = [' ', '\t', '\n'];
+
 /// The `@wiki` tree kind.
 pub struct Wiki;
 
@@ -130,15 +134,13 @@ pub fn escape(s: &str) -> String {
     out
 }
 
-/// The link's text again, with `last` as the page's headline.
-fn spell(link: &Link, wiki: Option<&str>, last: Option<&str>) -> String {
-    let mut path: Vec<String> = match link.wiki.is_some() && wiki.is_some() {
-        true => link.path.clone(),
-        false => link.whole.clone(),
+/// The link's text again, with `path` as its path if given.
+fn spell(link: &Link, wiki: Option<&str>, path: Option<&[String]>) -> String {
+    let path: &[String] = match (path, link.wiki.is_some() && wiki.is_some()) {
+        (Some(path), _) => path,
+        (None, true) => &link.path,
+        (None, false) => &link.whole,
     };
-    if let (Some(last), Some(slot)) = (last, path.last_mut()) {
-        *slot = last.to_string();
-    }
     let mut out = String::from("[[");
     if let Some(w) = wiki {
         out.push_str(w);
@@ -168,11 +170,13 @@ pub fn links(body: &str) -> Vec<Link> {
             let n = rest.chars().take_while(|x| *x == c).count();
             if n >= 3 {
                 match fence {
-                    None => {
+                    None if opens(c, &rest[n..]) => {
                         fence = Some((c, n));
                         continue;
                     }
-                    Some((fc, fnn)) if fc == c && n >= fnn && rest[n..].trim().is_empty() => {
+                    Some((fc, fnn))
+                        if fc == c && n >= fnn && rest[n..].trim_matches(BLANK).is_empty() =>
+                    {
                         fence = None;
                         continue;
                     }
@@ -291,19 +295,34 @@ pub fn resolve(o: &Outline, here: &Position, link: &Link) -> Vec<Position> {
     let (Some(root), path) = link.target(o, here) else {
         return Vec::new();
     };
+    resolve_path(o, &root, path, None)
+}
+
+/// The pages of the wiki rooted at `root` that `path` names, as [`resolve`]
+/// finds them, with the node in `renamed` read as headlined so.
+fn resolve_path(
+    o: &Outline,
+    root: &Position,
+    path: &[String],
+    renamed: Option<(leolib::VnodeId, &str)>,
+) -> Vec<Position> {
     if path.is_empty() {
-        return vec![root];
+        return vec![root.clone()];
     }
+    let headline = |a: &Position| match renamed {
+        Some((v, h)) if v == a.v => h.to_string(),
+        _ => a.h(o).trim().to_string(),
+    };
     let mut found = Vec::new();
     for q in root.subtree(o) {
-        if q == root {
+        if q == *root {
             continue;
         }
         let chain: Vec<String> = q
             .self_and_parents(o)
             .into_iter()
             .take_while(|a| a.v != root.v)
-            .map(|a| a.h(o).trim().to_string())
+            .map(|a| headline(&a))
             .collect();
         let matches =
             chain.len() >= path.len() && path.iter().rev().zip(&chain).all(|(seg, h)| seg == h);
@@ -429,11 +448,9 @@ pub fn plan_rename(
         return None;
     }
     let rewrite = |link: &Link, here: &Position| -> Option<String> {
-        let targets = resolve(o, here, link);
-        (targets.len() == 1 && targets[0].v == p.v).then(|| {
-            let wiki = link.wiki.as_deref().filter(|w| root_named(o, w).is_some());
-            spell(link, wiki, Some(&new))
-        })
+        let path = renamed_path(o, here, link, p, &new)?;
+        let wiki = link.wiki.as_deref().filter(|w| root_named(o, w).is_some());
+        Some(spell(link, wiki, Some(&path)))
     };
     let mut plan = Rename {
         old: old.clone(),
@@ -443,14 +460,53 @@ pub fn plan_rename(
         note: None,
         edits: vec![(p.clone(), Some(headline.to_string()), None)],
     };
+    let mut ambiguous: Vec<String> = Vec::new();
     for r in roots(o) {
         for q in r.self_and_subtree(o) {
             if let Some(body) = rewrite_body(q.b(o), |l| rewrite(l, &r), &mut plan.references) {
-                plan.edits.push((q, None, Some(body)));
+                plan.edits.push((q.clone(), None, Some(body)));
+            }
+            for link in links(q.b(o)) {
+                let (Some(wiki), path) = link.target(o, &r) else {
+                    continue;
+                };
+                let after = renamed_path(o, &r, &link, p, &new).unwrap_or_else(|| path.to_vec());
+                let n = resolve_path(o, &wiki, &after, Some((p.v, &new))).len();
+                let spelled =
+                    rewrite(&link, &r).unwrap_or_else(|| q.b(o)[link.range.clone()].to_string());
+                if n > 1 && resolve(o, &r, &link).len() == 1 && !ambiguous.contains(&spelled) {
+                    ambiguous.push(spelled);
+                }
             }
         }
     }
+    // Two pages may share a headline under different parents: warn, not refuse.
+    if !ambiguous.is_empty() {
+        plan.note = Some(format!(
+            "{} now name several pages; add a parent: [[Parent/Page]]",
+            ambiguous.join(", ")
+        ));
+    }
     Some(Ok(plan))
+}
+
+/// The path of a link from the wiki rooted at `here` once page p is
+/// headlined `new`, if the link names one page through p: the segment
+/// matching p takes the new headline.
+fn renamed_path(
+    o: &Outline,
+    here: &Position,
+    link: &Link,
+    p: &Position,
+    new: &str,
+) -> Option<Vec<String>> {
+    let [target]: [Position; 1] = resolve(o, here, link).try_into().ok()?;
+    let (_, path) = link.target(o, here);
+    let up = target.self_and_parents(o).iter().position(|a| a.v == p.v)?;
+    let at = path.len().checked_sub(up + 1)?;
+    let mut path = path.to_vec();
+    path[at] = new.to_string();
+    Some(path)
 }
 
 /// The plan for a wiki root's rename: its headline, and every body's links
@@ -550,6 +606,12 @@ fn atx(line: &str) -> Option<(usize, &str)> {
         .then(|| (n, rest.trim().trim_end_matches('#').trim()))
 }
 
+/// Whether a run of `c` followed by `info` opens a fence: a backtick
+/// fence's info string may not hold a backtick (CommonMark 4.5).
+fn opens(c: char, info: &str) -> bool {
+    c == '~' || !info.contains('`')
+}
+
 /// The lines of `body` outside fenced code, as (line, in a fence).
 fn fenced(body: &str) -> Vec<(&str, bool)> {
     let mut fence: Option<(char, usize)> = None;
@@ -560,18 +622,18 @@ fn fenced(body: &str) -> Vec<(&str, bool)> {
             let n = c.map_or(0, |c| t.chars().take_while(|x| *x == c).count());
             let opens_or_closes = n >= 3 && line.len() - t.len() <= 3;
             match (fence, opens_or_closes) {
-                (None, true) => {
+                (None, true) if opens(c.unwrap(), &t[n..]) => {
                     fence = Some((c.unwrap(), n));
                     (line, true)
                 }
                 (Some((fc, fnn)), true)
-                    if c == Some(fc) && n >= fnn && t[n..].trim().is_empty() =>
+                    if c == Some(fc) && n >= fnn && t[n..].trim_matches(BLANK).is_empty() =>
                 {
                     fence = None;
                     (line, true)
                 }
                 (Some(_), _) => (line, true),
-                (None, false) => (line, false),
+                (None, _) => (line, false),
             }
         })
         .collect()

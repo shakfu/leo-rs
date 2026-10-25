@@ -166,3 +166,15 @@ fn a_kind_can_add_to_leo_but_not_replace_it() {
     assert_eq!((kind.directive(), name.as_str()), ("@qmd", "report.qmd"));
     assert!(kinds.find("@qmdx report.qmd").is_none());
 }
+
+/// A registered directive must be one a headline can name.
+#[test]
+fn a_kind_is_refused_a_directive_no_headline_names() {
+    for d in ["@", "@my.kind", "@\u{e9}nt", "@a b", "@x\t"] {
+        assert!(Kinds::empty().with(Kind(d)).is_err(), "{d:?}");
+    }
+    for d in ["@my-kind", "@x_2"] {
+        let kinds = Kinds::empty().with(Kind(d)).unwrap();
+        assert!(kinds.find(&format!("{d} f.txt")).is_some(), "{d}");
+    }
+}

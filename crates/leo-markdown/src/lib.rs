@@ -45,6 +45,9 @@ const INDENT: &str = "leo-rs-fence-indent";
 /// `.leo` file so a cell gets its vnode back on every read: a clone of it in
 /// an `@clean` tree stays a clone. `str_` makes Leo keep it as text.
 const CELL_IDS: &str = "str_leo-rs-cell-ids";
+/// What CommonMark trims around an info string and after a closing fence:
+/// spaces and tabs, not U+00A0 or other Unicode whitespace.
+const BLANK: [char; 2] = [' ', '\t'];
 
 static FENCE_OPEN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^( {0,3})(`{3,}|~{3,})([^\n]*)\n?$").unwrap());
@@ -96,7 +99,13 @@ pub type Code<'a> = dyn Fn(VnodeId) -> Option<String> + 'a;
 /// The info string of a fence opening line, `{python}` in ```` ```{python} ````;
 /// None if `line` opens no fence.
 pub fn fence_opener_info(line: &str) -> Option<&str> {
-    Some(FENCE_OPEN.captures(line)?.get(3)?.as_str().trim())
+    Some(
+        FENCE_OPEN
+            .captures(line)?
+            .get(3)?
+            .as_str()
+            .trim_matches(BLANK),
+    )
 }
 
 /// The opening line of the fence whose node is f: in f's parent's body, the
@@ -230,6 +239,34 @@ pub mod fuzz {
     /// Read `text` as an `@qmd` file, or an `@rmd` one, into a fresh outline.
     /// A read that is kept must write back to `text`, CRLF aside.
     pub fn read(text: &str, rmd: bool) {
+        if let Some((o, p)) = fresh(text, rmd) {
+            let written = write_string(&o, &p).expect("a kept read writes");
+            assert_eq!(written, text.replace("\r\n", "\n"));
+        }
+    }
+
+    /// Read `text` as [`read`] does, rename heading `which` to `headline`,
+    /// and write. The file written must read back to the renamed tree.
+    pub fn rename(text: &str, rmd: bool, which: usize, headline: &str) {
+        let Some((mut o, p)) = fresh(text, rmd) else {
+            return;
+        };
+        let heads: Vec<Position> = (o.all_positions().into_iter())
+            .filter(|q| get(&o, q.v, HEADING).is_some())
+            .collect();
+        let Some(q) = heads.get(which % heads.len().max(1)) else {
+            return;
+        };
+        o.set_headline(q, headline);
+        let Ok(written) = write_string(&o, &p) else {
+            return;
+        };
+        let (again, _) = fresh(&written, rmd).expect("a renamed tree's file reads");
+        assert_eq!(tree(&again), tree(&o), "{written:?}");
+    }
+
+    /// A fresh outline holding `text` read as `@rmd` or `@qmd`, if kept.
+    fn fresh(text: &str, rmd: bool) -> Option<(Outline, Position)> {
         let (kind, style) = match rmd {
             true => ("@rmd fuzz.Rmd", Style::Knitr),
             false => ("@qmd fuzz.qmd", Style::Quarto),
@@ -237,10 +274,16 @@ pub mod fuzz {
         let mut o = Outline::new_empty();
         let p = o.root_position().expect("a new outline has a node");
         o.set_headline(&p, kind);
-        if read_contents(&mut o, &p, text, "fuzz", Policy::Cells, style).is_ok() {
-            let written = write_string(&o, &p).expect("a kept read writes");
-            assert_eq!(written, text.replace("\r\n", "\n"));
-        }
+        let kept = read_contents(&mut o, &p, text, "fuzz", Policy::Cells, style).is_ok();
+        kept.then_some((o, p))
+    }
+
+    /// Every node's level, headline as written, and body, in outline order.
+    fn tree(o: &Outline) -> Vec<(usize, String, String)> {
+        let h = |q: &Position| q.h(o).trim().to_string();
+        (o.all_positions().iter())
+            .map(|q| (q.level(), h(q), q.b(o).to_string()))
+            .collect()
     }
 }
 
@@ -290,11 +333,7 @@ fn build(
     while i < lines.len() {
         let line = lines[i];
         let top = stack.last().unwrap().0;
-        // CommonMark's HTML block 2: a line starting `<!--`, to `-->`.
-        let lead = line.len() - line.trim_start_matches(' ').len();
-        let opens_comment =
-            lead <= 3 && line[lead..].starts_with("<!--") && !line[lead + 4..].contains("-->");
-        if comment || opens_comment {
+        if comment || opens_comment(line) {
             comment = match comment {
                 true => !line.contains("-->"),
                 false => true,
@@ -307,7 +346,7 @@ fn build(
         if let Some(open) = FENCE_OPEN.captures(line) {
             let indent = open[1].to_string();
             let marker = open[2].to_string();
-            let info = open[3].trim().to_string();
+            let info = open[3].trim_matches(BLANK).to_string();
             // A backtick fence's info string has no backticks. An opener on
             // the file's last line, with no newline, has no code: it is text.
             if !(marker.starts_with('`') && info.contains('`')) && line.ends_with('\n') {
@@ -403,19 +442,19 @@ fn build(
             .or_else(|| {
                 let next = lines.get(i + 1)?;
                 let m = SETEXT.captures(next)?;
-                if NOT_A_HEADING_TEXT.is_match(line)
-                    || FENCE_OPEN.is_match(line)
-                    || DIV_CLOSE.is_match(line)
-                    || DIV_OPEN.is_match(line)
-                    || atx(line).is_some()
-                {
+                if !may_underline(line) {
                     return None;
                 }
                 let (level, mark) = match m[1].starts_with('=') {
                     true => (1, "="),
                     false => (2, "-"),
                 };
-                Some((level, line.trim().to_string(), 2, mark))
+                Some((
+                    level,
+                    line.trim_end_matches('\n').trim_matches(BLANK).to_string(),
+                    2,
+                    mark,
+                ))
             })
             .filter(|_| divs == 0);
         if let Some((level, text, n, mark)) = heading {
@@ -460,17 +499,37 @@ fn front_matter(lines: &[&str]) -> usize {
 /// and knitr read one: a braced engine name, `{python}` or `{r, echo=FALSE}`,
 /// and not a Pandoc class (`{.python}`) or raw block (`{=html}`).
 fn is_cell(info: &str) -> bool {
-    let Some(inner) = info.trim().strip_prefix('{') else {
+    let Some(inner) = info.trim_matches(BLANK).strip_prefix('{') else {
         return false;
     };
     let engine = inner.trim_start();
     engine.starts_with(|c: char| c.is_ascii_alphabetic())
 }
 
+/// Whether `line` opens CommonMark's HTML block 2, `<!--`, not closed on it.
+fn opens_comment(line: &str) -> bool {
+    let lead = line.len() - line.trim_start_matches(' ').len();
+    lead <= 3 && line[lead..].starts_with("<!--") && !line[lead + 4..].contains("-->")
+}
+
+/// Whether `line`, above an underline, is read as an underlined heading's text.
+fn may_underline(line: &str) -> bool {
+    !(NOT_A_HEADING_TEXT.is_match(line)
+        || FENCE_OPEN.is_match(line)
+        || DIV_CLOSE.is_match(line)
+        || DIV_OPEN.is_match(line)
+        || opens_comment(line)
+        || atx(line).is_some())
+}
+
 /// An ATX heading's level and text.
 fn atx(line: &str) -> Option<(usize, String)> {
     let m = ATX.captures(line)?;
-    let text = m.get(2).map_or("", |t| t.as_str()).trim().to_string();
+    let text = m
+        .get(2)
+        .map_or("", |t| t.as_str())
+        .trim_matches(BLANK)
+        .to_string();
     (!text.is_empty()).then(|| (m[1].len(), text))
 }
 
@@ -478,7 +537,7 @@ fn atx(line: &str) -> Option<(usize, String)> {
 /// at least as many, and nothing else.
 fn closes(line: &str, marker: &str) -> bool {
     let c = marker.chars().next().unwrap();
-    let t = line.trim_end();
+    let t = line.trim_end_matches('\n').trim_end_matches(BLANK);
     let lead = t.len() - t.trim_start_matches(' ').len();
     let run = t.trim_start_matches(' ');
     lead <= 3 && run.len() >= marker.len() && run.chars().all(|x| x == c)
@@ -706,8 +765,16 @@ fn write_own(
     out: &mut String,
 ) -> Result<(usize, Vec<VnodeId>)> {
     let node = o.node(v);
-    if depth > 0 && node.h.trim().is_empty() {
+    if depth > 0 && node.h.trim_matches(BLANK).is_empty() {
         return Err(write_error(o, v, "a heading node needs a headline"));
+    }
+    // The reader refuses a file with a CR alone; `set_headline` keeps one.
+    if depth > 0 && node.h.contains('\r') {
+        return Err(write_error(
+            o,
+            v,
+            "a headline cannot hold a carriage return",
+        ));
     }
     let level = match depth {
         0 => 0,
@@ -796,7 +863,8 @@ fn heading(o: &Outline, v: VnodeId, level: usize, out: &mut String) {
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    let h = o.node(v).h.trim();
+    // CommonMark strips only spaces and tabs from a heading's text.
+    let h = o.node(v).h.trim_matches(BLANK);
     let same_level = get(o, v, HEADING_LEVEL) == Some(level.to_string().as_str());
     if same_level && get(o, v, HEADING_TEXT) == Some(h) {
         if let Some(lines) = get(o, v, HEADING) {
@@ -805,19 +873,28 @@ fn heading(o: &Outline, v: VnodeId, level: usize, out: &mut String) {
         }
     }
     // Underlined text must still read as a heading's: `- todo` would be a
-    // list item and a rule.
+    // list item and a rule, `<!-- draft` an unclosed comment, and `---`
+    // would underline the line above it. Under an unclosed `---` at the top,
+    // a `---` underline or `...` text would close front matter.
+    let open_front = out.starts_with("---\n")
+        && front_matter(&out.split_inclusive('\n').collect::<Vec<_>>()) == 0;
     let underlined = matches!(get(o, v, HEADING_MARK), Some("=" | "-"))
-        && !NOT_A_HEADING_TEXT.is_match(h)
-        && !FENCE_OPEN.is_match(h)
-        && !DIV_OPEN.is_match(h)
-        && !DIV_CLOSE.is_match(h)
-        && atx(h).is_none();
+        && may_underline(h)
+        && !SETEXT.is_match(h)
+        && !open_front;
     match (underlined, level) {
         (true, 1 | 2) => {
             let mark = if level == 1 { "=" } else { "-" };
             out.push_str(&format!("{h}\n{}\n", mark.repeat(h.chars().count().max(3))));
         }
-        _ => out.push_str(&format!("{} {h}\n", "#".repeat(level))),
+        _ => {
+            let line = format!("{} {h}", "#".repeat(level));
+            // A trailing ` #` would read as a closing sequence: close it.
+            match atx(&line).is_some_and(|(_, text)| text == h) {
+                true => out.push_str(&format!("{line}\n")),
+                false => out.push_str(&format!("{line} #\n")),
+            }
+        }
     }
 }
 

@@ -516,7 +516,7 @@ impl App {
             }
         };
         let mut seen = std::collections::HashSet::new();
-        let (mut count, mut lines_changed, mut nodes) = (0, 0, 0);
+        let (mut count, mut lines_changed, mut nodes, mut read_only) = (0, 0, 0, 0);
         self.doc.begin_group("substitute");
         for p in self.outline().all_positions() {
             // No whole-body test first: `^` and `$` match at line ends only
@@ -524,19 +524,35 @@ impl App {
             if !seen.insert(p.v) {
                 continue;
             }
-            let mut lines = editor::split(p.b(self.outline()));
+            let o = self.outline();
+            let body = p.b(o);
+            let mut lines = editor::split(body);
             // A body too short for the range, or with no match in it, stays.
-            let Ok(o) = crate::substitute::apply_with(&sub, &re, &mut lines, 0) else {
+            let Ok(done) = crate::substitute::apply_with(&sub, &re, &mut lines, 0) else {
                 continue;
             };
-            count += o.count;
-            lines_changed += o.lines;
+            let kind = leolib::ext::kind_at(o, &p);
+            if !sub.count_only && kind.is_some_and(|k| k.read_only(o, &p).is_some()) {
+                read_only += 1;
+                continue;
+            }
+            count += done.count;
+            lines_changed += done.lines;
             nodes += 1;
             if !sub.count_only {
-                self.doc.set_body(&p, &editor::join(&lines));
+                let text = editor::rejoin(&lines, body);
+                self.doc.set_body(&p, &text);
             }
         }
         self.doc.end_group();
+        let skipped = match read_only {
+            0 => String::new(),
+            n => format!("{} not changed: read-only", plural(n, "node")),
+        };
+        if count == 0 && read_only > 0 {
+            self.message = skipped;
+            return;
+        }
         if count == 0 {
             self.message = format!("pattern not found: {}", re.as_str());
             return;
@@ -552,6 +568,9 @@ impl App {
             plural(lines_changed, "line"),
             plural(nodes, "node")
         );
+        if read_only > 0 {
+            self.message = format!("{}; {skipped}", self.message);
+        }
         let lines = self.body_buffer();
         self.editor.clamp(&lines);
     }

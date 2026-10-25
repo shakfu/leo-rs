@@ -161,8 +161,35 @@ fn export_wiki_writes_the_file_and_the_rules_are_known_at_open() {
     let text = std::fs::read_to_string(dir.path().join("w.md")).unwrap();
     assert_eq!(
         text,
-        "Read [Intro](#intro) first.\n\n# Intro\n\nThen [Guide](#guide).\n\n# Guide\n\n"
+        format!(
+            "{}Read [Intro](#intro) first.\n\n# Intro\n\nThen [Guide](#guide).\n\n# Guide\n\n",
+            leo_wiki::app::MARKER
+        )
     );
     assert!(app.message.starts_with("exported "), "{}", app.message);
     assert!(app.broken_rules().is_empty());
+}
+
+#[test]
+fn export_wiki_replaces_only_a_file_an_earlier_export_wrote() {
+    let dir = tempfile::tempdir().unwrap();
+    let leo = dir.path().join("o.leo").to_string_lossy().to_string();
+    let md = dir.path().join("w.md");
+    std::fs::write(&md, "# My own notes\n").unwrap();
+    let mut app = app(&leo);
+    app.run("export-wiki", 1);
+    assert_eq!(std::fs::read_to_string(&md).unwrap(), "# My own notes\n");
+    assert!(
+        app.message.contains("was not written by :export-wiki"),
+        "{}",
+        app.message
+    );
+    // An earlier export's file is replaced.
+    std::fs::remove_file(&md).unwrap();
+    app.run("export-wiki", 1);
+    let guide = find(&app, "Guide");
+    app.doc.set_body(&guide, "New.\n");
+    app.run("export-wiki", 1);
+    assert!(app.message.starts_with("exported "), "{}", app.message);
+    assert!(std::fs::read_to_string(&md).unwrap().ends_with("New.\n"));
 }

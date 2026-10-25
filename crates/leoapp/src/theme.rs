@@ -625,7 +625,8 @@ fn colour(name: &str, palette: &HashMap<String, Colour>) -> Option<Colour> {
 
 fn hex(s: &str) -> Option<Colour> {
     let digits = s.strip_prefix('#')?;
-    if digits.len() != 6 {
+    // Byte slicing below needs ASCII; `from_str_radix` alone also takes `+f`.
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let byte = |i: usize| u8::from_str_radix(&digits[i..i + 2], 16).ok();
@@ -722,6 +723,13 @@ grey0 = "#7f8490"   # a trailing comment
     fn a_line_that_makes_no_sense_is_skipped_rather_than_fatal() {
         let t = theme("garbage\n\"keyword\" = \"#010203\"\n= = =\n\"string\" = {\n");
         assert_eq!(t.face("keyword").fg, Some(Colour::Rgb(1, 2, 3)));
+        assert_eq!(t.face("string"), Face::default());
+    }
+
+    #[test]
+    fn a_hex_colour_with_a_non_hex_character_is_skipped_rather_than_a_panic() {
+        let t = theme("\"keyword\" = \"#1\u{e9}234\"\n\"string\" = \"#+f+f+f\"\n");
+        assert_eq!(t.face("keyword"), Face::default());
         assert_eq!(t.face("string"), Face::default());
     }
 

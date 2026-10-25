@@ -233,6 +233,34 @@ impl Outline {
         false
     }
 
+    /// Whether every node in the tree lists each parent once per link from it.
+    /// For tests and fuzz targets: a stale parent link leaves an edit below it
+    /// not dirtying its `@<file>`, so the edit is never saved.
+    #[doc(hidden)]
+    pub fn links_agree(&self) -> Result<(), String> {
+        let mut want: HashMap<VnodeId, Vec<VnodeId>> = HashMap::new();
+        let mut seen = HashSet::new();
+        let mut todo = vec![self.hidden_root];
+        while let Some(u) = todo.pop() {
+            if !seen.insert(u) {
+                continue;
+            }
+            for &c in &self.node(u).children {
+                want.entry(c).or_default().push(u);
+                todo.push(c);
+            }
+        }
+        for (v, mut w) in want {
+            let mut got = self.node(v).parents().to_vec();
+            w.sort();
+            got.sort();
+            if got != w {
+                return Err(format!("{v:?} has parents {got:?}, links from {w:?}"));
+            }
+        }
+        Ok(())
+    }
+
     /// The vnode `v`. Panics if `v` is outside the arena.
     pub fn node(&self, v: VnodeId) -> &Vnode {
         &self.nodes[v.0 as usize]

@@ -2,6 +2,64 @@
 
 Earlier changes are recorded in the git history and in `docs/dev/tui-design.md`.
 
+## [Unreleased]
+
+### Added
+
+- **`@jupytext` is read and written.** A notebook reads as `@clean` over the `py:percent` text jupytext makes of it, laid out as Leo lays it out: a `<< prefix >>` node for the header, then one node per cell. The conversion is a Rust port of jupytext 1.19.6, so no Python runs. A write merges the text into the notebook on disk by jupytext's `combine_inputs_with_outputs` rules, so each cell keeps its outputs, execution count, id and hidden metadata; Leo's write rebuilds the notebook and drops them. An unchanged notebook keeps its bytes. A notebook whose text would not read back to the same cells is refused, as are formats other than py:percent. A port was chosen over calling the jupytext CLI: leolib needs no Python, and the read can refuse what a round trip would lose. Differences from Leo are in `docs/dev/porting-notes.md`.
+- **`:lsp-restart` stops every language server.** Each starts again when a node in its language is next visited, a failed one too. The log is kept, so `:lsp-status` still shows why a server stopped.
+- **Fuzz targets `line_import`, `markdown_rename` and `undo`.** They cover the `@auto` line importers, a renamed `@qmd`/`@rmd` heading re-reading unchanged, and random outline edits with undo and redo checking parent links. A `jupytext` target converts notebooks both ways. `Outline::links_agree` is public but hidden, for the fuzz crate.
+- **CI checks each declared `rust-version`**: 1.89 for leolib, 1.90 for the workspace, 1.95 for leogui.
+
+### Changed
+
+- **`:export-wiki` writes a marker comment as the first line of `NAME.md`, and replaces only a file that starts with it.** It overwrote any file of that name. A marker in the file was chosen over a list kept in the outline: it also recognises an export made from another copy of the outline. A `NAME.md` exported by 0.9.0 has no marker; delete it once to export again.
+- **A recovery copy no longer overwrites an older one.** The older copy moves to `NAME.recovered.N.leo`, N one past the highest, and the open notice counts the older copies. The newest keeps the fixed name, so the copy to open is always `NAME.recovered.leo`; a pid or timestamp in every name would leave the user to find the newest. Older copies are never deleted for you: nothing tells the editor whether one was read.
+- **leogui's settings dialog keeps backslashes and refuses a double quote or a line break.** `C:\tools\clangd.exe` saved as `C:toolsclangd.exe`. The settings file has no escapes, so a quote or line break cannot be stored.
+- **leogui's rendered view rebuilds only when the node, its text or the outline changes.** It rebuilt every frame and re-read `include=` and image files each time. It now re-reads them on a rebuild, or when the window regains focus.
+- **GitHub Actions are pinned by commit SHA.**
+
+### Fixed
+
+- **`@entangled` `include=` could read any file on disk into the markdown.** A cloned repository with `include=../../.aws/credentials` put the secret into the file on the next save. An absolute path, a `..` component, or a symlink leading out of the markdown file's directory is now refused; the fence keeps its text and the read warns. The check resolves symlinks, because a lexical check passes a symlink inside the directory that points out.
+- **The MCP server could be held by 16 connections trickling bytes.** The 300 s timeout applied per read. A request's line and headers must now arrive within 10 s; a connection that has shown the token may still idle 300 s between requests.
+- **Changing `mcp-token` without the port kept the old token valid until restart.** The token is now replaced in place. A restart on the same port was rejected: the old listener frees the port only after its next accept, so the rebind can fail.
+- **MCP HTTP conformance.**
+  - A POST without `Content-Length` gets 411, a malformed one 400, any `Transfer-Encoding` 501, and the connection closes (RFC 9112 6.1, 6.3). A missing length read as 0.
+  - The `Bearer` scheme is matched case-insensitively (RFC 9110 11.1).
+  - A JSON-RPC batch was answered `202` and dropped. A 2025-03-26 client now gets its replies; one sending `MCP-Protocol-Version: 2025-06-18` gets 400 and -32600, since that revision removed batches.
+  - A POSTed JSON-RPC response gets `202`, as 2025-03-26 asks; it got a "no such method" error.
+  - A reply after which the server closes the connection says `Connection: close` (RFC 9112 9.6).
+  - A tool call the app has not taken within 30 s is withdrawn, and the client is told it did not run. The reply said "did not answer" while the call stayed queued and could still run. A call the app has taken is waited for.
+- **A language server's edit could land at shifted rows.** `:lsp-rename g` then `dd` within the 150 ms debounce passed the version check; `workspace/applyEdit` had no check. An edit is now refused if the outline changed since the last sync, or if it names a document version older than the one sent. Syncing before each poll was rejected: it removes the debounce and does not cover `applyEdit`. leolsp now asks servers for versioned edits (`workspaceEdit.documentChanges`); an unversioned `applyEdit` that crosses a `didChange` is still not caught.
+- **A language server's `Content-Length` was allocated unbounded**, so an absurd value aborted the editor. It is capped at 16 MiB, as leomcp's is.
+- **Semantic tokens past `u32`, or more than 32 modifiers, panicked in debug builds** and set wrong modifiers in release.
+- **A dead language server's documents, diagnostics and pending requests were kept.** Its stale diagnostics stayed in the body, and an `applyEdit` in its last messages panicked.
+- **`didClose` was never sent.** A deleted node's document, or one whose `@language` changed, is now closed, and the new language's server gets `didOpen` rather than `didChange` for a URI it never opened.
+- **Diagnostics and renames failed silently when a server spelled a Windows drive letter in another case, or named files under a symlinked root's real path.** Untested on Windows.
+- **`:bufdo` and replace-all changed read-only nodes**, such as `@entangled` `include=` fences. Both skip them and say how many.
+- **A body edit added or removed the trailing newline.** `"\n"` became `""`, and a body without one gained one, so the `@file` was marked changed for nothing.
+- **A counted put was quadratic and unbounded.** `yG` on 5,000 lines then `99999p` made about 5e8 shifting inserts. The repeated text is now inserted once, and a put past 2^22 lines or 256 MiB is refused. A counted `p` of several lines now repeats them in order (`a b a b`, not `a a b b`), as vim does. A counted insert (`3ifoo<Esc>`, and `.` after it) is built the same way and has the same limit.
+- **A theme hex colour with a non-ASCII character panicked at every launch.** A colour must now be six hex digits, which also refuses `#+f+f+f`.
+- **A newline in a headline split its `@file` sentinel**, and the text after it read back as body. A `.leo` file's `<vh>` can carry one. The writer drops it, as Leo's `setHeadString` does, rather than refusing a save over a character the user may not see.
+- **A replaced file's temporary copy was readable under the umask** until its mode was copied, and every rewrite gave the file the writer's primary group and dropped its extended attributes and ACLs. On unix it is now created 0600 and takes the original's owner, group and extended attributes where allowed. On Linux the attributes include POSIX ACLs; macOS ACLs are still lost. leolib depends on `xattr` on unix for this.
+- **Undoing or redoing a mark left the outline looking unchanged**, though marks are saved in the `.leo` file.
+- **`Kinds::with` accepted directives no headline can name**, such as `@my.kind`, `@\u{e9}nt` or a bare `@`. It now accepts `@` and then letters, digits, `_` and `-`, the word `find_at_file_name` reads.
+- **A renamed markdown heading could change the tree on the next read.** Each case is now written in a form that reads back unchanged:
+  - An underlined heading whose new text opens a comment (`<!-- draft`) or is itself an underline (`---`) is written with `#`.
+  - So is an underlined heading under an unclosed `---` at the top of the file, whose underline would close front matter.
+  - A heading ending in ` #` gets a closing `#` (`# Issue # #`). Escaping it as `\#` would re-read with the backslash.
+  - A headline with a carriage return is refused on write. The reader refuses a file with a CR alone.
+- **Renaming a wiki page left links through it unchanged.** `[[Guide/Setup]]` is now rewritten when Guide is renamed, in every wiki.
+- **Renaming a wiki page to another page's headline made links ambiguous without a warning.** The status line and the MCP `set_headline` reply (`note`) now list them. The rename still applies: `[[Parent/Page]]` tells two such pages apart.
+- **A fence line followed by U+00A0 closed a code fence.** CommonMark 0.31.2 4.5 allows only spaces and tabs there. The info string is trimmed the same way, in leo-markdown and in leo-wiki's link scan.
+- **leo-wiki read a backtick run whose info string holds a backtick as a fence**, so links and headings after it were taken for code. CommonMark 4.5 makes that line text.
+- **Markdown heading text lost a U+00A0 at either end.** CommonMark strips only spaces and tabs.
+- **A panic on any leotui thread restored the terminal while the session ran on.** Only a main-thread panic does now.
+- **leotui popped the keyboard enhancement flags twice on a panic**, which could pop the parent shell's entry.
+- **leotui's 5 s watchdog could exit while the recovery file was being written.** It now waits for the write. A write that hangs, as on a dead network mount, now keeps the process alive.
+- **leogui wrote the session and recent-outline files in place**, so a crash or full disk could leave them truncated. They are written to a temporary file and renamed. Session paths are no longer trimmed.
+
 ## [0.9.0]
 
 ### Added

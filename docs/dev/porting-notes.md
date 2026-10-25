@@ -30,7 +30,9 @@ A rejected external file is reported in `ReadResult::errors` and never recorded 
 
 **Saving writes the `.leo` file before the external files.** Leo's `fc.write_Leo_file` writes the external files, then the `.leo` file. Writing the `.leo` file first puts the outline's own edits on disk however the files fare: a file refused for an orphan node, an overwrite or a missing directory stays dirty for the next save, and the rest are still written. Nothing in the `.leo` file depends on an external write here. A `.leo` file that fails to save holds back every file, so no file is ever newer than its `.leo` file: an `@nosent` or `@asis` file is never read back, and would reopen stale. `leolib::save_all` is the combined operation; `save` and `write_external_files` remain separate.
 
-**Writes are atomic.** `external::replace_file` writes a sibling temporary file and renames it over the target, for external files and the `.leo` file alike. Leo writes in place after a backup. A rename would bypass two things writing in place respects, so both are checked first: a symlink is resolved and its target replaced, as Leo's `realpath`, and a read-only file is refused. A hard link is still broken by the rename.
+**Writes are atomic.** `external::replace_file` writes a sibling temporary file and renames it over the target, for external files and the `.leo` file alike. Leo writes in place after a backup. A rename would bypass two things writing in place respects, so both are checked first: a symlink is resolved and its target replaced, as Leo's `realpath`, and a read-only file is refused. A hard link is still broken by the rename. On unix the temporary file is mode 0600 until it takes the target's owner, group, extended attributes and mode. Linux keeps POSIX ACLs in extended attributes, so they are kept; macOS ACLs are lost.
+
+**A newline in a headline is dropped from its `@file` sentinel.** A `.leo` file's `<vh>` can carry one, and Leo's `nodeSentinelText` writes it raw, so the text after it reads back as body. The writer drops it, as Leo's `setHeadString` does.
 
 **A file changed on disk since it was read is refused on write.** Leo checks mtimes when its window is idle or regains focus, and asks then (`leoExternalFiles.py`). A library has no idle time, so `write_files` compares the size and mtime recorded at the read with the file's own, and refuses with `Error::ChangedOnDisk`. leotui asks on that refusal, and names changed files when the terminal regains focus.
 
@@ -87,6 +89,34 @@ Five deliberate departures:
 Leo has six writers under `leo/plugins/writers` and falls back to a sentinel-free tangle for every other language. Only the four line-oriented formats need one, because their readers consume the structure lines they see; `importers/lines.rs` holds those four and the fallback is `atfile_write::write_to_string` with `allow_undefined_refs`.
 
 Leo's writers could not run without a window: `BaseWriter.__init__` read `c.atFileCommands`, and `c` was `None` when leolib drove. leo-editor now builds them with the outline when no commander is acting, so both implementations write every `@auto` kind headless, and the corpus's `auto_languages` case checks the Markdown and Org files byte for byte on both sides.
+
+## `@jupytext`
+
+Leo converts with the jupytext package (`leoJupytext.py`). `jupytext.rs` ports the path Leo uses, from jupytext 1.19.6: the `py:percent` writer and reader, nbformat's JSON layout, the PyYAML subset of the header, and `combine_inputs_with_outputs`. No Python runs. The fixtures in `crates/leolib/tests/jupytext/` come from jupytext itself (`scripts/make_jupytext_fixtures.py`). The header says `jupytext_version: 1.19.6` whatever jupytext the user has.
+
+**A write keeps the cells' outputs.** `writeOneAtJupytextNode` makes a notebook from the text alone (`jupytext.reads`, then `jupytext.write`), so every save drops the outputs, execution counts, ids, and the metadata the text does not show. Here a write merges the text into the notebook on disk, as `jupytext --update` does. A cell of the text keeps the notebook cell matched by the first of these that applies, within its cell type:
+
+1. the same source, ignoring blanks, commas, quotes, parentheses and backslashes, in order;
+2. the same, in any order;
+3. an old cell whose source ends with the new one's;
+4. the unmatched old cell after the previous match, if the new source is not blank.
+
+An unmatched cell is new: no outputs, a null execution count, and a fresh id if the notebook is nbformat 4.5 or later. jupytext gives one to an older notebook too, which nbformat then reports as invalid.
+
+**An unchanged notebook keeps its bytes.** jupytext rewrites it in nbformat's layout. Here a write whose merged notebook equals the one on disk returns the file's own bytes.
+
+**A notebook the text cannot carry is refused.** jupytext's text does not carry every cell: an `active-py` code cell reads back as raw, for one, and the next write would lose its outputs. Here the read converts the notebook to text and back, and refuses the notebook with `Error::Import` unless every cell matches itself. A notebook that merges back changed, as an R notebook with non-ASCII text gains a coding line, is read with a warning in `ReadResult::warnings`. Also refused:
+
+- nbformat other than 4, and JSON that is not a notebook;
+- Go and C# kernels, whose magics jupytext treats apart;
+- the jupytext format options in a notebook's metadata other than the two metadata filters and `cell_metadata_json`, and `formats` entries with a prefix, suffix or `auto`;
+- a header value PyYAML would write in double quotes (any non-ASCII) or fold past 80 columns.
+
+**A `# %%` option jupytext reads as a Python literal is kept whole.** jupytext tries `ast.literal_eval` after JSON, so `key=True` gives `true`. Here it gives `incorrectly_encoded_metadata`, which jupytext also uses for what it cannot read, and which writes back as typed.
+
+**The first read's tree writes the text back.** Leo's `create_outline` leaves the blank lines after the header out of every node, and splits at `# %%` anywhere, mid-line included; the next write then changes the text. Here the `<< prefix >>` node ends with those blank lines, and a cell starts only at a line that starts with `# %%`. Headlines are Leo's.
+
+**Order.** jupytext lists the keys of a `cell_metadata_filter` it creates in Python's set order, which varies by run; here they are sorted. The options on a `# %%` line follow the notebook's key order in jupytext; here, serde_json's, which is sorted unless another crate in the build enables `preserve_order`. nbformat writes keys sorted, so the two agree for a notebook nbformat wrote.
 
 ## Fold and mark state
 

@@ -261,8 +261,7 @@ impl Document {
     /// Mark or unmark p, as one undo step.
     pub fn toggle_marked(&mut self, p: &Position) {
         let was_marked = self.outline.node(p.v).is_marked();
-        self.undoer
-            .push("toggle-mark", Bead::Mark { v: p.v, was_marked });
+        self.push("toggle-mark", Bead::Mark { v: p.v, was_marked });
         self.outline.toggle_marked(p);
     }
 
@@ -1788,6 +1787,22 @@ mod tests {
         d.demote(&all[0]);
         assert!(d.promote(&all[0]));
         assert_eq!(heads(&d), vec!["a", "b", "c"]);
+    }
+
+    /// Marks are saved in the `.leo` file, so undoing one is a change to save.
+    #[test]
+    fn undoing_and_redoing_a_mark_marks_the_outline_changed() {
+        let (mut d, all) = abc();
+        d.toggle_marked(&all[0]);
+        for undo in [true, false] {
+            d.outline.changed = false;
+            match undo {
+                true => d.undo(),
+                false => d.redo(),
+            };
+            assert!(d.outline.changed, "undo {undo}");
+        }
+        assert!(all[0].is_marked(&d.outline));
     }
 
     #[test]

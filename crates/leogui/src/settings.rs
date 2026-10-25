@@ -25,8 +25,19 @@ pub struct Saved {
     pub settings: Config,
 }
 
+/// `s` in quotes, as written: `config::parse` reads no escapes, so `\` stays.
 fn quoted(s: &str) -> String {
-    format!("\"{}\"", s.replace(['"', '\\', '\n', '\r'], ""))
+    format!("\"{s}\"")
+}
+
+/// Why `changes` cannot be written: a quoted value the file cannot hold.
+fn unwritable(changes: &[(String, Option<String>)]) -> Option<String> {
+    changes.iter().find_map(|(key, value)| {
+        let inner = value.as_deref()?.strip_prefix('"')?.strip_suffix('"')?;
+        inner
+            .contains(['"', '\n', '\r'])
+            .then(|| format!("not saved: {key} cannot hold a double quote or a line break"))
+    })
 }
 
 /// The settings file lines that turn `old` into `new`: changed keys only.
@@ -273,8 +284,13 @@ impl SettingsDialog {
         }
         draft.mcp.save &= draft.mcp.edit;
         let original = self.original.clone().unwrap_or_default();
+        let changes = changes(&original, &draft);
+        if let Some(why) = unwritable(&changes) {
+            self.error = Some(why);
+            return None;
+        }
         if let Some(path) = &app.config_path {
-            if let Err(e) = config::update(path, &changes(&original, &draft)) {
+            if let Err(e) = config::update(path, &changes) {
                 self.error = Some(format!("not saved: {e}"));
                 return None;
             }
@@ -349,5 +365,28 @@ mod tests {
             ("number".into(), Some("true".into())),
         ];
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_backslash_is_kept_and_a_quote_refused() {
+        let old = Config::default();
+        let mut new = old.clone();
+        new.servers = vec![leolsp::ServerConfig {
+            language: "c".into(),
+            command: "C:\\tools\\clangd.exe".into(),
+        }];
+        let got = changes(&old, &new);
+        assert_eq!(got[0].1.as_deref(), Some("\"C:\\tools\\clangd.exe\""));
+        assert_eq!(unwritable(&got), None);
+        // Saved and read back, the value is what was typed.
+        let text = format!("lsp-c = {}\n", got[0].1.as_deref().unwrap());
+        assert_eq!(
+            config::parse(&text).servers[0].command,
+            "C:\\tools\\clangd.exe"
+        );
+        for bad in ["say \"hi\"", "two\nlines"] {
+            new.servers[0].command = bad.into();
+            assert!(unwritable(&changes(&old, &new)).is_some(), "{bad:?}");
+        }
     }
 }

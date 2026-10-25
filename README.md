@@ -364,6 +364,7 @@ A `rust-analyzer` installed by rustup is a stub until `rustup component add rust
 | Completion | in INSERT, Tab after a word character or a dot, or Ctrl-n anywhere | the same |
 | Code actions | `:lsp-code-action`, then Up/Down or `j`/`k` and Enter, or a digit; `:lsp-code-action N` applies the Nth | Cmd-. or Body > Code Actions... |
 | Status and log | `:lsp-status`: each server's state and the last 500 lines it logged | the status bar's LSP dot, or View > Language Servers |
+| Restart | `:lsp-restart`: stop every server; each starts again, a failed one too, when a node in its language is next visited | the same |
 
 Completion: typing narrows the list, Up/Down or Ctrl-n/Ctrl-p select, Tab or Enter takes one, and Escape closes the list and stays in INSERT. Elsewhere Tab indents. With no server for the body, Tab after a word indents, and Tab after a dot says which setting is missing. At most 200 items are shown. Snippets are not asked for, and an item's additional edits, such as an auto-import, are not applied.
 
@@ -472,8 +473,6 @@ An extension with no importer is read whole into the node's body, as in Leo. `@a
 ## What else is not ported
 
 - **`@shadow`.** Deprecated in Leo.
-
-- **`@jupytext`.** Leo converts the notebook with the jupytext package. Such a node is refused on read and write.
 
 - **Unknown attributes are opaque.** Leo pickles them. They round-trip as the hex strings the file spells, and are written back unchanged.
 

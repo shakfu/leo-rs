@@ -14,7 +14,7 @@ The guards, and what they leave open, are in the README under "A `.leo` file nam
 
 A front end that opens untrusted outlines must check `Outline::full_path` against a directory of its own choosing before every write. leotui and leogui do not; they are meant for outlines you trust.
 
-The MCP server (`leomcp`, off by default) is the only network-facing part. It listens on 127.0.0.1 only, refuses a request whose `Host` or `Origin` is not local, and needs a bearer token kept in a file only the user can read. A client reads the outline; it edits only with `mcp-edit` and saves only with `mcp-save` as well. A client is as trusted as the text it reads: a prompt-injected agent with both settings can change any node and ask to save it.
+The MCP server (`leomcp`, off by default) is the only network-facing part. It listens on 127.0.0.1 only, refuses a request whose `Host` or `Origin` is not local, and needs a bearer token kept in a file only the user can read. A changed `mcp-token` applies from the next request. It serves 16 connections at once, and closes one that has not sent a whole request head within 10 s of connecting, unless the connection has already shown the token. A client reads the outline; it edits only with `mcp-edit` and saves only with `mcp-save` as well. A client is as trusted as the text it reads: a prompt-injected agent with both settings can change any node and ask to save it.
 
 Reading is not meant to be dangerous. These are parsers of untrusted input, and a crash, hang or unbounded allocation in any of them is a bug worth reporting:
 
@@ -26,13 +26,15 @@ Reading is not meant to be dangerous. These are parsers of untrusted input, and 
 
 - the `@auto` importers (`importers`);
 
-- the markdown readers (`leo-markdown`, and `leo-entangled`, which also reads the files an `include=` names);
+- the notebook and `py:percent` readers for `@jupytext` (`jupytext`);
+
+- the markdown readers (`leo-markdown`, and `leo-entangled`, which also reads the files an `include=` names, and refuses one outside the markdown file's directory);
 
 - the language-server protocol reader (`leolsp`), which reads what a server sends.
 
 A read refuses nodes nested deeper than 1000 levels (`outline::MAX_DEPTH`).
 
-`fuzz/` holds `cargo-fuzz` targets for the `.leo` reader, the sentinel reader, the pickle reader and the markdown reader. Nothing in a `.leo` file is executed: leo-rs has no scripting, so `@button` and `@command` nodes are text.
+`fuzz/` holds `cargo-fuzz` targets for the `.leo` reader, the sentinel reader, the pickle reader, the markdown reader, the notebook reader, the line importers, a renamed markdown heading, and outline edits with undo. Nothing in a `.leo` file is executed: leo-rs has no scripting, so `@button` and `@command` nodes are text.
 
 ## Reporting
 
