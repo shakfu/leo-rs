@@ -58,6 +58,8 @@ The `qdef` edit's changed ranges cover all 4,999 lines below it: error recovery 
 
 ### Decision: not now
 
+Superseded 2026-11-01: built as option (c+). See `incremental-colouring.md`, section 8. This section records the earlier decision.
+
 A Helix-style design keeps a tree per body, applies each change with `Tree::edit`, and queries the visible lines. Two places to re-parse:
 
 - **On the UI thread.** A keystroke costs 0.3 ms when the edit keeps the syntax valid, and 6.7-12 ms when it breaks it. Typing breaks the syntax often. `patch` costs 1.8 ms a key (measured on another machine, not re-run). A first visit still needs the 12 ms parse, so the visible-first window and the worker stay. Not a clear win, for a large rewrite: injections, `@language` regions and `plan`'s masking move to the lower-level API.

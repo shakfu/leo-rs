@@ -163,20 +163,51 @@ Then update `docs/dev/colouring.md` and the `TODO.md` item. Add a CHANGELOG entr
 
 ## 8. Outcome
 
-Replay on Linux, 16 threads, `cargo bench -p leoapp --bench typing`. Python 5,000 lines / Rust 5,000 lines / Rust real file. Single runs.
+Measured 2026-11-01 on Linux, 16 threads, `cargo bench -p leoapp --bench typing`. Python 5,000 lines / Rust 5,000 lines / Rust real file. The view follows the edit. Single runs; the code before this work is `ec31763`, run with the same bench.
 
-| | Worker CPU, ms | Wrong colours, s |
+| | Worker CPU, ms | Wrong on screen, s (of about 20) |
 |-|-|-|
-| Before, `SETTLE` 300 ms | 793 / 292 / 138 | 4 / 5 / 7 |
-| After, 300 ms | 497 / 110 / 92 | 3 / 5 / 7 |
-| After, 100 ms (chosen) | 502 / 102 / 70 | 2 / 4 / 6 |
-| After, 50 ms | 4309 / 2368 / 1405 | 3 / 2 / 3 |
-| After, 16 ms | 6848 / 2956 / 1797 | 3 / 2 / 2 |
+| Before, `SETTLE` 300 ms | 573 / 321 / 186 | 3.09 / 4.82 / 7.24 |
+| After, `SETTLE` 100 ms | 514 / 123 / 70 | 2.31 / 4.40 / 6.01 |
 
-Answers to section 7:
+Worker CPU is noisy: an earlier run of the before code gave 793 / 292 / 138.
 
-- Q3: incremental and fresh trees differed in 6 of 45,000 random edits, always from history-dependent error recovery. A tree with an error is now parsed fresh: 0 of 112,500 differ.
+Rejected, measured with the view fixed at the top of the body and in whole seconds:
+
+| | Worker CPU, ms | Wrong in body, s |
+|-|-|-|
+| `SETTLE` 50 ms | 4309 / 2368 / 1405 | 3 / 2 / 3 |
+| `SETTLE` 16 ms | 6848 / 2956 / 1797 | 3 / 2 / 2 |
+| 100 ms, with a deadline typing cannot push back | 3208 / 1311 / 460 | 3 / 2 / 7 |
+
+### Wrong colours
+
+Wrong time on screen equals wrong time in the body, so these colours are visible. In the real file, 72 of 190 keys showed wrong colours on their first frame, about 6 lines each: 463 lines in all, of which 114 lie within 2 lines of the edit and 215 within 15. They clear at the next job, which waits for a pause because the 80 ms key gap is below `SETTLE`. The other two bodies were not broken down this way.
+
+Decision: option (b) stays unbuilt. About 6 of 50 rows are wrong for part of a typing burst, and most of the replay's wrong keys leave the syntax broken, where the fresh colouring is itself error recovery (inferred from sampled keys).
+
+### Job cost
+
+Median of 9, this machine, 5,000 lines, ms. Whole recolour of the clean body: 24 (Python), 21 (Rust).
+
+| Edit | Python, budget / none | Rust, budget / none |
+|-|-|-|
+| Clean | 1.5 / 1.5 | 1.5 / 1.5 |
+| Unclosed quote | 62 / 109 | 15 / 13 |
+| Keyword broken (`qdef`, `qfn`) | 39 / 49 | 87 / 164 |
+
+`INCREMENTAL_BUDGET` caps the incremental attempt at about 5 ms. The rest is the fresh parse of broken text: 54 ms for Python's quote, 80 ms for Rust's keyword, against about 12-15 ms on clean text. So a broken edit costs about 5 ms more than a fresh colouring of the same text (inferred: the old engine was not timed on these texts).
+
+### Memory
+
+Resident, measured first in a fresh process. One Python tree of 5,000 lines: 5.89 MB, for 0.11 MB of text. `KEEP` = 4 such bodies in `Colouring`: 29.9 MB in all, of which trees are about 23.6 MB (inferred by multiplication). Only a body past `WHOLE_UNDER` lines keeps a tree. Accepted: the cost is bounded by `KEEP` and scales with the body.
+
+### Other answers to section 7
+
+- Q3: incremental and fresh trees differed in 6 of 45,000 random edits, all from error recovery. A tree with an error is now parsed fresh: 0 of 112,500 differ.
 - Q5: injections stay unsupported, as before.
-- Q4: not measured.
 
-Deviation from step 2: an exhaustive test over short strings replaces the fuzz target.
+### Other notes
+
+- Widening a re-query to top-level nodes is a precaution. Removing it failed no test in a stress run (150 and 40 seeds). It stays because a miss leaves wrong colours silently; it costs time only in a body with very long top-level nodes.
+- Deviation from step 2: an exhaustive test over short strings replaces the fuzz target.

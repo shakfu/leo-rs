@@ -283,7 +283,8 @@ struct Region {
 /// file in one body, where the parse costs tens of milliseconds: 35 ms a key
 /// at 5,000 lines. So past `WHOLE_UNDER` lines an edit recolours only the
 /// lines it changed, with `CONTEXT` lines either side, and keeps the rest;
-/// the whole body is coloured again once typing has paused for `SETTLE`. A
+/// the whole body is coloured again once typing has paused for `SETTLE`. That
+/// job reuses the body's last parse, in `treesit::reparse`. A
 /// body seen for the first time is coloured on screen first. The whole
 /// colouring is made on the `worker` thread, and `poll` puts it in. `KEEP` bodies are
 /// kept, so switching back to one is free. Only the shown body is coloured

@@ -3,11 +3,13 @@
 //!     cargo bench -p leoapp --bench typing
 //!
 //! About 200 scripted keys, 80 ms apart, with 500 ms pauses, and a 16 ms frame
-//! between. Each row reports the UI thread's time per key, the colouring
-//! thread's CPU (Linux only), and how long the colours on screen differed from
-//! a whole colouring of the same text.
+//! between, with the view following the edit. Each row reports the UI thread's
+//! time per key, the colouring thread's CPU (Linux only), and how long colours
+//! differed from a whole colouring of the same text: on screen, and anywhere in
+//! the body. A last section reports resident memory (Linux only).
 
 use std::fs;
+use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -17,7 +19,7 @@ const FRAME: Duration = Duration::from_millis(16);
 const KEY_GAP: Duration = Duration::from_millis(80);
 const PAUSE: Duration = Duration::from_millis(500);
 const PAUSE_EVERY: usize = 20;
-const VISIBLE: std::ops::Range<usize> = 0..50;
+const ROWS: usize = 50;
 
 fn python_body() -> Vec<String> {
     let mut lines = Vec::new();
@@ -116,44 +118,71 @@ fn worker_cpu() -> Option<u64> {
     Some(0)
 }
 
+/// The view after a key: `ROWS` lines around the first line it changed, or
+/// `view` as it was if it changed none.
+fn follow(view: Range<usize>, before: &[String], after: &[String]) -> Range<usize> {
+    let Some(line) = (0..after.len()).find(|&i| before.get(i) != after.get(i)) else {
+        return view;
+    };
+    let start = line
+        .saturating_sub(ROWS / 2)
+        .min(after.len().saturating_sub(ROWS));
+    start..(start + ROWS).min(after.len())
+}
+
 fn replay(name: &str, body: &[String], language: &str, keyword: &str, quote: &str) {
     let states = script(body, keyword, quote);
     let truth: Vec<Vec<Vec<Span>>> = states.iter().map(|s| highlight(s, language)).collect();
 
     let mut colouring = Colouring::default();
-    colouring.of("n", body, language, VISIBLE);
-    settle(&mut colouring, body, language);
+    settle(&mut colouring, body, language, 0..ROWS);
 
     let cpu_before = worker_cpu();
     let mut per_key = Vec::with_capacity(states.len());
-    let mut wrong = Duration::ZERO;
+    let (mut wrong_body, mut wrong_screen) = (Duration::ZERO, Duration::ZERO);
+    let mut view = 0..ROWS;
+    let mut before = body;
+    let begun = Instant::now();
     for (k, lines) in states.iter().enumerate() {
         let gap = match (k + 1) % PAUSE_EVERY {
             0 => PAUSE,
             _ => KEY_GAP,
         };
+        view = follow(view, before, lines);
+        before = lines;
+        let judge = |spans: &[Vec<Span>]| {
+            (
+                spans == truth[k].as_slice(),
+                spans[view.clone()] == truth[k][view.clone()],
+            )
+        };
         let start = Instant::now();
-        let mut shown = colouring.of("n", lines, language, VISIBLE);
+        let mut shown = colouring.of("n", lines, language, view.clone());
         per_key.push(start.elapsed());
-        let mut right = *shown == truth[k];
+        let (mut body_right, mut screen_right) = judge(&shown);
         let mut last = Instant::now();
         while start.elapsed() < gap {
             std::thread::sleep(FRAME);
             colouring.poll();
-            let spans = colouring.of("n", lines, language, VISIBLE);
-            if !Rc::ptr_eq(&spans, &shown) {
-                right = *spans == truth[k];
-                shown = spans;
+            let spans = colouring.of("n", lines, language, view.clone());
+            let elapsed = last.elapsed();
+            if !body_right {
+                wrong_body += elapsed;
             }
-            if !right {
-                wrong += last.elapsed();
+            if !screen_right {
+                wrong_screen += elapsed;
+            }
+            if !Rc::ptr_eq(&spans, &shown) {
+                (body_right, screen_right) = judge(&spans);
+                shown = spans;
             }
             last = Instant::now();
         }
     }
+    let total = begun.elapsed();
     let last = states.last().unwrap();
-    settle(&mut colouring, last, language);
-    let end = colouring.of("n", last, language, VISIBLE);
+    settle(&mut colouring, last, language, view.clone());
+    let end = colouring.of("n", last, language, view);
     assert_eq!(
         *end,
         *truth.last().unwrap(),
@@ -167,20 +196,72 @@ fn replay(name: &str, body: &[String], language: &str, keyword: &str, quote: &st
         _ => "n/a".to_string(),
     };
     println!(
-        "{name:<18} {:>4} keys  UI mean {:>7.2?}  max {:>7.2?}  worker CPU {cpu:>9}  wrong {:>7.0?}",
+        "{name:<16} {:>3} keys in {:>4.1} s  UI mean {:>7.2?}  max {:>7.2?}  worker CPU {cpu:>9}  wrong on screen {:>5.2} s, in body {:>5.2} s",
         states.len(),
+        total.as_secs_f64(),
         mean,
         per_key[per_key.len() - 1],
-        wrong,
+        wrong_screen.as_secs_f64(),
+        wrong_body.as_secs_f64(),
     );
 }
 
-fn settle(colouring: &mut Colouring, lines: &[String], language: &str) {
+fn settle(colouring: &mut Colouring, lines: &[String], language: &str, view: Range<usize>) {
+    colouring.of("n", lines, language, view.clone());
     while colouring.due_in().is_some() {
         std::thread::sleep(Duration::from_millis(1));
         colouring.poll();
-        colouring.of("n", lines, language, VISIBLE);
+        colouring.of("n", lines, language, view.clone());
     }
+}
+
+/// Resident bytes, where the OS says.
+fn resident() -> Option<usize> {
+    let statm = fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages * 4096)
+}
+
+/// What one kept tree costs, from 20 held at once, and what `Colouring`'s
+/// four kept bodies cost in all: their text, spans and trees.
+fn memory(body: &[String]) {
+    let mb = |bytes: usize| bytes as f64 / 1e6;
+    let text = body.join("\n");
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .unwrap();
+    let Some(before) = resident() else {
+        println!("memory: n/a");
+        return;
+    };
+    let trees: Vec<_> = (0..20)
+        .map(|_| parser.parse(&text, None).unwrap())
+        .collect();
+    let after = resident().unwrap();
+    println!(
+        "one tree {:.2} MB, for {:.2} MB of text",
+        mb(after.saturating_sub(before)) / 20.0,
+        mb(text.len())
+    );
+    drop(trees);
+
+    let before = resident().unwrap();
+    let mut colouring = Colouring::default();
+    for k in 0..4 {
+        let lines: Vec<String> = body.iter().map(|l| format!("{l} ")).collect();
+        let node = k.to_string();
+        colouring.of(&node, &lines, "python", 0..ROWS);
+        while colouring.due_in().is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+            colouring.poll();
+            colouring.of(&node, &lines, "python", 0..ROWS);
+        }
+    }
+    println!(
+        "four kept bodies {:.1} MB",
+        mb(resident().unwrap().saturating_sub(before))
+    );
 }
 
 fn main() {
@@ -188,6 +269,8 @@ fn main() {
     if !std::env::args().any(|a| a == "--bench") {
         return;
     }
+    // First: a replay leaves free heap, which would hide what these allocate.
+    memory(&python_body());
     replay("python, 5000", &python_body(), "python", "def", "\"\"\"");
     replay("rust, 5000", &rust_body(), "rust", "fn", "\"");
     replay("rust, real file", &real_body(), "rust", "fn", "\"");

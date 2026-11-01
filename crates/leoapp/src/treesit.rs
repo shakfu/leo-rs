@@ -14,6 +14,7 @@
 
 use std::cell::RefCell;
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 use streaming_iterator::StreamingIterator;
@@ -206,6 +207,10 @@ fn grammar_for(language: &str) -> Option<&'static Grammar> {
     }
 }
 
+/// How long an incremental parse may run before a fresh one replaces it. A
+/// clean edit to 5,000 lines takes under 1.5 ms, whole job included.
+const INCREMENTAL_BUDGET: Duration = Duration::from_millis(5);
+
 /// One region's last parse, kept so the next can reuse it.
 pub(crate) struct Parsed {
     language: String,
@@ -250,13 +255,16 @@ pub(crate) fn reparse<'a>(
             let edit = edit_between(&old.text, &text);
             let mut edited = old.tree.clone();
             edited.edit(&edit);
-            let mut tree = parse(grammar, &text, Some(&edited), cancelled)?;
             // Error recovery depends on the parse's history: an incremental
-            // tree can differ from a fresh one, and its colours stay wrong
-            // until a later edit. Only a tree holding an error differs.
-            if tree.root_node().has_error() {
-                tree = parse(grammar, &text, None, cancelled)?;
-            }
+            // tree holding an error can differ from a fresh one, and its colours
+            // stay wrong until a later edit. Recovery is also what makes an
+            // incremental parse slow, so past the budget go straight to fresh.
+            let begun = Instant::now();
+            let late = || cancelled() || begun.elapsed() > INCREMENTAL_BUDGET;
+            let tree = match parse(grammar, &text, Some(&edited), &late) {
+                Some(tree) if !tree.root_node().has_error() => tree,
+                _ => parse(grammar, &text, None, cancelled)?,
+            };
             let mut changed = edit.start_byte..edit.new_end_byte;
             for range in edited.changed_ranges(&tree) {
                 changed.start = changed.start.min(range.start_byte);
