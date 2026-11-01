@@ -1,6 +1,6 @@
 # Incremental colouring: design
 
-Design only. Source: the `TODO.md` item "Incremental colouring, as Helix does it" (Medium, leoapp). Background and measurements: `docs/dev/colouring.md`.
+Built as (c+) on 2026-11-01; step 7 not done. Source: the `TODO.md` item "Incremental colouring, as Helix does it" (Medium, leoapp). Background and measurements: `docs/dev/colouring.md`.
 
 Terms:
 
@@ -160,3 +160,23 @@ Then update `docs/dev/colouring.md` and the `TODO.md` item. Add a CHANGELOG entr
 4. Memory: up to 4 bodies' trees stay resident. Is that acceptable unmeasured, or measure first?
 5. Dropping `tree-sitter-highlight` makes injections (HTML `<script>`, Markdown fences) a hand-written feature. Are injections wanted at all?
 6. Should step 0 cover grammars other than Python? Every number here is one grammar, one body shape and single edits.
+
+## 8. Outcome
+
+Replay on Linux, 16 threads, `cargo bench -p leoapp --bench typing`. Python 5,000 lines / Rust 5,000 lines / Rust real file. Single runs.
+
+| | Worker CPU, ms | Wrong colours, s |
+|-|-|-|
+| Before, `SETTLE` 300 ms | 793 / 292 / 138 | 4 / 5 / 7 |
+| After, 300 ms | 497 / 110 / 92 | 3 / 5 / 7 |
+| After, 100 ms (chosen) | 502 / 102 / 70 | 2 / 4 / 6 |
+| After, 50 ms | 4309 / 2368 / 1405 | 3 / 2 / 3 |
+| After, 16 ms | 6848 / 2956 / 1797 | 3 / 2 / 2 |
+
+Answers to section 7:
+
+- Q3: incremental and fresh trees differed in 6 of 45,000 random edits, always from history-dependent error recovery. A tree with an error is now parsed fresh: 0 of 112,500 differ.
+- Q5: injections stay unsupported, as before.
+- Q4: not measured.
+
+Deviation from step 2: an exhaustive test over short strings replaces the fuzz target.

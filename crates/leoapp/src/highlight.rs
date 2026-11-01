@@ -20,7 +20,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering::SeqCst};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,7 +28,7 @@ use leolib::outline::set_delims_from_language;
 use leolib::Outline;
 
 use crate::keywords;
-use crate::treesit;
+use crate::treesit::{self, Parsed};
 
 /// What a run of characters is, and therefore how it is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,6 +307,8 @@ struct Entry {
     due: Option<Instant>,
     /// The whole colouring of `lines`, asked of the worker.
     job: Option<Pending>,
+    /// The worker's last parse of this body, per region. Dropped with the entry.
+    parsed: Arc<Mutex<Vec<Option<Parsed>>>>,
 }
 
 /// A whole colouring asked of the worker. Hiding the body marks it
@@ -322,6 +324,8 @@ const WANTED: u8 = 0;
 const UNWANTED: u8 = 1;
 const STARTED: u8 = 2;
 const SKIPPED: u8 = 3;
+/// Begun, and then replaced by an edit: the worker stops the parse.
+const CANCELLED: u8 = 4;
 
 impl Pending {
     /// Move the state from `from` to `to`, if it is still `from`.
@@ -334,6 +338,7 @@ impl Drop for Pending {
     /// Dropped after an edit or out of the cache: nobody can receive it.
     fn drop(&mut self) {
         self.set(WANTED, UNWANTED);
+        self.set(STARTED, CANCELLED);
     }
 }
 
@@ -343,6 +348,7 @@ struct Job {
     language: String,
     state: Arc<AtomicU8>,
     reply: Sender<Vec<Vec<Span>>>,
+    parsed: Arc<Mutex<Vec<Option<Parsed>>>>,
 }
 
 /// The one thread that colours bodies whole, for every outline open. Jobs
@@ -362,9 +368,21 @@ fn worker() -> &'static Sender<Job> {
                     }
                     // A panic drops the reply, and the entry keeps its
                     // partial colouring; the worker lives on for the rest.
-                    let spans =
-                        catch_unwind(AssertUnwindSafe(|| highlight(&job.lines, &job.language)));
-                    if let Ok(spans) = spans {
+                    let spans = catch_unwind(AssertUnwindSafe(|| {
+                        let cancelled = || job.state.load(SeqCst) == CANCELLED;
+                        // After a panic the trees may not match their text.
+                        let mut parsed = match job.parsed.lock() {
+                            Ok(parsed) => parsed,
+                            Err(poisoned) => {
+                                let mut parsed = poisoned.into_inner();
+                                parsed.clear();
+                                job.parsed.clear_poison();
+                                parsed
+                            }
+                        };
+                        highlight_kept(&job.lines, &job.language, &mut parsed, &cancelled)
+                    }));
+                    if let Ok(Some(spans)) = spans {
                         let _ = job.reply.send(spans);
                     }
                 }
@@ -380,7 +398,7 @@ const WHOLE_UNDER: usize = 500;
 /// lines, such as a string, to come out right near the edit.
 const CONTEXT: usize = 20;
 /// How long typing must pause before a partial colouring is made whole.
-pub const SETTLE: Duration = Duration::from_millis(300);
+pub const SETTLE: Duration = Duration::from_millis(100);
 /// How many bodies' colourings are kept.
 const KEEP: usize = 4;
 /// How often to look for a whole colouring being made on a thread.
@@ -408,6 +426,7 @@ impl Colouring {
                 language: String::new(),
                 due: None,
                 job: None,
+                parsed: Arc::default(),
             },
         };
         if let Some(job) = &entry.job {
@@ -489,6 +508,7 @@ impl Entry {
             language: self.language.clone(),
             state: Arc::clone(&state),
             reply,
+            parsed: Arc::clone(&self.parsed),
         });
         self.job = Some(Pending { receive, state });
     }
@@ -604,6 +624,38 @@ pub fn highlight(lines: &[String], language: &str) -> Vec<Vec<Span>> {
         }
     }
     out
+}
+
+/// As `highlight`, reusing and updating `kept`, one entry per region. A region
+/// that moves in the list is still a valid edit, if a wide one. None if
+/// `cancelled` stopped a parse.
+fn highlight_kept(
+    lines: &[String],
+    language: &str,
+    kept: &mut Vec<Option<Parsed>>,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Vec<Vec<Span>>> {
+    let mut out: Vec<Vec<Span>> = vec![Vec::new(); lines.len()];
+    let (masked, regions) = plan(lines, language, &mut out);
+    kept.resize_with(regions.len(), || None);
+    for (region, slot) in regions.iter().zip(kept.iter_mut()) {
+        let slice = &masked[region.start..region.end];
+        let scanned: Vec<Vec<Span>>;
+        let spans = if treesit::has_grammar(&region.language) {
+            treesit::reparse(slot, slice, &region.language, cancelled)?
+        } else {
+            let rules = Rules::for_language(&region.language);
+            let mut state = State::default();
+            scanned = slice.iter().map(|l| scan(l, &rules, &mut state)).collect();
+            &scanned
+        };
+        for (k, line_spans) in spans.iter().enumerate() {
+            if out[region.start + k].is_empty() {
+                out[region.start + k].clone_from(line_spans);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Claim Leo's own lines and cut the rest into single-language regions.
@@ -1116,6 +1168,7 @@ mod tests {
                 language: "python".into(),
                 state: Arc::clone(&state),
                 reply,
+                parsed: Arc::default(),
             };
             worker().send(job).unwrap();
             (receive, state)
@@ -1201,6 +1254,164 @@ mod tests {
             c.due_in().is_none(),
             "a hidden partial body would wake for nothing"
         );
+    }
+
+    /// A small deterministic generator: the tests need no `rand`.
+    struct Lcg(u64);
+    impl Lcg {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as usize) % n.max(1)
+        }
+    }
+
+    /// One random edit: most insert a fragment, some delete, some join lines.
+    fn mutate(body: &mut Vec<String>, rng: &mut Lcg, fragments: &[&str]) {
+        let i = rng.below(body.len());
+        match rng.below(10) {
+            0 if body.len() > 1 => {
+                body.remove(i);
+            }
+            1 => body.insert(i, fragments[rng.below(fragments.len())].to_string()),
+            2 => {
+                let mut at = rng.below(body[i].len() + 1);
+                while !body[i].is_char_boundary(at) {
+                    at -= 1;
+                }
+                let tail = body[i].split_off(at);
+                body.insert(i + 1, tail);
+            }
+            3 if !body[i].is_empty() => {
+                body[i].pop();
+            }
+            _ => {
+                let mut at = rng.below(body[i].len() + 1);
+                while !body[i].is_char_boundary(at) {
+                    at -= 1;
+                }
+                body[i].insert_str(at, fragments[rng.below(fragments.len())]);
+            }
+        }
+    }
+
+    /// Incremental colouring agrees with a fresh one, edit after edit.
+    fn incremental_matches_fresh(language: &str, body: &str, fragments: &[&str], seed: u64) {
+        let mut body = lines(body);
+        let mut rng = Lcg(seed);
+        let mut kept = Vec::new();
+        let never = || false;
+        for step in 0..150 {
+            let got = highlight_kept(&body, language, &mut kept, &never).unwrap();
+            assert_eq!(
+                got,
+                highlight(&body, language),
+                "step {step}:\n{}",
+                body.join("\n")
+            );
+            mutate(&mut body, &mut rng, fragments);
+        }
+    }
+
+    const PYTHON: &str = "import os\n\n@dec\nclass A(B):\n    \"\"\"Doc.\"\"\"\n    x: int = 1\n\n    def f(self, y):\n        # a comment\n        return [y, 'text', 1.5, len(y)]\n\ndef g():\n    << section >>\n    @others\n    s = \"caf\u{e9}\"\n    return s\n";
+    const RUST: &str = "use std::fmt;\n\n#[derive(Debug)]\nstruct P { n: u8 }\n\nimpl P {\n    /// Doc.\n    fn f(&self, s: &'static str) -> u8 {\n        let x = 1.5; // note\n        g(self.n, \"h\u{e9}\")\n    }\n}\n\nfn main() { /* a /* b */ c */ println!(\"x\"); }\n";
+    const C: &str = "#include <stdio.h>\n\ntypedef struct p { int n; } p_t;\n\n/* block\n   comment */\nint main(void) {\n    unsigned long n = 1;\n    printf(\"%d\", n);\n    return 0;\n}\n";
+    const MIXED: &str = "def f():\n    pass\n@language c\nint x; /* y */\n@nocolor\nnot code\n@color\nint z;\n@language haskell\n{- h -} data X = 1\n";
+
+    #[test]
+    fn incremental_colouring_equals_a_fresh_one_after_random_edits() {
+        let fragments = [
+            "\"",
+            "'",
+            "\"\"\"",
+            "/*",
+            "*/",
+            "(",
+            ")",
+            "{",
+            "}",
+            "def ",
+            "q",
+            " x",
+            "#",
+            "//",
+            "\u{e9}",
+            "@language c",
+            "@others",
+            "<< s >>",
+            ":",
+            ";",
+            "    ",
+        ];
+        for seed in 1..=8 {
+            incremental_matches_fresh("python", PYTHON, &fragments, seed);
+            incremental_matches_fresh("rust", RUST, &fragments, seed);
+            incremental_matches_fresh("c", C, &fragments, seed);
+            incremental_matches_fresh("python", MIXED, &fragments, seed);
+        }
+    }
+
+    #[test]
+    fn incremental_colouring_equals_a_fresh_one_in_a_long_body() {
+        // Many top-level nodes, so an edit re-queries a few lines and splices.
+        let fragments = [
+            "\"", "'", "\"\"\"", "(", ")", "def ", "q", "#", ":", "    ", "\u{e9}",
+        ];
+        for seed in 1..=4 {
+            let py = PYTHON.repeat(40);
+            incremental_matches_fresh("python", &py, &fragments, seed);
+            let rust = RUST.repeat(40);
+            incremental_matches_fresh(
+                "rust",
+                &rust,
+                &["\"", "/*", "*/", "{", "}", "fn ", "q", "//"],
+                seed,
+            );
+        }
+    }
+
+    #[test]
+    fn incremental_colouring_follows_a_directive_added_and_removed() {
+        let mut body = lines(MIXED);
+        let mut kept = Vec::new();
+        let never = || false;
+        highlight_kept(&body, "python", &mut kept, &never).unwrap();
+        body.insert(1, "@language rust".to_string());
+        let got = highlight_kept(&body, "python", &mut kept, &never).unwrap();
+        assert_eq!(got, highlight(&body, "python"));
+        body.remove(1);
+        let got = highlight_kept(&body, "python", &mut kept, &never).unwrap();
+        assert_eq!(got, highlight(&body, "python"));
+    }
+
+    #[test]
+    fn a_cancelled_parse_returns_nothing_and_the_next_still_reuses_the_last() {
+        let mut body = long_body();
+        let mut kept = Vec::new();
+        let before = highlight_kept(&body, "python", &mut kept, &|| false).unwrap();
+        body[0].insert(0, 'q');
+        assert!(highlight_kept(&body, "python", &mut kept, &|| true).is_none());
+        // The last parse is untouched: the old text still colours as before.
+        let old = long_body();
+        assert_eq!(
+            highlight_kept(&old, "python", &mut kept, &|| true).unwrap(),
+            before
+        );
+        let got = highlight_kept(&body, "python", &mut kept, &|| false).unwrap();
+        assert_eq!(got, highlight(&body, "python"));
+    }
+
+    #[test]
+    fn an_edit_replaces_a_running_job_which_cancels_it() {
+        let (_reply, receive) = mpsc::channel::<Vec<Vec<Span>>>();
+        let state = Arc::new(AtomicU8::new(STARTED));
+        drop(Pending {
+            receive,
+            state: Arc::clone(&state),
+        });
+        assert_eq!(state.load(SeqCst), CANCELLED);
     }
 
     /// The classified runs of one line, as (text, class).

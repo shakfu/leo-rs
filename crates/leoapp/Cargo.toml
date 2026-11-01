@@ -23,7 +23,7 @@ unicode-width = "0.2"
 # binary, so the list is the languages Leo outlines are actually written in
 # rather than everything crates.io publishes.
 tree-sitter = "0.25"
-tree-sitter-highlight = "0.25"
+streaming-iterator = "0.1"
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
@@ -43,4 +43,8 @@ criterion = { version = "0.8", default-features = false }
 
 [[bench]]
 name = "body"
+harness = false
+
+[[bench]]
+name = "typing"
 harness = false
