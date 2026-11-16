@@ -1280,11 +1280,32 @@ fn yank_and_put_move_text() {
 }
 
 #[test]
-fn a_yank_is_kept_for_the_clipboard_and_a_delete_is_not() {
+fn x_keeps_what_it_removes_as_vim_does() {
+    let mut app = body_app("ab\n\nwxyz\n");
+    press(&mut app, "xp");
+    assert_eq!(body(&app), "ba\n\nwxyz\n");
+    assert_eq!(app.editor.yanked.take().as_deref(), Some("a"));
+    // An x on an empty line removes nothing and keeps the register.
+    press(&mut app, "jx");
+    assert_eq!(app.editor.register.text, "a");
+    assert_eq!(app.editor.yanked, None);
+    press(&mut app, "j$3X");
+    assert_eq!(body(&app), "ba\n\nz\n");
+    assert_eq!(app.editor.register.text, "wxy");
+    assert_eq!(app.editor.yanked.take().as_deref(), Some("wxy"));
+}
+
+#[test]
+fn yanks_and_deletes_are_kept_for_the_clipboard() {
     let mut app = body_app("one\ntwo\nthree\n");
     press(&mut app, "Vjy");
     assert_eq!(app.editor.yanked.take().as_deref(), Some("one\ntwo\n"));
     press(&mut app, "dd");
+    assert_eq!(app.editor.yanked.take().as_deref(), Some("one\n"));
+    press(&mut app, "cwnew");
+    assert_eq!(app.editor.yanked.take().as_deref(), Some("two"));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    press(&mut app, "p");
     assert_eq!(app.editor.yanked, None);
 }
 

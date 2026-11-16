@@ -335,7 +335,7 @@ Operators, which take a motion, a text object, or a doubling:
 |---|---|
 | `d` | delete into the text register |
 | `c` | change: delete, then INSERT |
-| `y` | yank into the text register and the system clipboard |
+| `y` | yank into the text register |
 | `>` `<` | indent / unindent, linewise. Leo calls these `indent-region` |
 | `gu` `gU` `g~` | lowercase, uppercase, toggle case |
 
@@ -416,6 +416,7 @@ Two registers, because nodes and text are not the same thing:
 |---|---|---|
 | node clipboard | `yy` `dd` in the tree, `copy-node`, `cut-node` | `p` in the tree, `paste-node` |
 | text register | `y` `d` `c` `x` in the body | `p` `P` in the body |
+| system clipboard | `y` `d` `c` `x` in the body, a copy of the text register | the terminal's or the OS's paste |
 
 `p` therefore always does the obvious thing for the pane you are in. Named registers (`"ayy`) are v2; the register file is a map from the start so that adding them is a lookup, not a redesign.
 

@@ -21,7 +21,8 @@ pub struct Editor {
     /// The anchor of a VISUAL selection, and whether it is linewise.
     pub visual: Option<(Pos, Kind)>,
     pub register: Register,
-    /// Text yanked since a front end last took it, for the system clipboard.
+    /// Text yanked or deleted since a front end last took it, for the system
+    /// clipboard.
     pub yanked: Option<String>,
     /// The last change, for `.`.
     pub last_change: Option<Change>,
@@ -220,6 +221,7 @@ impl Editor {
                 self.cursor = start;
             }
             Operator::Delete | Operator::Change => {
+                self.yanked = Some(text.clone());
                 self.register = Register {
                     text,
                     linewise: kind == Kind::Linewise,
@@ -262,6 +264,7 @@ impl Editor {
     fn run_simple(&mut self, lines: &mut Vec<String>, edit: &Simple, count: usize) -> Option<()> {
         match edit {
             Simple::DeleteChar { before } => {
+                let mut removed = String::new();
                 for _ in 0..count {
                     let (row, col) = self.cursor;
                     let width = line_len(lines, row);
@@ -269,14 +272,26 @@ impl Editor {
                         if col == 0 {
                             break;
                         }
-                        remove_char(lines, (row, col - 1));
+                        removed.extend(remove_char(lines, (row, col - 1)));
                         self.cursor.1 -= 1;
                     } else {
                         if col >= width {
                             break;
                         }
-                        remove_char(lines, (row, col));
+                        removed.extend(remove_char(lines, (row, col)));
                     }
+                }
+                // As vim: the register keeps the characters in text order,
+                // and an `x` that removed nothing leaves it alone.
+                if !removed.is_empty() {
+                    if *before {
+                        removed = removed.chars().rev().collect();
+                    }
+                    self.yanked = Some(removed.clone());
+                    self.register = Register {
+                        text: removed,
+                        linewise: false,
+                    };
                 }
             }
             Simple::Replace(ch) => {
@@ -664,14 +679,10 @@ fn map_range(lines: &mut [String], start: Pos, end: Pos, kind: Kind, f: impl Fn(
     }
 }
 
-fn remove_char(lines: &mut [String], (row, col): Pos) {
-    let line = lines[row].clone();
-    let i = byte_index(&line, col);
-    if i < line.len() {
-        let mut new = line.clone();
-        new.remove(i);
-        lines[row] = new;
-    }
+/// Remove the character at `(row, col)`, returning it.
+fn remove_char(lines: &mut [String], (row, col): Pos) -> Option<char> {
+    let i = byte_index(&lines[row], col);
+    (i < lines[row].len()).then(|| lines[row].remove(i))
 }
 
 /// Insert text at the cursor, moving it past what was inserted.
