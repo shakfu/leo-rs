@@ -1280,6 +1280,15 @@ fn yank_and_put_move_text() {
 }
 
 #[test]
+fn a_yank_is_kept_for_the_clipboard_and_a_delete_is_not() {
+    let mut app = body_app("one\ntwo\nthree\n");
+    press(&mut app, "Vjy");
+    assert_eq!(app.editor.yanked.take().as_deref(), Some("one\ntwo\n"));
+    press(&mut app, "dd");
+    assert_eq!(app.editor.yanked, None);
+}
+
+#[test]
 fn visual_selects_and_an_operator_takes_it() {
     let mut app = body_app("one\ntwo\nthree\n");
     press(&mut app, "V");
@@ -2578,4 +2587,34 @@ fn a_counted_insert_repeats_its_text_once_and_has_a_limit() {
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(app.message.starts_with("insert refused"), "{}", app.message);
     assert_eq!(body(&app), "\n".repeat(65));
+}
+
+#[test]
+fn a_plugins_question_runs_its_action_on_y_only() {
+    let mut app = app();
+    app.confirm("send it?".to_string(), |app| {
+        app.message = "sent".to_string()
+    });
+    assert_eq!(app.mode, Mode::Confirm);
+    assert_eq!(app.mini_label(), "send it? (y/n) ");
+    press(&mut app, "y");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.message, "sent");
+
+    app.confirm("send it?".to_string(), |app| {
+        app.message = "sent".to_string()
+    });
+    press(&mut app, "n");
+    assert_eq!(app.message, "not run");
+    app.confirm("send it?".to_string(), |app| {
+        app.message = "sent".to_string()
+    });
+    press(&mut app, "<Esc>");
+    assert_ne!(app.message, "sent");
+    // A later question does not run an earlier answer's action.
+    app.confirm("other?".to_string(), |app| {
+        app.message = "other".to_string()
+    });
+    press(&mut app, "y");
+    assert_eq!(app.message, "other");
 }

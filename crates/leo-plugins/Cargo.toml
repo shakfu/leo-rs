@@ -16,12 +16,16 @@ categories = ["text-editors"]
 default = ["markdown", "wiki"]
 markdown = ["dep:leo-markdown"]
 wiki = ["dep:leo-wiki"]
+# `:ask`: off by default, as a run costs money and sends outline text off
+# the machine.
+agent = ["dep:leo-agent"]
 
 [dependencies]
 leolib.workspace = true
 leoapp.workspace = true
 leo-markdown = { workspace = true, optional = true }
 leo-wiki = { workspace = true, optional = true, features = ["leoapp"] }
+leo-agent = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

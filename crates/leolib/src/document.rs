@@ -101,6 +101,12 @@ impl Document {
         self.free_dropped();
     }
 
+    /// Join the last two undo steps into one named `name`. See
+    /// [`Undoer::join_last`].
+    pub fn join_undo(&mut self, name: &str) -> bool {
+        self.undoer.join_last(name)
+    }
+
     /// Forget the undo history.
     pub fn clear_undo(&mut self) {
         self.undoer.clear();

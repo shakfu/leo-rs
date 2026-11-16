@@ -954,7 +954,10 @@ fn a_file_under_a_linked_root_keys_as_ours() {
     std::os::unix::fs::symlink(&real, &link).unwrap();
     let lsp = Lsp::new(vec![], link.clone(), Arc::new(|| {}));
     let ours = lsp.key_of(&uri::from_path(&link.join("x.py")));
-    let theirs = lsp.key_of(&uri::from_path(&real.join("x.py")));
+    // Fully resolved, as such a server sends it: macOS's temp dir is itself
+    // under a link, `/var` to `/private/var`.
+    let resolved = std::fs::canonicalize(&real).unwrap();
+    let theirs = lsp.key_of(&uri::from_path(&resolved.join("x.py")));
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(ours, theirs);
 }

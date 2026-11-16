@@ -335,7 +335,7 @@ Operators, which take a motion, a text object, or a doubling:
 |---|---|
 | `d` | delete into the text register |
 | `c` | change: delete, then INSERT |
-| `y` | yank into the text register |
+| `y` | yank into the text register and the system clipboard |
 | `>` `<` | indent / unindent, linewise. Leo calls these `indent-region` |
 | `gu` `gU` `g~` | lowercase, uppercase, toggle case |
 

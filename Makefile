@@ -13,7 +13,7 @@ else
 WS := --workspace --exclude leo-entangled
 endif
 
-.PHONY: test corpus bench build release fmt lint audit check publish run tui gui gui-glow dump clean
+.PHONY: test corpus bench build release fmt lint audit check publish run tui gui gui-glow agent-demo dump clean
 
 test:
 	cargo test $(WS)
@@ -64,6 +64,15 @@ gui:
 # The same, drawn with OpenGL (glow) instead of wgpu, to compare.
 gui-glow:
 	cargo run --release -p leogui --bin leogui-glow -- $(FILE)
+
+# demo/agent with the agent plugin, which is off by default; GUI=1 for leogui.
+# Its agents need the lines in demo/agent/agents.toml.
+agent-demo:
+ifeq ($(GUI),1)
+	cargo run --release -p leogui --bin leogui --features leo-plugins/agent -- demo/agent/demo.leo
+else
+	cargo run -p leotui --features leo-plugins/agent -- demo/agent/demo.leo
+endif
 
 dump:
 	cargo run -q -p leotui -- $(FILE) --dump

@@ -21,6 +21,7 @@ each one opens and writes back unchanged.
 | `qmd/` | `@qmd`: a Quarto report whose labelled cells are cloned into `@clean rainfall.py` |
 | `rmd/` | `@rmd`: an R Markdown paper whose chunks are cloned into `@clean growth.R` |
 | `wiki/` | `@wiki`: two wikis linked to each other, exported by `:export-wiki` |
+| `agent/` | `:ask` and `@agent` nodes: one node per exercise, with offline stand-in agents (`echo-agent.sh`, and `outline-agent.sh`, which edits the outline over MCP and needs `curl`) and the `agents.toml` lines they need; checked by `crates/leo-agent/tests/demo.rs` |
 
 `make test` in `qmd/` or `rmd/` runs the cloned code; `make render` renders
 the document.

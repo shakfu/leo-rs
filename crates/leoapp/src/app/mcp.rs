@@ -10,7 +10,7 @@
 
 use serde_json::{json, Value};
 
-use leolib::{Place, Position};
+use leolib::{Place, Position, VnodeId};
 use leomcp::{Call, Server, Tool};
 
 use super::*;
@@ -25,6 +25,9 @@ const MOST_NODES: usize = 500;
 pub struct Access {
     pub edit: bool,
     pub save: bool,
+    /// The node whose subtree is all the client may read or edit; None
+    /// for the whole outline.
+    pub within: Option<VnodeId>,
 }
 
 fn schema(props: Value, required: &[&str]) -> Value {
@@ -125,6 +128,7 @@ impl App {
         self.mcp_access = Access {
             edit: settings.edit,
             save: settings.save && settings.edit,
+            within: None,
         };
         let want = settings.enabled.then_some(settings.port);
         let token = settings.token.clone().unwrap_or_default();
@@ -174,6 +178,53 @@ impl App {
             .ok_or_else(|| format!("no node with gnx {gnx}"))
     }
 
+    /// The node a client with `access` is kept under, if any. A clone's
+    /// positions share their subtree, so the first serves.
+    fn scope_top(&self, access: Access) -> Option<Result<Position, String>> {
+        let v = access.within?;
+        let o = self.outline();
+        Some(
+            o.all_positions()
+                .into_iter()
+                .find(|q| q.v == v)
+                .ok_or_else(|| "the node this client was kept under is gone".to_string()),
+        )
+    }
+
+    /// The node `gnx`, under the scope's node if `access` has one.
+    fn by_gnx_in(&self, access: Access, gnx: &str) -> Result<Position, String> {
+        let Some(top) = self.scope_top(access) else {
+            return self.by_gnx(gnx);
+        };
+        let o = self.outline();
+        top?.self_and_subtree(o)
+            .into_iter()
+            .find(|p| p.gnx(o) == gnx)
+            .ok_or_else(|| format!("no node with gnx {gnx} in this client's subtree"))
+    }
+
+    /// The nodes a client with `access` may change: those whose every
+    /// position is under a position of its scope's node. A clone with a
+    /// copy outside is not one: an edit to it would change that copy. None
+    /// if `access` has no scope.
+    fn editable(&self, access: Access) -> Option<std::collections::HashSet<VnodeId>> {
+        let v = access.within?;
+        let o = self.outline();
+        let all = o.all_positions();
+        let tops: Vec<&Position> = all.iter().filter(|q| q.v == v).collect();
+        let under = |q: &Position| tops.iter().any(|t| *t == q || t.is_ancestor_of(o, q));
+        let (inside, outside): (Vec<&Position>, Vec<&Position>) =
+            all.iter().partition(|q| under(q));
+        let outside: std::collections::HashSet<VnodeId> = outside.iter().map(|q| q.v).collect();
+        Some(
+            inside
+                .iter()
+                .map(|q| q.v)
+                .filter(|v| !outside.contains(v))
+                .collect(),
+        )
+    }
+
     /// Point `current` at the user's node again after a client's structural
     /// edit. A position is a path of child indexes, so an insert before it
     /// left it naming another node, and the user's next delete removed that.
@@ -189,9 +240,9 @@ impl App {
         }
     }
 
-    /// May a client change the outline now?
-    fn may_edit(&self) -> Result<(), String> {
-        if !self.mcp_access.edit {
+    /// May a client with `access` change the outline now?
+    fn may_edit(&self, access: Access) -> Result<(), String> {
+        if !access.edit {
             return Err(
                 "editing is off: the user can allow it with mcp-edit in the settings".into(),
             );
@@ -229,16 +280,28 @@ impl App {
         node
     }
 
-    /// Run one tool, as a client asked.
+    /// Run one tool, as a client of the settings' server asked.
     pub fn mcp_tool(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+        self.mcp_tool_as(self.mcp_access, name, args)
+    }
+
+    /// Run one tool for a client allowed `access`, such as a plugin's own
+    /// server.
+    pub fn mcp_tool_as(
+        &mut self,
+        access: Access,
+        name: &str,
+        args: &Value,
+    ) -> Result<Value, String> {
         match name {
             "outline" => {
                 let depth = args["depth"].as_u64().unwrap_or(2) as usize;
                 let mut budget = MOST_NODES;
                 let o = self.outline();
-                let tops: Vec<Position> = match args["gnx"].as_str() {
-                    Some(g) => vec![self.by_gnx(g)?],
-                    None => o
+                let tops: Vec<Position> = match (args["gnx"].as_str(), self.scope_top(access)) {
+                    (Some(g), _) => vec![self.by_gnx_in(access, g)?],
+                    (None, Some(top)) => vec![top?],
+                    (None, None) => o
                         .root_position()
                         .map(|r| r.self_and_siblings(o))
                         .unwrap_or_default(),
@@ -253,10 +316,16 @@ impl App {
                 Ok(json!({"nodes": nodes, "truncated": budget == 0}))
             }
             "read_node" => {
-                let p = self.by_gnx(string(args, "gnx")?)?;
+                let p = self.by_gnx_in(access, string(args, "gnx")?)?;
+                let top = self.scope_top(access).transpose()?;
                 let o = self.outline();
-                let mut path: Vec<String> =
-                    p.parents(o).iter().map(|a| a.h(o).to_string()).collect();
+                // Above the scope's node is outside it.
+                let mut path: Vec<String> = p
+                    .parents(o)
+                    .iter()
+                    .filter(|a| top.as_ref().is_none_or(|t| a.level() >= t.level()))
+                    .map(|a| a.h(o).to_string())
+                    .collect();
                 path.reverse();
                 let children: Vec<Value> =
                     p.children(o).iter().map(|c| self.node_summary(c)).collect();
@@ -282,9 +351,20 @@ impl App {
                     .map_err(|e| format!("not a regex: {e}"))?;
                 let scope = args["scope"].as_str().unwrap_or("both");
                 let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+                let nodes = match self.scope_top(access) {
+                    Some(top) => {
+                        let mut seen = std::collections::HashSet::new();
+                        let o = self.outline();
+                        top?.self_and_subtree(o)
+                            .into_iter()
+                            .filter(|p| seen.insert(p.v))
+                            .collect()
+                    }
+                    None => self.outline().all_unique_positions(),
+                };
                 let o = self.outline();
                 let mut hits = Vec::new();
-                for p in o.all_unique_positions() {
+                for p in nodes {
                     if hits.len() >= limit {
                         break;
                     }
@@ -304,9 +384,18 @@ impl App {
             }
             "selection" => {
                 let o = self.outline();
+                let v = self.current.v;
+                let shown = match self.scope_top(access) {
+                    Some(top) => top?.self_and_subtree(o).iter().any(|q| q.v == v),
+                    None => true,
+                };
+                let (gnx, headline) = match shown {
+                    true => (json!(self.current.gnx(o)), json!(self.current.h(o))),
+                    false => (Value::Null, Value::Null),
+                };
                 Ok(json!({
-                    "gnx": self.current.gnx(o),
-                    "headline": self.current.h(o),
+                    "gnx": gnx,
+                    "headline": headline,
                     "pane": match self.focus { Focus::Tree => "outline", Focus::Body => "body" },
                     "cursor": {"line": self.editor.cursor.0 + 1, "column": self.editor.cursor.1 + 1},
                     "mode": self.mode.label(),
@@ -314,8 +403,8 @@ impl App {
             }
             "set_headline" | "set_body" | "insert_node" | "delete_node" | "move_node"
             | "select_node" => {
-                self.may_edit()?;
-                let result = self.mcp_edit(name, args)?;
+                self.may_edit(access)?;
+                let result = self.mcp_edit(access, name, args)?;
                 self.check_rules(true);
                 if self.message.starts_with("refused: ") {
                     return Err(self.message.clone());
@@ -325,25 +414,13 @@ impl App {
                 Ok(result)
             }
             "save" => {
-                if !self.mcp_access.save {
+                if !access.save {
                     return Err(
                         "saving is off: the user can allow it with mcp-save in the settings".into(),
                     );
                 }
-                self.may_edit()?;
-                // A client must not create files unasked: `@file
-                // ~/.ssh/authorized_keys` would pass `may_overwrite`, which
-                // guards only files that exist. The user approves each one.
-                let o = self.outline();
-                let new: Vec<String> = leolib::external::find_files_to_write(o, true)
-                    .0
-                    .iter()
-                    .map(|p| o.full_path(p))
-                    .filter(|path| !std::path::Path::new(path).exists())
-                    .collect();
-                for path in &new {
-                    self.doc.outline_mut_untracked().hold_new_file(path);
-                }
+                self.may_edit(access)?;
+                self.hold_new_files();
                 self.run("save", 1);
                 let waiting = self.mode == Mode::Confirm;
                 let message = self.message.clone();
@@ -354,12 +431,69 @@ impl App {
         }
     }
 
-    fn mcp_edit(&mut self, name: &str, args: &Value) -> Result<Value, String> {
-        let p = self.by_gnx(string(args, "gnx")?)?;
+    /// Make the next save ask before it creates any file the outline names.
+    /// A client must not create files unasked: `@file
+    /// ~/.ssh/authorized_keys` would pass `may_overwrite`, which guards only
+    /// files that exist.
+    pub fn hold_new_files(&mut self) {
+        let o = self.outline();
+        let new: Vec<String> = leolib::external::find_files_to_write(o, true)
+            .0
+            .iter()
+            .map(|p| o.full_path(p))
+            .filter(|path| !std::path::Path::new(path).exists())
+            .collect();
+        for path in &new {
+            self.doc.outline_mut_untracked().hold_new_file(path);
+        }
+    }
+
+    fn mcp_edit(&mut self, access: Access, name: &str, args: &Value) -> Result<Value, String> {
+        let p = self.by_gnx_in(access, string(args, "gnx")?)?;
+        let is_top = access.within == Some(p.v);
+        let outside = "it would put a node outside this client's subtree";
+        let editable = self.editable(access);
+        if let Some(set) = &editable {
+            // The nodes whose headline, body or children the edit changes.
+            let o = self.outline();
+            let parent = |q: &Position| q.parent(o).ok_or(outside);
+            let changes: Vec<Position> = match name {
+                "set_headline" | "set_body" => vec![p.clone()],
+                "insert_node" if args["place"] == "inside" => vec![p.clone()],
+                "insert_node" | "delete_node" if !is_top => vec![parent(&p)?],
+                "move_node" => {
+                    let target = self.by_gnx_in(access, string(args, "target")?)?;
+                    let to = match args["place"] == "inside" {
+                        true => target,
+                        false => parent(&target)?,
+                    };
+                    vec![parent(&p)?, to]
+                }
+                _ => Vec::new(),
+            };
+            if let Some(q) = changes.iter().find(|q| !set.contains(&q.v)) {
+                return Err(format!(
+                    "node {} has a clone outside this client's subtree, which the edit would change too",
+                    q.gnx(o)
+                ));
+            }
+        }
         match name {
             "set_headline" => {
                 let headline = string(args, "headline")?;
                 match self.doc.rename_block(&p, headline)? {
+                    // A wiki rename rewrites references in other pages.
+                    Some(plan)
+                        if editable.as_ref().is_some_and(|set| {
+                            plan.edits.iter().any(|(q, ..)| !set.contains(&q.v))
+                        }) =>
+                    {
+                        self.doc.undo();
+                        self.refind_current();
+                        return Err(
+                            "the rename would change nodes outside this client's subtree".into(),
+                        );
+                    }
                     // The kind's warning, such as links a wiki rename made ambiguous.
                     Some(plan) => return Ok(json!({ "ok": true, "note": plan.note })),
                     None => self.doc.set_headline(&p, headline),
@@ -369,6 +503,9 @@ impl App {
             "select_node" => {
                 self.select(p);
                 self.focus = Focus::Tree;
+            }
+            "delete_node" if is_top => {
+                return Err("the node this client is kept under cannot be deleted".into());
             }
             "delete_node" => {
                 let current = self.current.clone();
@@ -384,6 +521,9 @@ impl App {
             }
             "insert_node" => {
                 let place = place(args)?;
+                if is_top && place != Place::Inside {
+                    return Err(outside.into());
+                }
                 self.doc.begin_group("mcp-insert-node");
                 let Some(new) = self.doc.insert_node(&p) else {
                     self.doc.end_group();
@@ -399,10 +539,14 @@ impl App {
                 return Ok(json!({ "gnx": new.gnx(self.outline()) }));
             }
             "move_node" => {
-                let target = self.by_gnx(string(args, "target")?)?;
+                let target = self.by_gnx_in(access, string(args, "target")?)?;
+                let place = place(args)?;
+                if access.within == Some(target.v) && place != Place::Inside {
+                    return Err(outside.into());
+                }
                 let moved = self
                     .doc
-                    .move_node(&p, &target, place(args)?)
+                    .move_node(&p, &target, place)
                     .ok_or("a node cannot move into its own tree")?;
                 self.refind_current();
                 return Ok(json!({ "gnx": moved.gnx(self.outline()) }));
@@ -436,6 +580,140 @@ mod tests {
             .find(|p| p.h(o) == head)
             .unwrap();
         p.gnx(o).to_string()
+    }
+
+    #[test]
+    fn a_client_kept_under_a_node_may_not_change_a_clone_with_a_copy_outside() {
+        let mut app = app();
+        let alpha = app.outline().root_position().unwrap();
+        let beta = app.by_gnx(&gnx_of(&app, "beta")).unwrap();
+        let o = app.doc.outline_mut_untracked();
+        let inner = o.insert_as_last_child(&alpha);
+        o.set_headline(&inner, "inner");
+        let shared = o.insert_as_last_child(&alpha);
+        o.set_headline(&shared, "shared");
+        let deep = o.insert_as_last_child(&shared);
+        o.set_headline(&deep, "deep");
+        let copy = o.clone_node(&shared);
+        app.doc.move_node(&copy, &beta, Place::Inside).unwrap();
+        app.doc.clear_undo();
+        let access = Access {
+            edit: true,
+            save: false,
+            within: Some(alpha.v),
+        };
+        let (a, i, s, d) = (
+            gnx_of(&app, "alpha"),
+            gnx_of(&app, "inner"),
+            gnx_of(&app, "shared"),
+            gnx_of(&app, "deep"),
+        );
+        let call = |app: &mut App, name: &str, args: Value| app.mcp_tool_as(access, name, &args);
+        // Reading a clone is reading the subtree.
+        assert!(call(&mut app, "read_node", json!({ "gnx": d })).is_ok());
+        for (name, args) in [
+            ("set_body", json!({"gnx": s, "body": "x\n"})),
+            ("set_headline", json!({"gnx": d, "headline": "x"})),
+            (
+                "insert_node",
+                json!({"gnx": s, "place": "inside", "headline": "x"}),
+            ),
+            (
+                "insert_node",
+                json!({"gnx": d, "place": "after", "headline": "x"}),
+            ),
+            (
+                "move_node",
+                json!({"gnx": i, "target": s, "place": "inside"}),
+            ),
+            (
+                "move_node",
+                json!({"gnx": d, "target": i, "place": "inside"}),
+            ),
+            ("delete_node", json!({ "gnx": d })),
+        ] {
+            let err = call(&mut app, name, args.clone()).unwrap_err();
+            assert!(err.contains("clone outside"), "{name} {args}: {err}");
+        }
+        assert!(!app.doc.undoer().can_undo(), "nothing was changed");
+        // Unlinking this copy leaves the other: alpha's children change, not shared.
+        assert!(call(&mut app, "delete_node", json!({ "gnx": s })).is_ok());
+        assert!(call(&mut app, "read_node", json!({ "gnx": s })).is_err());
+        assert_eq!(app.by_gnx(&s).unwrap().h(app.outline()), "shared");
+        app.doc.undo();
+        // With both copies under alpha, the clone may change.
+        let copy = app
+            .by_gnx(&gnx_of(&app, "beta"))
+            .unwrap()
+            .children(app.outline())[0]
+            .clone();
+        let alpha = app.by_gnx(&a).unwrap();
+        app.doc.move_node(&copy, &alpha, Place::Inside).unwrap();
+        assert!(call(&mut app, "set_body", json!({"gnx": s, "body": "x\n"})).is_ok());
+    }
+
+    #[test]
+    fn a_client_kept_under_a_node_reaches_only_its_subtree() {
+        let mut app = app();
+        let alpha = app.outline().root_position().unwrap();
+        let inner = app.doc.outline_mut_untracked().insert_as_last_child(&alpha);
+        app.doc.set_headline(&inner, "inner");
+        let access = Access {
+            edit: true,
+            save: false,
+            within: Some(alpha.v),
+        };
+        let (a, i, b) = (
+            gnx_of(&app, "alpha"),
+            gnx_of(&app, "inner"),
+            gnx_of(&app, "beta"),
+        );
+        let call = |app: &mut App, name: &str, args: Value| app.mcp_tool_as(access, name, &args);
+        let tree = call(&mut app, "outline", json!({})).unwrap();
+        assert_eq!(tree["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(tree["nodes"][0]["headline"], "alpha");
+        assert!(call(&mut app, "read_node", json!({ "gnx": b })).is_err());
+        let node = call(&mut app, "read_node", json!({ "gnx": i })).unwrap();
+        assert_eq!(node["path"], json!(["alpha"]));
+        let found = call(&mut app, "search", json!({"pattern": "beta|inner"})).unwrap();
+        assert_eq!(found["matches"].as_array().unwrap().len(), 1);
+        let beta = app.by_gnx(&b).unwrap();
+        app.select(beta);
+        let sel = call(&mut app, "selection", json!({})).unwrap();
+        assert!(sel["gnx"].is_null() && sel["headline"].is_null(), "{sel}");
+        assert!(call(&mut app, "set_body", json!({"gnx": i, "body": "x\n"})).is_ok());
+        assert!(call(&mut app, "set_body", json!({"gnx": b, "body": "x\n"})).is_err());
+        for (name, args) in [
+            (
+                "insert_node",
+                json!({"gnx": a, "place": "after", "headline": "out"}),
+            ),
+            (
+                "move_node",
+                json!({"gnx": i, "target": a, "place": "before"}),
+            ),
+            (
+                "move_node",
+                json!({"gnx": i, "target": b, "place": "inside"}),
+            ),
+            ("delete_node", json!({ "gnx": a })),
+        ] {
+            assert!(call(&mut app, name, args.clone()).is_err(), "{name} {args}");
+        }
+        let new = call(
+            &mut app,
+            "insert_node",
+            json!({"gnx": a, "place": "inside", "headline": "in"}),
+        );
+        assert!(new.is_ok());
+        let heads: Vec<String> = {
+            let o = app.outline();
+            o.all_positions()
+                .iter()
+                .map(|p| p.h(o).to_string())
+                .collect()
+        };
+        assert_eq!(heads, ["alpha", "inner", "in", "beta"]);
     }
 
     #[test]
@@ -479,6 +757,7 @@ mod tests {
         app.mcp_access = Access {
             edit: true,
             save: false,
+            within: None,
         };
         let new = app
             .mcp_tool(
@@ -507,6 +786,7 @@ mod tests {
         app.mcp_access = Access {
             edit: true,
             save: true,
+            within: None,
         };
         let py = dir.path().join("a.py");
         let reply = app.mcp_tool("save", &json!({})).unwrap();
@@ -546,6 +826,7 @@ mod tests {
         app.mcp_access = Access {
             edit: true,
             save: true,
+            within: None,
         };
         let py = dir.path().join("b.py");
         app.mcp_tool("save", &json!({})).unwrap();
@@ -563,6 +844,7 @@ mod tests {
         app.mcp_access = Access {
             edit: true,
             save: true,
+            within: None,
         };
         app.mode = Mode::Insert;
         app.buffer = Some(vec!["x\n".into()]);
@@ -611,6 +893,7 @@ mod tests {
         app.mcp_access = Access {
             edit: true,
             save: false,
+            within: None,
         };
         let kinds = leolib::ext::Kinds::empty().with(Noting).unwrap();
         (app.doc.outline_mut_untracked()).set_kinds(std::sync::Arc::new(kinds));
@@ -630,12 +913,78 @@ mod tests {
         assert_eq!(gnx_of(&app, "@noting b"), gnx);
     }
 
+    /// A kind whose rename also rewrites the next node's body, as a wiki
+    /// rename rewrites links in other pages.
+    struct Reaching;
+
+    impl leolib::ext::FileKind for Reaching {
+        fn directive(&self) -> &'static str {
+            "@reaching"
+        }
+        fn read(&self, _o: &mut leolib::Outline, _p: &leolib::Position) -> leolib::Result<bool> {
+            Ok(false)
+        }
+        fn write(&self, o: &leolib::Outline, p: &leolib::Position) -> leolib::Result<String> {
+            Ok(p.b(o).to_string())
+        }
+        fn plan_rename(
+            &self,
+            o: &leolib::Outline,
+            p: &leolib::Position,
+            headline: &str,
+        ) -> Option<Result<leolib::ext::Rename, String>> {
+            let next = p.next(o)?;
+            Some(Ok(leolib::ext::Rename {
+                old: p.h(o).to_string(),
+                new: headline.to_string(),
+                fences: 0,
+                references: 1,
+                note: None,
+                edits: vec![
+                    (p.clone(), Some(headline.to_string()), None),
+                    (next, None, Some("[[b]]\n".into())),
+                ],
+            }))
+        }
+    }
+
+    #[test]
+    fn a_rename_that_reaches_outside_the_subtree_is_refused_and_undone() {
+        let mut app = app();
+        let kinds = leolib::ext::Kinds::empty().with(Reaching).unwrap();
+        (app.doc.outline_mut_untracked()).set_kinds(std::sync::Arc::new(kinds));
+        let alpha = app.outline().root_position().unwrap();
+        app.doc.set_headline(&alpha, "@reaching a");
+        app.doc.clear_undo();
+        let access = Access {
+            edit: true,
+            save: false,
+            within: Some(alpha.v),
+        };
+        let gnx = gnx_of(&app, "@reaching a");
+        let err = app
+            .mcp_tool_as(
+                access,
+                "set_headline",
+                &json!({"gnx": gnx, "headline": "@reaching b"}),
+            )
+            .unwrap_err();
+        assert!(err.contains("outside"), "{err}");
+        assert_eq!(gnx_of(&app, "@reaching a"), gnx);
+        assert_eq!(
+            app.by_gnx(&gnx_of(&app, "beta")).unwrap().b(app.outline()),
+            ""
+        );
+        assert!(!app.doc.undoer().can_undo());
+    }
+
     #[test]
     fn a_move_into_its_own_tree_is_refused() {
         let mut app = app();
         app.mcp_access = Access {
             edit: true,
             save: false,
+            within: None,
         };
         let (a, b) = (gnx_of(&app, "alpha"), gnx_of(&app, "beta"));
         app.mcp_tool(
@@ -712,6 +1061,7 @@ mod tests {
         app.mcp_access = Access {
             edit: true,
             save: false,
+            within: None,
         };
         let alpha = app.current.gnx(app.outline()).to_string();
         let beta = app.rows()[1].position.gnx(app.outline()).to_string();

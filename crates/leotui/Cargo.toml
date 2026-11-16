@@ -18,7 +18,8 @@ path = "src/main.rs"
 leolib.workspace = true
 leoapp.workspace = true
 leo-plugins.workspace = true
-crossterm = "0.29"
+# osc52: a yank goes to the system clipboard through the terminal.
+crossterm = { version = "0.29", features = ["osc52"] }
 ratatui = "0.30"
 clap = { version = "4", features = ["derive"] }
 

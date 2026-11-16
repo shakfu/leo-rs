@@ -39,7 +39,7 @@ from pathlib import Path
 
 DEMO = Path(__file__).resolve().parent.parent / 'demo'
 # Examples, not cases: Python Leo reads their plugin nodes as plain ones.
-EXAMPLES = [DEMO / name for name in ('entangled', 'qmd', 'rmd', 'wiki')]
+EXAMPLES = [DEMO / name for name in ('entangled', 'qmd', 'rmd', 'wiki', 'agent')]
 CASES = DEMO / 'cases'
 
 

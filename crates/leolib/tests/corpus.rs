@@ -382,9 +382,10 @@ fn collect(path: &Path, out: &mut Vec<PathBuf>) {
 
 /// The plugin examples are not cases: Python Leo reads their `@entangled`,
 /// `@qmd`, `@rmd` and `@wiki` nodes as plain ones, so it has nothing to check
-/// them against. `leo-plugins/tests/demo.rs` checks them.
+/// them against. `leo-plugins/tests/demo.rs` checks them, and
+/// `leo-agent/tests/demo.rs` the `:ask` example.
 fn is_example(p: &Path) -> bool {
-    ["entangled", "qmd", "rmd", "wiki"]
+    ["entangled", "qmd", "rmd", "wiki", "agent"]
         .iter()
         .any(|name| p == demo().join(name))
 }

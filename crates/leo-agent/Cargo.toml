@@ -1,0 +1,20 @@
+[package]
+name = "leo-agent"
+description = "Agents for leo-rs: `:ask PROMPT` sends a prompt, with outline text, to an agent such as `claude -p`, and inserts the reply below the cursor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["leo", "outliner", "agent", "llm"]
+categories = ["text-editors"]
+
+[dependencies]
+leolib.workspace = true
+leoapp.workspace = true
+leomcp.workspace = true
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

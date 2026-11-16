@@ -20,8 +20,9 @@ fn time_string() -> String {
     format!("{y:04}{mo:02}{d:02}{h:02}{mi:02}{s:02}")
 }
 
-/// Days-to-calendar conversion (Howard Hinnant's civil_from_days).
-fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
+/// Seconds since the epoch as UTC (year, month, day, hour, minute, second).
+/// Howard Hinnant's civil_from_days.
+pub fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);
     let z = days + 719468;

@@ -1,0 +1,18 @@
+# The agents demo/agent uses. Add these lines to ~/.config/leo-rs/agents.toml;
+# copying the file over yours replaces your own agents.
+#
+# `echo` is the offline stand-in. The agent runs in the outline's directory,
+# so `sh echo-agent.sh` finds the script beside demo.leo.
+echo = sh echo-agent.sh
+echo.model = {model}
+echo.models = small large
+# Providers here only set the stand-in's environment.
+echo.slow.env = AGENT_DELAY=5
+echo.broken.env = AGENT_FAIL=1
+echo.keyed.env = TOKEN=${LEO_DEMO_TOKEN}
+
+# `outliner` is a stand-in for an agent that edits the outline: `{mcp}`
+# gives it an MCP server of its own for the run. It needs curl.
+outliner = sh outline-agent.sh {mcp}
+
+# claude needs no lines: `claude -p` is the default agent.

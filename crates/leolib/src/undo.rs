@@ -222,6 +222,26 @@ impl Undoer {
         self.push(&name.clone(), Bead::Group { name, beads });
     }
 
+    /// Join the last two operations into one, named `name`, as if one group
+    /// had held both. False, with nothing changed, if a group is open, an
+    /// operation is undone, or there are fewer than two.
+    pub fn join_last(&mut self, name: &str) -> bool {
+        if !self.open_groups.is_empty() || self.index != self.beads.len() || self.index < 2 {
+            return false;
+        }
+        let mut beads = Vec::new();
+        for (_, bead) in self.beads.drain(self.index - 2..) {
+            match bead {
+                Bead::Group { beads: inner, .. } => beads.extend(inner),
+                bead => beads.push(bead),
+            }
+        }
+        let name = name.to_string();
+        self.beads.push((name.clone(), Bead::Group { name, beads }));
+        self.index = self.beads.len();
+        true
+    }
+
     /// Record one edit. Anything after the current point becomes unreachable.
     pub fn push(&mut self, name: &str, bead: Bead) {
         if let Some((_, group)) = self.open_groups.last_mut() {
@@ -491,6 +511,32 @@ mod tests {
         let root = o.root_position().unwrap();
         assert_eq!(root.h(&o), "newHeadline");
         assert_eq!(root.b(&o), "");
+    }
+
+    #[test]
+    fn two_operations_join_into_one_undo_step() {
+        let mut o = Outline::new_empty();
+        let mut u = Undoer::new();
+        let root = o.root_position().unwrap();
+        let body = |old: &str, new: &str| Bead::Body {
+            v: root.v,
+            old: old.to_string(),
+            new: new.to_string(),
+        };
+        assert!(!u.join_last("run"), "nothing to join");
+        u.push("first", body("", "a\n"));
+        u.begin_group("second");
+        u.push("", body("a\n", "ab\n"));
+        u.end_group();
+        o.set_body(&root, "ab\n");
+        let version = u.version();
+        assert!(u.join_last("run"));
+        assert_eq!((u.undo_name(), u.version()), (Some("run"), version));
+        u.undo(&mut o);
+        assert_eq!(o.root_position().unwrap().b(&o), "");
+        assert!(!u.join_last("run"), "an undone step is not joined");
+        u.redo(&mut o);
+        assert_eq!(o.root_position().unwrap().b(&o), "ab\n");
     }
 
     #[test]

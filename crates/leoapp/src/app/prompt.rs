@@ -31,6 +31,10 @@ impl App {
                 let name = self.pending_read.0[0].h(self.outline()).to_string();
                 format!("discard edits not written to {name}? (y/n) ")
             }
+            (MiniKind::ConfirmPlugin, _) => match &self.pending_confirm {
+                Some((question, _)) => format!("{question} (y/n) "),
+                None => MiniKind::ConfirmPlugin.label().to_string(),
+            },
             (MiniKind::ConfirmQuit, _) => format!(
                 "{}. s saves and quits, y quits without saving, n stays (s/y/n) ",
                 self.unsaved_work()
@@ -49,6 +53,14 @@ impl App {
         }
     }
 
+    /// Ask `question` with a y/n prompt, and run `yes` on y. For a plugin,
+    /// whose state `yes` reads from `App::plugin_data`: a fn pointer holds
+    /// none of its own.
+    pub fn confirm(&mut self, question: String, yes: PluginAction) {
+        self.pending_confirm = Some((question, yes));
+        self.open_mini(MiniKind::ConfirmPlugin, String::new());
+    }
+
     /// Open the line at the bottom of the screen, and enter its mode.
     pub fn open_mini(&mut self, kind: MiniKind, text: String) {
         self.mode = match kind {
@@ -57,7 +69,8 @@ impl App {
             MiniKind::ConfirmQuit
             | MiniKind::ConfirmOverwrite
             | MiniKind::ConfirmSave
-            | MiniKind::ConfirmRead => Mode::Confirm,
+            | MiniKind::ConfirmRead
+            | MiniKind::ConfirmPlugin => Mode::Confirm,
             _ => Mode::Headline,
         };
         if kind.is_search() {
@@ -370,6 +383,7 @@ impl App {
         let text = mini.buffer;
         let refused = std::mem::take(&mut self.pending_overwrite);
         let (to_read, refresh) = std::mem::take(&mut self.pending_read);
+        let plugin_yes = self.pending_confirm.take().map(|(_, yes)| yes);
         let approved = accepted && text.trim().eq_ignore_ascii_case("y");
         if !approved {
             match mini.kind {
@@ -378,6 +392,7 @@ impl App {
                 }
                 MiniKind::ConfirmSave => self.save_now(false),
                 MiniKind::ConfirmRead => self.message = "not read".to_string(),
+                MiniKind::ConfirmPlugin => self.message = "not run".to_string(),
                 _ => {}
             }
         }
@@ -438,6 +453,11 @@ impl App {
             MiniKind::ConfirmRead => {
                 if approved {
                     self.read_files(to_read, refresh);
+                }
+            }
+            MiniKind::ConfirmPlugin => {
+                if let (true, Some(yes)) = (approved, plugin_yes) {
+                    yes(self);
                 }
             }
             MiniKind::ConfirmOverwrite => {

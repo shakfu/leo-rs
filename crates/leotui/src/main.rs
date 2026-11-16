@@ -373,6 +373,11 @@ fn event_loop(app: &mut App, ended: &AtomicBool) -> io::Result<()> {
             }
             _ => {}
         }
+        // OSC 52, so a yank reaches other applications, over SSH too.
+        if let Some(text) = app.editor.yanked.take() {
+            let copy = crossterm::clipboard::CopyToClipboard::to_clipboard_from(text);
+            execute!(terminal.backend_mut(), copy)?;
+        }
     }
     Ok(())
 }

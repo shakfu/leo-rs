@@ -278,7 +278,8 @@ impl Tree {
             };
             if app.run_chosen("") {
                 app.click_node_with(&p, extend);
-                if double {
+                // A plugin may own the double-click: an `@agent` node runs.
+                if double && !leoapp::plugins::activate(app, &p) {
                     tabs.pin(p.gnx(app.outline()));
                     app.focus = Focus::Body;
                 }

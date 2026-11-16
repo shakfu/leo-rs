@@ -56,6 +56,11 @@ pub trait AppPlugin: Sync {
     fn open_url(&self, _app: &mut App) -> bool {
         false
     }
+    /// Act on node `p`, which the user activated: a double-click on its row.
+    /// True if this plugin did, so the front end skips its own action.
+    fn activate(&self, _app: &mut App, _p: &leolib::Position) -> bool {
+        false
+    }
     /// The links in node `p`'s body, `lines`, that `open_url` follows: a
     /// line index and a byte range in that line, for the body to draw.
     fn links(
@@ -136,6 +141,12 @@ pub fn menu(menu: &str) -> impl Iterator<Item = &'static MenuEntry> + '_ {
 /// Follow the link under the body cursor with the first plugin that knows it.
 pub fn open_url(app: &mut App) -> bool {
     all().iter().any(|p| p.open_url(app))
+}
+
+/// Activate node `p` with the first plugin that acts on it. False if none
+/// did, and the front end's own action applies.
+pub fn activate(app: &mut App, p: &leolib::Position) -> bool {
+    all().iter().any(|q| q.activate(app, p))
 }
 
 /// Every plugin's links in node `p`'s body.

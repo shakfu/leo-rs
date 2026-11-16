@@ -30,7 +30,7 @@ mod hoist;
 mod lsp;
 mod mcp;
 pub use lsp::{diagnostic_line, signature_line, Servers, CODE_ACTIONS};
-pub use mcp::Access;
+pub use mcp::{tools as mcp_tools, Access};
 mod prompt;
 #[cfg(test)]
 mod tests;
@@ -142,6 +142,9 @@ struct SearchOrigin {
     expanded: std::collections::HashSet<String>,
 }
 
+/// What a plugin's y/n question runs on y: see [`App::confirm`].
+pub type PluginAction = fn(&mut App);
+
 pub struct App {
     pub doc: Document,
     pub current: Position,
@@ -214,6 +217,8 @@ pub struct App {
     /// Files to read over unwritten edits, waiting on the y/n prompt, and
     /// whether the read is a `refresh-from-disk`.
     pending_read: (Vec<Position>, bool),
+    /// A plugin's question waiting on the y/n prompt, and what y runs.
+    pending_confirm: Option<(String, PluginAction)>,
     /// Whether the save waiting on the y/n prompt also writes external files.
     /// False only for `write-outline-only`.
     save_files: bool,
@@ -551,6 +556,7 @@ impl App {
             position_count: (u64::MAX, 0),
             pending_overwrite: Vec::new(),
             pending_read: (Vec::new(), false),
+            pending_confirm: None,
             save_files: true,
             lsp: None,
             lsp_synced: None,

@@ -30,6 +30,8 @@ pub fn app_plugins() -> Vec<&'static dyn AppPlugin> {
     let plugins: &[&'static dyn AppPlugin] = &[
         #[cfg(feature = "wiki")]
         &leo_wiki::app::WikiPlugin,
+        #[cfg(feature = "agent")]
+        &leo_agent::AgentPlugin,
     ];
     plugins.to_vec()
 }

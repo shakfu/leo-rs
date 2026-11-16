@@ -21,6 +21,8 @@ pub struct Editor {
     /// The anchor of a VISUAL selection, and whether it is linewise.
     pub visual: Option<(Pos, Kind)>,
     pub register: Register,
+    /// Text yanked since a front end last took it, for the system clipboard.
+    pub yanked: Option<String>,
     /// The last change, for `.`.
     pub last_change: Option<Change>,
     /// The last `f`/`t`, for `;` and `,`.
@@ -210,6 +212,7 @@ impl Editor {
         let text = extract(lines, start, end, kind);
         match operator {
             Operator::Yank => {
+                self.yanked = Some(text.clone());
                 self.register = Register {
                     text,
                     linewise: kind == Kind::Linewise,

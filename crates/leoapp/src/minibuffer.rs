@@ -19,6 +19,8 @@ pub enum MiniKind {
     ConfirmSave,
     /// Reading external files over edits not yet written to them.
     ConfirmRead,
+    /// A plugin's question, which `App::confirm` asked.
+    ConfirmPlugin,
 }
 
 impl MiniKind {
@@ -35,6 +37,7 @@ impl MiniKind {
             MiniKind::ConfirmOverwrite => "overwrite files this outline has not read? (y/n) ",
             MiniKind::ConfirmSave => "the .leo file changed on disk. overwrite it? (y/n) ",
             MiniKind::ConfirmRead => "discard edits not written to these files? (y/n) ",
+            MiniKind::ConfirmPlugin => "(y/n) ",
         }
     }
 

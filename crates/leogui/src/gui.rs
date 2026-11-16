@@ -664,6 +664,9 @@ impl eframe::App for Gui {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_events(&ctx);
+        if let Some(text) = self.app.editor.yanked.take() {
+            ctx.copy_text(text);
+        }
         // No widget keeps the keyboard but the palette: a clicked button
         // must not also take the Space or Enter the app is sent.
         if !self.typing() {
