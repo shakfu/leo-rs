@@ -132,7 +132,9 @@ struct State {
     fixed: bool,
     job: Option<Job>,
     /// A finished reply, waiting for NORMAL.
-    reply: Option<(Target, String)>,
+    reply: Option<Waiting>,
+    /// A reply whose y/n question is open; still here in NORMAL means n.
+    asked: Option<Waiting>,
     /// The outlines a run was confirmed in, by file name, this session.
     trusted: std::collections::HashSet<String>,
     /// A hash of each `@agent` body as a run last wrote it, so `replace`
@@ -160,7 +162,7 @@ pub fn use_agents_file(app: &mut App, path: std::path::PathBuf) {
 }
 
 /// The table, read again if the file changed since it was last read.
-fn table(app: &mut App) -> Agents {
+pub(crate) fn table(app: &mut App) -> Agents {
     let state = app.plugin_data::<State>();
     let path = match state.fixed {
         true => None,
@@ -195,6 +197,14 @@ fn table(app: &mut App) -> Agents {
 pub fn busy(app: &App) -> bool {
     app.plugin_data_ref::<State>()
         .is_some_and(|s| s.job.is_some() || s.reply.is_some())
+}
+
+/// A finished run's reply and what placing it needs.
+struct Waiting {
+    target: Target,
+    text: String,
+    label: String,
+    confirm: agents::ConfirmReply,
 }
 
 /// Where a reply goes.
@@ -234,6 +244,7 @@ struct Job {
     label: String,
     verb: &'static str,
     target: Option<Target>,
+    confirm: agents::ConfirmReply,
     /// The run's MCP server; dropped after the child is killed.
     mcp: Option<mcp::Served>,
 }
@@ -260,6 +271,8 @@ struct Request {
     scope: Scope,
     choice: Choice,
     reply: Reply,
+    /// `reply=` was given, so an agent's `NAME.reply` does not apply.
+    reply_given: bool,
     /// `prompt=headline`: the body form's line form.
     prompt_is_headline: bool,
     /// `:ask lines=all`: the whole body, as if selected.
@@ -338,6 +351,7 @@ fn parse(arg: &str, form: Form) -> Result<Request, String> {
             "provider" => r.choice.provider = Some(value.to_string()),
             "model" => r.choice.model = Some(value.to_string()),
             "reply" => {
+                r.reply_given = true;
                 r.reply = match (form, value) {
                     (Form::Ask, "insert") => Reply::Insert,
                     (Form::Headline | Form::Body, "append") => Reply::Append,
@@ -404,6 +418,19 @@ fn parse(arg: &str, form: Form) -> Result<Request, String> {
 /// every later run.
 /// The node whose subtree `scope` names from `p`: `p` itself for `0`, its
 /// N-th ancestor, stopping at the top level, and None for `all`.
+/// Why `scope` refuses at `p`: `scope=N` past the top of the outline. Read
+/// as the whole outline, it would grant more than the user named.
+fn scope_refused(p: &Position, scope: Scope) -> Option<String> {
+    let depth = p.level();
+    match scope {
+        Scope::Up(n) if n > depth => Some(format!(
+            "scope={n} is past the top of the outline: this node has {depth} ancestor{}. Use scope={depth}, or scope=all for the whole outline",
+            node::plural(depth)
+        )),
+        _ => None,
+    }
+}
+
 fn scope_node(o: &Outline, p: &Position, scope: Scope) -> Option<Position> {
     let n = match scope {
         Scope::Prompt => 0,
@@ -513,6 +540,10 @@ pub fn ask(app: &mut App, arg: &str) {
         app.message = format!("ask: {why}");
         return;
     }
+    if let Some(why) = scope_refused(&p, request.scope) {
+        app.message = format!("ask: {why}");
+        return;
+    }
     let (mut text, nodes) = prompt_text(o, &p, &request, selected, true);
     let reach = mcp::Reach::new(o, &p, request.scope);
     let target = Target::Lines {
@@ -521,7 +552,7 @@ pub fn ask(app: &mut App, arg: &str) {
         replace: request.reply == Reply::Replace,
         body: p.b(o).to_string(),
     };
-    let Some(run) = prepare(app, &request.choice, &text, "ask") else {
+    let Some(run) = prepare(app, &request.choice, &mut text, "ask") else {
         return;
     };
     if run.mcp {
@@ -544,9 +575,21 @@ fn refuse_busy(app: &mut App, verb: &str) -> bool {
     true
 }
 
-/// The command `choice` runs, if the prompt is within the size limit and the
-/// table resolves it; else None, with why on the status line.
-fn prepare(app: &mut App, choice: &Choice, text: &str, verb: &str) -> Option<Invocation> {
+/// The command `choice` runs, if the table resolves it and the prompt, with
+/// the agent's preamble put before it, is within the size limit; else None,
+/// with why on the status line.
+fn prepare(app: &mut App, choice: &Choice, text: &mut String, verb: &str) -> Option<Invocation> {
+    let agents = table(app);
+    let run = match agents.resolve(choice, |v| std::env::var(v).ok()) {
+        Ok(run) => run,
+        Err(e) => {
+            app.message = format!("{verb}: {e}");
+            return None;
+        }
+    };
+    if let Some(preamble) = &run.preamble {
+        text.insert_str(0, &format!("{preamble}\n\n"));
+    }
     if text.len() > MAX_PROMPT_BYTES {
         app.message = format!(
             "{verb}: the prompt and its scope are {} KB, over the {} KB limit",
@@ -555,14 +598,7 @@ fn prepare(app: &mut App, choice: &Choice, text: &str, verb: &str) -> Option<Inv
         );
         return None;
     }
-    let agents = table(app);
-    match agents.resolve(choice, |v| std::env::var(v).ok()) {
-        Ok(run) => Some(run),
-        Err(e) => {
-            app.message = format!("{verb}: {e}");
-            None
-        }
-    }
+    Some(run)
 }
 
 /// Start `run` on `text`, its reply bound for `target`. An MCP run's tools
@@ -577,7 +613,7 @@ fn start(
 ) {
     let verb = target.verb();
     let dir = outline_dir(app);
-    let timeout = table(app).timeout();
+    let timeout = run.timeout;
     let served = match run.mcp {
         false => None,
         true => match mcp::serve(within) {
@@ -609,6 +645,7 @@ fn start(
             label: run.label.clone(),
             verb,
             target: Some(target),
+            confirm: run.confirm_reply,
             mcp: served,
         },
         Err(e) => {
@@ -696,7 +733,7 @@ pub fn cancel(app: &mut App) {
     let reply = state.reply.take();
     app.message = match (job, reply) {
         (Some(job), _) => format!("{}: {} stopped", job.verb, job.label),
-        (None, Some((target, _))) => format!("{}: the waiting reply was dropped", target.verb()),
+        (None, Some(w)) => format!("{}: the waiting reply was dropped", w.target.verb()),
         (None, None) => "agent: nothing is running".to_string(),
     };
 }
@@ -708,22 +745,76 @@ fn poll(app: &mut App) -> bool {
     changed |= collect(app);
     let typing = app.mode != Mode::Normal || app.buffer.is_some();
     if !typing {
-        if let Some((target, text)) = app.plugin_data::<State>().reply.take() {
-            let before = app.doc.undoer().version();
-            match target {
-                Target::Lines {
-                    v,
-                    lines,
-                    replace,
-                    body,
-                } => deliver(app, v, lines, replace, &body, &text),
-                Target::Node(t) => node::deliver(app, t, &text),
+        if let Some(w) = app.plugin_data::<State>().asked.take() {
+            to_register(app, w.target.verb(), &w.text, "you answered n");
+        }
+        if let Some(w) = app.plugin_data::<State>().reply.take() {
+            match question(app, &w) {
+                Some(q) => {
+                    app.plugin_data::<State>().asked = Some(w);
+                    app.confirm(q, |app| {
+                        if let Some(w) = app.plugin_data::<State>().asked.take() {
+                            place(app, w);
+                        }
+                    });
+                }
+                None => place(app, w),
             }
-            mcp::join(app, before);
             changed = true;
         }
     }
     changed
+}
+
+/// The y/n question `w` asks before it goes in, if its agent's
+/// `confirm-reply` asks for one.
+fn question(app: &App, w: &Waiting) -> Option<String> {
+    let n = w.text.lines().count();
+    let what = format!("the {n}-line reply from {}", w.label);
+    let (replace, action) = match &w.target {
+        Target::Lines {
+            lines: (a, b),
+            replace: true,
+            ..
+        } => (
+            true,
+            match a == b {
+                true => format!("replace line {} with {what}", a + 1),
+                false => format!("replace lines {}-{} with {what}", a + 1, b + 1),
+            },
+        ),
+        Target::Lines { lines: (_, b), .. } => {
+            (false, format!("insert {what} below line {}", b + 1))
+        }
+        Target::Node(t) => {
+            let o = app.outline();
+            let head = o
+                .all_positions()
+                .into_iter()
+                .find(|p| p.v == t.v())
+                .map(|p| p.h(o).to_string())
+                .unwrap_or_default();
+            t.action(&node::short_prompt(&head), &what)
+        }
+    };
+    w.confirm
+        .asks(replace)
+        .then(|| format!("{}: {action}?", w.target.verb()))
+}
+
+/// Put `w` in, as one undo step with the run's edits.
+fn place(app: &mut App, w: Waiting) {
+    let before = app.doc.undoer().version();
+    match w.target {
+        Target::Lines {
+            v,
+            lines,
+            replace,
+            body,
+        } => deliver(app, v, lines, replace, &body, &w.text),
+        Target::Node(t) => node::deliver(app, t, &w.text),
+    }
+    mcp::join(app, before);
 }
 
 /// Move a finished run's output into the state. True if the run ended.
@@ -795,7 +886,12 @@ fn collect(app: &mut App) -> bool {
         job.label
     );
     let target = job.target.take().expect("set at spawn");
-    app.plugin_data::<State>().reply = Some((target, reply));
+    app.plugin_data::<State>().reply = Some(Waiting {
+        target,
+        text: reply,
+        label: job.label.clone(),
+        confirm: job.confirm,
+    });
     true
 }
 

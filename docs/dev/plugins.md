@@ -145,7 +145,8 @@ pub trait AppPlugin: Sync {
 - **leo-entangled's `leoapp` cargo feature** builds the plugin. leo-plugins
   leaves leo-entangled out until it is published: crates.io refuses an
   unpublished dependency, even an optional one. `make ... ENTANGLED=1`
-  builds and tests it.
+  builds and tests it. The unpublished `leo-all` registers it, through
+  `leo_plugins::register_with`, in `leotui-all` and `leogui-all`.
 
 **One plugin list per process (kept 2026-10-08).** `plugins::all()` is a `OnceLock`,
 filled from the cargo features unless `plugins::register` ran first.

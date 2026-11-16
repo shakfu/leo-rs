@@ -38,6 +38,22 @@ pub(crate) struct Target {
     child_headline: String,
 }
 
+impl Target {
+    /// For a question: whether the reply replaces text, and what it does
+    /// to the node named `head`, given `what`, the reply's description.
+    pub(crate) fn action(&self, head: &str, what: &str) -> (bool, String) {
+        match self.reply {
+            Reply::Replace => (true, format!("replace the replies in `{head}` with {what}")),
+            Reply::Child => (false, format!("add {what} as a child of `{head}`")),
+            Reply::Append | Reply::Insert => (false, format!("append {what} to `{head}`")),
+        }
+    }
+
+    pub(crate) fn v(&self) -> VnodeId {
+        self.v
+    }
+}
+
 /// The rest of the headline after `@agent`, if it is an `@agent` headline.
 pub fn agent_headline(h: &str) -> Option<&str> {
     let rest = h.trim_start().strip_prefix(DIRECTIVE)?;
@@ -155,7 +171,7 @@ pub(crate) fn run(app: &mut App, confirmed: bool) {
     }
     let o = app.outline();
     let p = app.current.clone();
-    let Found { request, keep } = match find_prompt(p.h(o), p.b(o)) {
+    let Found { mut request, keep } = match find_prompt(p.h(o), p.b(o)) {
         Ok(found) => found,
         Err(e) => {
             app.message = format!("agent: {e}");
@@ -167,14 +183,25 @@ pub(crate) fn run(app: &mut App, confirmed: bool) {
         return;
     }
     let body = p.b(o).to_string();
+    if let Some(why) = crate::scope_refused(&p, request.scope) {
+        app.message = format!("agent: {why}");
+        return;
+    }
+    let (mut text, nodes) = prompt_text(app.outline(), &p, &request, None, false);
+    let Some(invocation) = prepare(app, &request.choice, &mut text, "agent") else {
+        return;
+    };
+    if !request.reply_given {
+        request.reply = match invocation.reply.as_deref() {
+            Some("replace") => Reply::Replace,
+            Some("child") => Reply::Child,
+            _ => Reply::Append,
+        };
+    }
     if request.reply == Reply::Replace && edited_since_reply(app, p.v, &body) {
         app.message = "agent: the body changed since the last reply, and reply=replace would overwrite it; undo the change, clear the body, or use reply=append".to_string();
         return;
     }
-    let (mut text, nodes) = prompt_text(app.outline(), &p, &request, None, false);
-    let Some(invocation) = prepare(app, &request.choice, &text, "agent") else {
-        return;
-    };
     let reach = crate::mcp::Reach::new(app.outline(), &p, request.scope);
     if invocation.mcp {
         text.push_str(&reach.note);
@@ -206,7 +233,10 @@ pub(crate) fn run(app: &mut App, confirmed: bool) {
         return;
     }
     app.plugin_data::<State>().trusted.insert(outline);
-    let stamp = stamp(now());
+    let stamp = match crate::table(app).local_time() {
+        true => local_stamp().unwrap_or_else(|| stamp(now())),
+        false => stamp(now()),
+    };
     let target = Target {
         v: p.v,
         reply: request.reply,
@@ -311,7 +341,7 @@ fn add_last_child(app: &mut App, p: &Position) -> Option<Position> {
     Some(app.doc.move_node(&first, p, Place::Inside).unwrap_or(first))
 }
 
-fn plural(n: usize) -> &'static str {
+pub(crate) fn plural(n: usize) -> &'static str {
     if n == 1 {
         ""
     } else {
@@ -334,9 +364,21 @@ fn stamp(secs: i64) -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}Z")
 }
 
+/// `2026-11-16 16:03+0200`: local time, from `date`, as the standard
+/// library has no time zones. None where `date` fails, as on Windows.
+fn local_stamp() -> Option<String> {
+    let out = std::process::Command::new("date")
+        .arg("+%Y-%m-%d %H:%M%z")
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let text = text.trim();
+    (out.status.success() && text.len() == 21).then(|| text.to_string())
+}
+
 /// The prompt's first non-blank line, cut at the last word boundary before
 /// 60 characters, with `...` added.
-fn short_prompt(prompt: &str) -> String {
+pub(crate) fn short_prompt(prompt: &str) -> String {
     let line = prompt
         .lines()
         .map(str::trim)

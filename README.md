@@ -14,8 +14,12 @@ Leo's outline model was re-implemented in rust as `leolib`. `leolib` reads and w
 cargo install leogui --locked                  # leogui and leogui-glow, from crates.io
 cargo install --path crates/leotui --locked    # leotui, from a checkout
 cargo install --path crates/leogui --locked    # leogui and leogui-glow, from a checkout
+cargo install --path crates/leo-all --locked   # leotui-all and leogui-all: every plugin
+make install                                   # the same, as leotui and leogui in ~/.local/bin
 cargo add leolib                               # the library, in your own crate
 ```
+
+The agent plugin (`:ask`, `@agent` nodes) is off by default. Add `--features leo-plugins/agent` to a checkout build to include it. `leotui-all` and `leogui-all` include it, and the unpublished `@entangled` too, to test plugins before they are published.
 
 `--locked` builds with the `Cargo.lock` shipped in the package. A checkout build uses the workspace's `lto = true`; the crates.io build does not, as cargo drops workspace profiles from a published package.
 
@@ -156,6 +160,8 @@ The keys are the same in leogui.
 
 Operators take a count, a motion and a text object: `2d3w`, `ciw`, `da"`, `>>`. One change is one undo, so `A`, two hundred characters and `Escape` is one `u`.
 
+A yank or delete in the body also goes to the system clipboard. leotui sends it as an OSC 52 escape, which works over SSH if the terminal allows it; tmux needs `set-clipboard on`.
+
 **Both panes**
 
 | | |
@@ -269,6 +275,7 @@ What the window adds to leotui:
 |-|-|
 | Several outlines | A tab each. File > Open..., Save As... (the system's dialogs) and Open Recent (the last ten). Quitting asks about each outline with unsaved work. |
 | Session | Started with no outline named, leogui reopens the outlines open at the last quit, with their selections, tabs, panel and window size. |
+| Node tabs | Selecting a node opens it in a tab above the body, which the next selection replaces; an edit or a double-click keeps the tab. Cmd-W closes the selected node's tab. Off macOS it has no key, as Ctrl-w is vim's window prefix. |
 | Go to node | Cmd-P: every headline, fuzzy-matched. |
 | Command palette | Cmd-Shift-P: every command, by name. |
 | Find panel | Cmd-Shift-F: find and replace, regex, whole word and case, over the outline, a subtree or the marked nodes; Find All, Replace All and Clone Find All. |
@@ -384,9 +391,10 @@ Plugins are the current way to extend leo-rs, and keep the core minimal and conf
 
 - `@entangled` (literate markdown for [entangled](https://github.com/shakfu/entangled-rs))
 - `@qmd` and `@rmd` (Quarto and R Markdown with their cells as nodes)
-- `@wiki` (markdown pages linked by `[[...]]`, exported to one file).
+- `@wiki` (markdown pages linked by `[[...]]`, exported to one file)
+- agents: `:ask PROMPT` sends a prompt and outline text to an agent such as `claude -p` and inserts the reply; `@agent PROMPT` nodes run with `:agent-run`. An agent may edit the outline over its own MCP server. Off by default; see [Installing](#installing).
 
-You can read more about plugins in `docs/plugins.md`; and their design in `docs/dev/plugins.md`. See `demo/qmd/`, `demo/rmd/`, `demo/wiki/` and `demo/entangled/` for an example of each of the current plugins.
+You can read more about plugins in `docs/plugins.md`; and their design in `docs/dev/plugins.md`. See `demo/qmd/`, `demo/rmd/`, `demo/wiki/`, `demo/entangled/` and `demo/agent/` for an example of each of the current plugins. `make agent-demo` opens the agent demo, with offline stand-in agents.
 
 
 ## Using leolib
@@ -446,9 +454,11 @@ crates/leoapp         a front end's state and commands, with no renderer.
 crates/leo-markdown   @qmd and @rmd, and their markdown scanner and writer.
 crates/leo-entangled  @entangled, and its :entangled-* commands. Unpublished.
 crates/leo-wiki       @wiki: markdown pages linked by [[wikilinks]], exported to one file.
+crates/leo-agent      :ask and @agent nodes: prompts sent to an agent such as claude -p.
 crates/leo-plugins    registers the plugins in leotui and leogui.
 crates/leotui         the terminal front end: leoapp drawn with ratatui.
 crates/leogui         the desktop front end: leoapp drawn with egui.
+crates/leo-all        leotui-all and leogui-all: both front ends with every plugin. Unpublished.
 crates/leomcp         an MCP server on localhost, serving the open outline.
 ```
 
@@ -485,10 +495,14 @@ See `docs/dev/porting-notes.md` for the places this port deliberately differs fr
 ## Building
 
 ```text
-make build      # cargo build --workspace, less leo-entangled; ENTANGLED=1 adds it
+make build      # cargo build --workspace, less leo-entangled and leo-all; ENTANGLED=1 adds them
 make release    # the same, optimised
+make install    # leotui and leogui with every plugin, @entangled too, into ~/.local/bin (BINDIR=...)
+make uninstall  # remove them from the same BINDIR
 make run FILE=FILE.leo    # leotui
 make gui FILE=FILE.leo    # leogui, release build
+make run PLUGINS=all FILE=FILE.leo   # leotui-all; `make gui PLUGINS=all` for leogui-all
+make agent-demo # leotui on demo/agent, with the agent plugin; GUI=1 for leogui
 make test       # cargo test, likewise
 make bench      # leolib's load times; LEO_EDITOR=... adds leo-editor's own outline
 make corpus LEO_EDITOR=/path/to/leo-editor   # demo/'s expected files against Python Leo

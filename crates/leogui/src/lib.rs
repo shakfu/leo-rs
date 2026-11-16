@@ -69,9 +69,18 @@ struct Args {
 /// Parse the command line and run the window, drawn by `renderer`.
 /// `name` is the program's, for messages and the window system.
 pub fn run(name: &'static str, renderer: eframe::Renderer) -> eframe::Result {
+    run_with(name, renderer, leo_plugins::register)
+}
+
+/// `run`, with the plugins `register` offers; `leo-all` passes more.
+pub fn run_with(
+    name: &'static str,
+    renderer: eframe::Renderer,
+    register: fn() -> bool,
+) -> eframe::Result {
     // Leo's myLeoSettings.leo, beneath each outline's own @settings.
     leolib::settings::use_user_settings(&leolib::settings::user_settings_path());
-    if !leo_plugins::register() {
+    if !register() {
         eprintln!(
             "{name}: plugins were looked up before they were registered; @qmd and @rmd are off"
         );

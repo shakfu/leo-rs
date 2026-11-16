@@ -336,3 +336,149 @@ fn lines_all_sends_the_whole_body_and_replace_replaces_it() {
     app.doc.undo();
     assert_eq!(body(&app, "Here"), "one\ntwo\nthree\n");
 }
+
+#[test]
+fn a_prompt_and_scope_over_256_kb_refuse() {
+    let mut app = app("default = echo\necho = cat\n");
+    let parent = find(&app, "Parent");
+    app.doc.set_body(&parent, &"x".repeat(300 * 1024));
+    app.run_command_line("ask scope=1 summarise");
+    assert!(
+        app.message.contains("over the 256 KB limit"),
+        "{}",
+        app.message
+    );
+    assert!(!leo_agent::busy(&app));
+}
+
+#[test]
+fn the_agent_runs_in_the_outlines_directory_without_colour() {
+    let at = script("where", "pwd -P; echo \"NO_COLOR=$NO_COLOR\"");
+    let mut app = app(&format!("default = where\nwhere = {at}\n"));
+    app.run_command_line("ask x");
+    finish(&mut app);
+    let dir = std::env::temp_dir()
+        .join(format!("leo-agent-test-{}", std::process::id()))
+        .canonicalize()
+        .unwrap();
+    assert_eq!(
+        body(&app, "Here"),
+        format!("one\n{}\nNO_COLOR=1\ntwo\nthree\n", dir.display())
+    );
+}
+
+#[test]
+fn scope_all_sends_the_whole_outline_and_a_scope_past_the_top_refuses() {
+    let mut app = app("echo = cat\n");
+    let parent = find(&app, "Parent");
+    let other = app.doc.outline_mut_untracked().insert_after(&parent);
+    app.doc.set_headline(&other, "Other");
+    app.select(find(&app, "Here"));
+    app.focus = Focus::Body;
+    app.editor.cursor = (0, 0);
+    app.run_command_line("ask agent=echo scope=2 x");
+    assert_eq!(
+        app.message,
+        "ask: scope=2 is past the top of the outline: this node has 1 ancestor. Use scope=1, or scope=all for the whole outline"
+    );
+    assert!(!leo_agent::busy(&app));
+    app.run_command_line("ask agent=echo scope=all x");
+    finish(&mut app);
+    let b = body(&app, "Here");
+    assert!(
+        b.contains("\n* Parent\n") && b.contains("\n* Other\n"),
+        "{b}"
+    );
+}
+
+#[test]
+fn cancel_says_when_nothing_runs_and_drops_a_waiting_reply() {
+    let mut app = app("default = echo\necho = cat\n");
+    app.run_command_line("agent-cancel");
+    assert_eq!(app.message, "agent: nothing is running");
+    app.run_command_line("ask hi");
+    app.mode = Mode::Insert;
+    let start = Instant::now();
+    while !app.message.contains("replied") {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        app.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    app.run_command_line("agent-cancel");
+    assert_eq!(app.message, "ask: the waiting reply was dropped");
+    app.mode = Mode::Normal;
+    app.poll();
+    assert!(!leo_agent::busy(&app));
+    assert_eq!(body(&app, "Here"), "one\ntwo\nthree\n");
+}
+
+#[test]
+fn confirm_reply_asks_before_the_reply_goes_in_and_n_keeps_it_in_the_register() {
+    let mut app = app("default = echo\necho = cat\nconfirm-reply = always\n");
+    app.run_command_line("ask hi");
+    finish(&mut app);
+    assert_eq!(app.mode, Mode::Confirm);
+    assert_eq!(
+        app.mini_label(),
+        "ask: insert the 1-line reply from echo below line 1? (y/n) "
+    );
+    assert!(app.answer_key('y'));
+    assert_eq!(body(&app, "Here"), "one\nhi\ntwo\nthree\n");
+    app.doc.undo();
+    assert_eq!(body(&app, "Here"), "one\ntwo\nthree\n");
+
+    app.editor.cursor = (0, 0);
+    app.run_command_line("ask again");
+    finish(&mut app);
+    assert!(app.answer_key('n'));
+    app.poll();
+    assert_eq!(body(&app, "Here"), "one\ntwo\nthree\n");
+    assert_eq!(app.editor.register.text, "again\n");
+    assert!(
+        app.message.contains("you answered n; `p` puts the reply"),
+        "{}",
+        app.message
+    );
+}
+
+#[test]
+fn confirm_reply_replace_asks_only_when_the_reply_replaces_lines() {
+    let mut app = app("default = echo\necho = cat\necho.confirm-reply = replace\n");
+    app.run_command_line("ask hi");
+    finish(&mut app);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(body(&app, "Here"), "one\nhi\ntwo\nthree\n");
+    app.run_command_line("ask lines=all reply=replace short");
+    finish(&mut app);
+    assert!(
+        app.mini_label()
+            .starts_with("ask: replace lines 1-4 with the "),
+        "{}",
+        app.mini_label()
+    );
+    assert!(app.answer_key('y'));
+    assert!(
+        body(&app, "Here").starts_with("short\n"),
+        "{}",
+        body(&app, "Here")
+    );
+}
+
+#[test]
+fn an_agents_own_timeout_wins_over_the_tables() {
+    let mut app = app("default = slow\ntimeout = 300\nslow = sleep 5\nslow.timeout = 1\n");
+    app.run_command_line("ask x");
+    finish(&mut app);
+    assert!(app.message.contains("took over 1 s"), "{}", app.message);
+}
+
+#[test]
+fn a_preamble_goes_before_the_prompt() {
+    let mut app = app("default = echo\necho = cat\necho.preamble = Reply in plain text.\n");
+    app.run_command_line("ask hi");
+    finish(&mut app);
+    assert_eq!(
+        body(&app, "Here"),
+        "one\nReply in plain text.\n\nhi\ntwo\nthree\n"
+    );
+}

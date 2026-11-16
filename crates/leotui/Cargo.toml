@@ -10,9 +10,12 @@ readme.workspace = true
 # Reads the workspace README at ../../README.md, which the package lacks.
 exclude = ["tests/readme.rs"]
 
+# The library's name is the binary's too, so the binary is not documented:
+# `cargo doc` would write both to one place.
 [[bin]]
 name = "leotui"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 leolib.workspace = true

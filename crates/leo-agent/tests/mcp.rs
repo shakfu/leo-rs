@@ -29,6 +29,11 @@ fn dir(test: &str) -> PathBuf {
 const AGENT: &str = "@agent agent=edit scope=1 tidy the sibling";
 
 fn app(dir: &Path) -> App {
+    app_with(dir, AGENT)
+}
+
+/// As [`app`], with `headline` for the agent node.
+fn app_with(dir: &Path, headline: &str) -> App {
     use std::os::unix::fs::PermissionsExt;
     leoapp::plugins::register(vec![&AgentPlugin]);
     let d = dir.display();
@@ -47,7 +52,7 @@ fn app(dir: &Path) -> App {
     let parent = doc.outline().root_position().unwrap();
     doc.set_headline(&parent, "Parent");
     let node = doc.outline_mut_untracked().insert_as_last_child(&parent);
-    doc.set_headline(&node, AGENT);
+    doc.set_headline(&node, headline);
     let sibling = doc.outline_mut_untracked().insert_as_last_child(&parent);
     doc.set_headline(&sibling, "Sibling");
     doc.set_body(&sibling, "old text\n");
@@ -55,7 +60,7 @@ fn app(dir: &Path) -> App {
     doc.set_headline(&outside, "Outside");
     doc.clear_undo();
     let mut app = App::new(doc);
-    let p = find(&app, AGENT).unwrap();
+    let p = find(&app, headline).unwrap();
     app.select(p);
     let (table, warnings) = Agents::parse(&format!("edit = {} {{mcp}}\n", agent.display()));
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -152,6 +157,11 @@ fn start(app: &mut App, dir: &Path) -> Client {
         app.mini_label()
     );
     assert!(app.answer_key('y'));
+    client(app, dir)
+}
+
+/// Wait for the agent's copy of its config file, and connect to its server.
+fn client(app: &mut App, dir: &Path) -> Client {
     let config = dir.join("config.json");
     let start = Instant::now();
     while !config.exists() {
@@ -298,4 +308,118 @@ fn a_user_edit_during_the_run_keeps_the_steps_apart() {
     app.doc.undo();
     assert_eq!(body(&app, "Sibling"), "old text\n");
     assert!(!app.doc.undoer().can_undo());
+}
+
+#[test]
+fn ask_with_an_mcp_agent_edits_and_inserts_its_reply_as_one_step() {
+    let dir = dir("ask");
+    let mut app = app(&dir);
+    let parent = gnx(&app, "Parent");
+    app.select(find(&app, "Sibling").unwrap());
+    app.focus = leoapp::app::Focus::Body;
+    app.editor.cursor = (0, 0);
+    app.run_command_line("ask agent=edit scope=1 tidy");
+    assert_eq!(
+        app.message,
+        "ask: edit is running, and may edit the outline"
+    );
+    let client = client(&mut app, &dir);
+    drive(
+        &mut app,
+        &dir,
+        move |_, _| {
+            let (text, error) = client.call("set_body", json!({"gnx": parent, "body": "edited\n"}));
+            assert!(!error, "{text}");
+        },
+        |_| {},
+    );
+    assert_eq!(body(&app, "Parent"), "edited\n");
+    assert_eq!(body(&app, "Sibling"), "old text\nfinished\n");
+    app.doc.undo();
+    assert_eq!(body(&app, "Parent"), "");
+    assert_eq!(body(&app, "Sibling"), "old text\n");
+    assert!(!app.doc.undoer().can_undo(), "one step held the whole run");
+}
+
+#[test]
+fn a_file_an_agent_names_is_not_created_until_the_user_says_so() {
+    let dir = dir("held");
+    let mut app = app(&dir);
+    let sibling = gnx(&app, "Sibling");
+    let client = start(&mut app, &dir);
+    drive(
+        &mut app,
+        &dir,
+        move |_, _| {
+            let (text, error) = client.call(
+                "insert_node",
+                json!({"gnx": sibling, "place": "inside", "headline": "@file new.txt"}),
+            );
+            assert!(!error, "{text}");
+        },
+        |_| {},
+    );
+    let p = find(&app, "@file new.txt").unwrap();
+    assert!(!app.outline().may_overwrite(&p));
+    app.run_command_line("w");
+    assert!(
+        app.mini_label()
+            .contains("which an MCP client asked for? (y/n)"),
+        "{}",
+        app.mini_label()
+    );
+    assert!(!dir.join("new.txt").exists());
+}
+
+#[test]
+fn a_cancelled_run_stops_its_server_and_removes_its_config() {
+    let dir = dir("cancel");
+    let mut app = app(&dir);
+    let client = start(&mut app, &dir);
+    let path = std::fs::read_to_string(dir.join("path.txt")).unwrap();
+    let config = PathBuf::from(path.trim_end());
+    app.run_command_line("agent-cancel");
+    assert_eq!(app.message, "agent: edit stopped");
+    assert!(
+        !config.exists(),
+        "the cancelled run removes its config file"
+    );
+    let start = Instant::now();
+    while TcpStream::connect(("127.0.0.1", client.port)).is_ok() {
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "the server still listens"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn scope_all_asks_for_the_whole_outline_and_reaches_it() {
+    let dir = dir("all");
+    let headline = "@agent agent=edit scope=all tidy";
+    let mut app = app_with(&dir, headline);
+    let outside = gnx(&app, "Outside");
+    app.run_command_line("agent-run");
+    assert!(
+        app.mini_label()
+            .contains("with read and edit access to the whole outline?"),
+        "{}",
+        app.mini_label()
+    );
+    assert!(app.answer_key('y'));
+    let client = client(&mut app, &dir);
+    let prompt = std::fs::read_to_string(dir.join("prompt.txt")).unwrap();
+    assert!(!prompt.contains("reach only"), "{prompt}");
+    drive(
+        &mut app,
+        &dir,
+        move |_, _| {
+            let (text, error) =
+                client.call("set_body", json!({"gnx": outside, "body": "reached\n"}));
+            assert!(!error, "{text}");
+        },
+        |_| {},
+    );
+    assert_eq!(body(&app, "Outside"), "reached\n");
 }

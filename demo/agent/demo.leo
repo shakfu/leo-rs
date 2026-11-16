@@ -115,7 +115,7 @@ sends `scope=all is a phrase in this prompt` with scope 0.
 <t tx="demo.20261116120000.15">Drop agent=echo to use claude:
 
     :ask list three sort algorithms
-    :ask model=haiku scope=1 summarise this demo in two lines
+    :ask model=haiku scope=all summarise this demo in two lines
 
 To reach Claude through OpenRouter, add to agents.toml:
 
@@ -230,19 +230,19 @@ the nodes of this whole section, and the node beside it goes in.
 
 The reply becomes the body, with no empty first line.
 </t>
-<t tx="demo.20261116120000.5">scope=1 sends this node and its children with the prompt. Put the
-cursor here and type:
+<t tx="demo.20261116120000.5">scope=N sends the subtree of the node's N-th ancestor with the prompt;
+1 is the parent. Select Quicksort, put the cursor in its body, and type:
 
     :ask agent=echo scope=1 compare these algorithms in a table
 
-The reply quotes what was sent: the prompt, then each node as a `*`
-headline with its body. :messages says how many nodes and bytes went.
+The reply, in Quicksort's body, quotes what was sent: the prompt, then
+this node and its children, each a `*` headline with its body.
+:messages says how many nodes and bytes went.
 
-Then try the other scopes, from inside a child:
+Then try the other scopes from Quicksort:
 - scope=0 (the default): the prompt only.
-- scope=1 from a child: this node's subtree again, the child's parent.
-- scope=2 from a child: the same, as this node is top-level and scope
-  never goes above the top-level node.
+- scope=2: refused, as this node is top-level. The message names the
+  largest scope that works.
 - scope=all: the whole outline.
 </t>
 <t tx="demo.20261116120000.6">Average n log n, worst n^2. In place.

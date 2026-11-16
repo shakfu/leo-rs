@@ -105,6 +105,35 @@ impl Tabs {
         }
     }
 
+    /// Close the selected node's tab, as Cmd-W does.
+    pub fn close_current(&mut self, app: &mut App) {
+        let current = app.current.gnx(app.outline()).to_string();
+        let Some(i) = self.list.iter().position(|t| t.gnx == current) else {
+            return;
+        };
+        if let Some(gnx) = self.remove(i, &current) {
+            self.show(app, &gnx);
+        }
+    }
+
+    /// Remove tab `i`; the neighbour to select if it was `current`'s.
+    fn remove(&mut self, i: usize, current: &str) -> Option<String> {
+        let closed = self.list.remove(i);
+        // The neighbour takes its place, as in an editor.
+        (closed.gnx == current)
+            .then(|| self.list.get(i.min(self.list.len().saturating_sub(1))))
+            .flatten()
+            .map(|t| t.gnx.clone())
+    }
+
+    fn show(&self, app: &mut App, gnx: &str) {
+        if let Some(p) = self.find(app, gnx) {
+            if app.run_chosen("") {
+                app.select(p);
+            }
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, app: &mut App, colours: &Palette) {
         let current = app.current.gnx(app.outline()).to_string();
         let mut select: Option<String> = None;
@@ -198,20 +227,10 @@ impl Tabs {
                 });
             });
         if let Some(i) = close {
-            let closed = self.list.remove(i);
-            if closed.gnx == current {
-                // The neighbour takes its place, as in an editor.
-                if let Some(next) = self.list.get(i.min(self.list.len().saturating_sub(1))) {
-                    select = Some(next.gnx.clone());
-                }
-            }
+            select = self.remove(i, &current).or(select);
         }
         if let Some(gnx) = select {
-            if let Some(p) = self.find(app, &gnx) {
-                if app.run_chosen("") {
-                    app.select(p);
-                }
-            }
+            self.show(app, &gnx);
         }
     }
 }

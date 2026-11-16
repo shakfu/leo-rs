@@ -19,11 +19,46 @@ pub const MCP_WORD: &str = "{mcp}";
 /// How long a run may take before it is killed, when `timeout` is unset.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
+/// Which replies ask before they go in: `confirm-reply` in agents.toml.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConfirmReply {
+    #[default]
+    Never,
+    /// A reply that replaces text: `reply=replace`.
+    Replace,
+    Always,
+}
+
+impl ConfirmReply {
+    fn parse(value: &str) -> Result<ConfirmReply, String> {
+        match value {
+            "never" => Ok(ConfirmReply::Never),
+            "replace" => Ok(ConfirmReply::Replace),
+            "always" => Ok(ConfirmReply::Always),
+            _ => Err(format!(
+                "confirm-reply is never, replace or always, not `{value}`"
+            )),
+        }
+    }
+
+    /// Whether a reply asks first; `replace` says it replaces text.
+    pub fn asks(self, replace: bool) -> bool {
+        match self {
+            ConfirmReply::Never => false,
+            ConfirmReply::Replace => replace,
+            ConfirmReply::Always => true,
+        }
+    }
+}
+
 /// The agents table.
 #[derive(Clone, Debug, Default)]
 pub struct Agents {
     default: Option<String>,
     timeout: Option<u64>,
+    confirm_reply: Option<ConfirmReply>,
+    /// `stamp = local`: separators in local time, not UTC.
+    local_time: bool,
     agents: BTreeMap<String, Agent>,
     /// Where the table came from, for a message naming a missing agent.
     source: Option<String>,
@@ -33,6 +68,12 @@ pub struct Agents {
 struct Agent {
     command: Option<Vec<String>>,
     default_provider: Option<String>,
+    confirm_reply: Option<ConfirmReply>,
+    timeout: Option<u64>,
+    /// An `@agent` node's `reply=` when it names none.
+    reply: Option<String>,
+    /// Text sent before every prompt.
+    preamble: Option<String>,
     own: Models,
     providers: BTreeMap<String, Provider>,
 }
@@ -70,6 +111,11 @@ pub struct Invocation {
     pub label: String,
     /// The command names [`MCP_WORD`]: the run may edit the outline.
     pub mcp: bool,
+    pub confirm_reply: ConfirmReply,
+    pub timeout: std::time::Duration,
+    /// `append`, `replace` or `child`: an `@agent` node's default reply.
+    pub reply: Option<String>,
+    pub preamble: Option<String>,
 }
 
 impl Agents {
@@ -120,9 +166,9 @@ impl Agents {
         }
     }
 
-    /// How long a run may take.
-    pub fn timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.timeout.unwrap_or(DEFAULT_TIMEOUT_SECS))
+    /// Whether separators are in local time.
+    pub fn local_time(&self) -> bool {
+        self.local_time
     }
 
     fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
@@ -138,15 +184,40 @@ impl Agents {
         }
         match parts.as_slice() {
             ["default"] => self.default = Some(value.to_string()),
-            ["timeout"] => match value.parse::<u64>() {
-                Ok(s) if s > 0 => self.timeout = Some(s),
-                _ => return Err(format!("timeout is not a number of seconds: {value}")),
-            },
+            ["timeout"] => self.timeout = Some(seconds(value)?),
+            ["stamp"] => {
+                self.local_time = match value {
+                    "utc" => false,
+                    "local" => true,
+                    _ => return Err(format!("stamp is utc or local, not `{value}`")),
+                }
+            }
+            [name, "timeout"] => {
+                self.agents.entry(name.to_string()).or_default().timeout = Some(seconds(value)?)
+            }
+            [name, "reply"] => {
+                if !matches!(value, "append" | "replace" | "child") {
+                    return Err(format!(
+                        "{name}.reply is append, replace or child, an @agent node's reply, not `{value}`"
+                    ));
+                }
+                self.agents.entry(name.to_string()).or_default().reply = Some(value.to_string())
+            }
+            [name, "preamble"] => {
+                self.agents.entry(name.to_string()).or_default().preamble = Some(value.to_string())
+            }
+            ["confirm-reply"] => self.confirm_reply = Some(ConfirmReply::parse(value)?),
             [name] => {
                 if value.is_empty() {
                     return Err(format!("{name} is empty"));
                 }
                 self.agents.entry(name.to_string()).or_default().command = Some(words());
+            }
+            [name, "confirm-reply"] => {
+                self.agents
+                    .entry(name.to_string())
+                    .or_default()
+                    .confirm_reply = Some(ConfirmReply::parse(value)?)
             }
             [name, "default-provider"] => {
                 self.agents
@@ -287,11 +358,31 @@ impl Agents {
         label.extend(model);
         Ok(Invocation {
             mcp: args.iter().any(|a| a.contains(MCP_WORD)),
+            confirm_reply: agent
+                .confirm_reply
+                .or(self.confirm_reply)
+                .unwrap_or_default(),
+            timeout: std::time::Duration::from_secs(
+                agent
+                    .timeout
+                    .or(self.timeout)
+                    .unwrap_or(DEFAULT_TIMEOUT_SECS),
+            ),
+            reply: agent.reply.clone(),
+            preamble: agent.preamble.clone(),
             program,
             args,
             env,
             label: label.join(" "),
         })
+    }
+}
+
+/// A timeout's seconds: a whole number above 0.
+fn seconds(value: &str) -> Result<u64, String> {
+    match value.parse::<u64>() {
+        Ok(s) if s > 0 => Ok(s),
+        _ => Err(format!("timeout is not a number of seconds: {value}")),
     }
 }
 
@@ -495,6 +586,63 @@ mod tests {
             Agents::parse("# a comment\nnonsense\nclaude.colour = red\ntimeout = soon\nx. = 1\n");
         assert_eq!(warnings.len(), 4, "{warnings:?}");
         assert!(warnings[0].starts_with("agents.toml line 2"));
-        assert_eq!(t.timeout().as_secs(), DEFAULT_TIMEOUT_SECS);
+        assert!(
+            warnings[2].contains("timeout is not a number"),
+            "{warnings:?}"
+        );
+        let run = t.resolve(&Choice::default(), no_env).unwrap();
+        assert_eq!(run.timeout.as_secs(), DEFAULT_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn an_agents_timeout_reply_and_preamble_and_the_stamp_are_read() {
+        let t = table(
+            "timeout = 60\nstamp = local\necho = cat\nslow = cat\nslow.timeout = 900\n\
+             slow.reply = child\nslow.preamble = Reply in plain text.\n",
+        );
+        let run = |agent: &str| {
+            let choice = Choice {
+                agent: Some(agent.to_string()),
+                ..Choice::default()
+            };
+            t.resolve(&choice, no_env).unwrap()
+        };
+        assert_eq!(run("echo").timeout.as_secs(), 60);
+        assert_eq!(run("slow").timeout.as_secs(), 900);
+        assert_eq!(run("echo").reply, None);
+        assert_eq!(run("slow").reply.as_deref(), Some("child"));
+        assert_eq!(
+            run("slow").preamble.as_deref(),
+            Some("Reply in plain text.")
+        );
+        assert!(t.local_time());
+        let (_, warnings) = Agents::parse("stamp = gmt\necho.reply = insert\necho.timeout = 0\n");
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings[0].contains("utc or local"));
+        assert!(warnings[1].contains("append, replace or child"));
+    }
+
+    #[test]
+    fn confirm_reply_is_never_unless_set_and_an_agent_overrides_the_table() {
+        let confirm = |t: &Agents, agent: &str| {
+            let choice = Choice {
+                agent: Some(agent.to_string()),
+                ..Choice::default()
+            };
+            t.resolve(&choice, no_env).unwrap().confirm_reply
+        };
+        let t = table("echo = cat\n");
+        assert_eq!(confirm(&t, "echo"), ConfirmReply::Never);
+        let t =
+            table("confirm-reply = replace\necho = cat\nloud = cat\nloud.confirm-reply = always\n");
+        assert_eq!(confirm(&t, "echo"), ConfirmReply::Replace);
+        assert_eq!(confirm(&t, "loud"), ConfirmReply::Always);
+        assert_eq!(confirm(&t, "claude"), ConfirmReply::Replace);
+        let (_, warnings) = Agents::parse("confirm-reply = sometimes\n");
+        assert!(
+            warnings[0].contains("never, replace or always"),
+            "{warnings:?}"
+        );
+        assert!(!ConfirmReply::Replace.asks(false) && ConfirmReply::Replace.asks(true));
     }
 }

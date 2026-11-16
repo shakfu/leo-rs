@@ -1,8 +1,11 @@
 # Plugins
 
 `@qmd` and `@rmd` are in `leo-markdown`, and `@wiki` in `leo-wiki`,
-registered in leotui and leogui by `leo-plugins`, from 0.8.0. `@entangled` is in the
-unpublished `leo-entangled`, and no binary registers it. The design is in
+registered in leotui and leogui by `leo-plugins`, from 0.8.0. The agents
+(`:ask`, `@agent`) are in `leo-agent`, from 0.10.0, registered only with
+`leo-plugins`'s `agent` feature, which is off. `@entangled` is in the
+unpublished `leo-entangled`, registered only by the unpublished `leo-all`'s
+`leotui-all` and `leogui-all` (`make run PLUGINS=all`). The design is in
 `docs/dev/plugins.md`. Its settings key, `entangled`, applies only when
 the plugin is registered:
 
@@ -107,7 +110,7 @@ Parameters come before the prompt; `--` ends them.
 
 | Parameter | Values | Default |
 |-|-|-|
-| `scope` | `0`: the prompt only; `N`: also the subtree of the node's N-th ancestor, `1` being the parent; `all`: also the whole outline | `0` |
+| `scope` | `0`: the prompt only; `N`: also the subtree of the node's N-th ancestor, `1` being the parent, refused past the top level; `all`: also the whole outline | `0` |
 | `agent` | a name in `agents.toml` | `claude` |
 | `provider` | a provider of that agent in `agents.toml` | the agent's own account |
 | `model` | a model the agent allows | the agent's own |
@@ -139,11 +142,17 @@ llm.openrouter.model = -m openrouter/{model}
 |-|-|
 | `default` | the agent `:ask` uses without `agent=` |
 | `timeout` | seconds a run may take |
+| `stamp` | `utc` (the default) or `local`: the time zone of an `@agent` reply's separator |
+| `confirm-reply` | which replies ask y/n before they go in: `never` (the default), `replace` (a reply that replaces text) or `always`. On n, the reply goes to the unnamed register |
 | `NAME` | the agent's command |
 | `NAME.model` | the words `model=` adds; `{model}` is the name |
 | `NAME.default-model` | the model used without `model=` |
 | `NAME.models` | the models `model=` may name |
 | `NAME.default-provider` | the provider used without `provider=` |
+| `NAME.confirm-reply` | as `confirm-reply`, for this agent |
+| `NAME.timeout` | as `timeout`, for this agent |
+| `NAME.reply` | an `@agent` node's `reply` when it names none: `append`, `replace` or `child`. `:ask` keeps `insert` |
+| `NAME.preamble` | a line sent before every prompt, as `Reply in plain text.`; it counts towards the 256 KB |
 | `NAME.PROVIDER.env` | `VAR=value` words set for the run; `${VAR}` reads leo-rs's environment |
 | `NAME.PROVIDER.model`, `.default-model`, `.models` | as the agent's, for that provider |
 
@@ -167,7 +176,7 @@ The parameters are `:ask`'s, with `reply` taking other values:
 | `replace` | replaces the body with the separator and the reply |
 | `child` | adds a last child holding the separator and the reply; the body is unchanged |
 
-- The separator records when and what ran: `-- 2026-11-16 14:03Z claude opus --`. The time is UTC.
+- The separator records when and what ran: `-- 2026-11-16 14:03Z claude opus --`. The time is UTC, or local with its offset under `stamp = local`: `16:03+0200`.
 - A child's headline is the time and the prompt's first line, cut at 60 characters.
 - `scope` sends the node as its headline alone, never its body or children: earlier replies would feed every later run.
 - The first run in an outline asks first, as does every run with a scope: a shared outline's prompt could send the outline to one of your accounts. The question names the size, the agent, the provider and the model. Once you answer y, prompt-only runs in that outline stop asking until you quit.
@@ -212,6 +221,7 @@ edit = claude -p --strict-mcp-config --mcp-config {mcp} --allowedTools mcp__leo
 - The tools reach only the subtree `scope` names: the node itself for `scope=0`, its N-th ancestor's subtree for `scope=N`, the whole outline for `scope=all`. A node outside is not found, the selection outside reads as none, and nothing may be inserted or moved beside the subtree's top node, or delete it. A rename whose kind would rewrite nodes outside, as a wiki rename rewrites links, is refused.
 - A clone with a copy outside the subtree may be read but not changed: its headline, body and children are refused, as an edit would change the copy too. Unlinking it from the subtree is allowed, as the copy outside stays.
 - A run's edits, and its reply, are one undo step. An edit or undo of yours during the run splits it there.
+- `confirm-reply` asks about the reply alone: the agent's edits are made during the run.
 - An edit made while you type is refused, and the agent is told to try again.
 - A save after the run asks before creating any file an edit named, as an MCP client's save does.
 - An `@agent` run of such an agent asks first every time. The question says how many nodes it may read and edit.

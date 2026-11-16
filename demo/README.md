@@ -9,7 +9,8 @@ needs a checkout of the other.
 
 `entangled/` is the `@entangled` example: a README whose code examples are
 tested (`entangled/demo.leo`, and see `docs/plugins.md`). It needs the
-`@entangled` plugin, which no released binary registers yet. The corpus
+`@entangled` plugin, which no released binary registers yet; `make run
+PLUGINS=all FILE=demo/entangled/demo.leo` runs a local build that does. The corpus
 skips it, since Python Leo reads `@entangled` as a plain node.
 
 The other examples need a leotui or leogui from 0.8.0, which registers their
@@ -21,7 +22,7 @@ each one opens and writes back unchanged.
 | `qmd/` | `@qmd`: a Quarto report whose labelled cells are cloned into `@clean rainfall.py` |
 | `rmd/` | `@rmd`: an R Markdown paper whose chunks are cloned into `@clean growth.R` |
 | `wiki/` | `@wiki`: two wikis linked to each other, exported by `:export-wiki` |
-| `agent/` | `:ask` and `@agent` nodes: one node per exercise, with offline stand-in agents (`echo-agent.sh`, and `outline-agent.sh`, which edits the outline over MCP and needs `curl`) and the `agents.toml` lines they need; checked by `crates/leo-agent/tests/demo.rs` |
+| `agent/` | `:ask` and `@agent` nodes, from 0.10.0 with `leo-plugins`'s `agent` feature (`make agent-demo`): one node per exercise, with offline stand-in agents (`echo-agent.sh`, and `outline-agent.sh`, which edits the outline over MCP and needs `curl`) and the `agents.toml` lines they need; checked by `crates/leo-agent/tests/demo.rs` |
 
 `make test` in `qmd/` or `rmd/` runs the cloned code; `make render` renders
 the document.

@@ -176,6 +176,14 @@ impl Gui {
             if !modifiers.shift && !modifiers.alt && (modifiers.command || modifiers.ctrl))
     }
 
+    /// Close the node's tab: Cmd-W, on macOS only. Elsewhere Ctrl-w is
+    /// vim's window prefix (`Ctrl-w <`), so it is left to leoapp.
+    fn close_tab_chord(event: &egui::Event) -> bool {
+        matches!(event, egui::Event::Key { key: Key::W, pressed: true, modifiers, .. }
+            if cfg!(target_os = "macos") && modifiers.mac_cmd
+                && !modifiers.shift && !modifiers.alt && !modifiers.ctrl)
+    }
+
     /// The settings' chord: Cmd-, on macOS, Ctrl-, elsewhere.
     fn settings_chord(event: &egui::Event) -> bool {
         matches!(event, egui::Event::Key { key: Key::Comma, pressed: true, modifiers, .. }
@@ -278,6 +286,10 @@ impl Gui {
                 self.palette.open = false;
                 self.goto.open = false;
                 self.quit_all();
+                continue;
+            }
+            if Self::close_tab_chord(event) {
+                self.tabs.close_current(&mut self.app);
                 continue;
             }
             if Self::palette_chord(event) {
@@ -1037,6 +1049,51 @@ mod tests {
         (0..gui.outlines.len())
             .map(|i| outlines::name(gui.app_at(i)))
             .collect()
+    }
+
+    #[test]
+    fn cmd_w_closes_the_nodes_tab_and_selects_its_neighbour() {
+        let ctx = egui::Context::default();
+        let dir = scratch("close-tab");
+        let a = dir.join("a.leo");
+        saved_outline(&a);
+        let mut gui = window(&ctx);
+        gui.open_outline(Some(a.to_str().unwrap()));
+        let ps = gui.app.outline().all_positions();
+        let gnxs: Vec<String> = ps
+            .iter()
+            .map(|p| p.gnx(gui.app.outline()).to_string())
+            .collect();
+        for (p, gnx) in ps.iter().zip(&gnxs) {
+            gui.app.select(p.clone());
+            gui.tabs.track(&gui.app);
+            gui.tabs.pin(gnx);
+        }
+        gui.tabs.close_current(&mut gui.app);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let open: Vec<String> = gui.tabs.saved().into_iter().map(|(g, _)| g).collect();
+        assert_eq!(open, gnxs[..1]);
+        assert_eq!(gui.app.current.gnx(gui.app.outline()), gnxs[0]);
+
+        let w = |modifiers| egui::Event::Key {
+            key: Key::W,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let cmd = egui::Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: !cfg!(target_os = "macos"),
+            ..Default::default()
+        };
+        assert_eq!(Gui::close_tab_chord(&w(cmd)), cfg!(target_os = "macos"));
+        assert!(!Gui::close_tab_chord(&w(ctrl)), "Control-w stays vim's");
     }
 
     #[test]

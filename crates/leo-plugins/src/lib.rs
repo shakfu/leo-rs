@@ -39,7 +39,13 @@ pub fn app_plugins() -> Vec<&'static dyn AppPlugin> {
 /// Register this build's kinds and app plugins with leoapp, before any
 /// outline is opened. False if leoapp had already chosen its plugins.
 pub fn register() -> bool {
-    let kinds = leoapp::plugins::register_kinds(kinds());
-    let plugins = leoapp::plugins::register(app_plugins());
+    register_with(kinds(), app_plugins())
+}
+
+/// Register `kinds` and `plugins`, as `register` does. For a build that adds
+/// plugins this crate cannot depend on, such as the unpublished `leo-all`'s.
+pub fn register_with(kinds: Kinds, plugins: Vec<&'static dyn AppPlugin>) -> bool {
+    let kinds = leoapp::plugins::register_kinds(kinds);
+    let plugins = leoapp::plugins::register(plugins);
     kinds && plugins
 }

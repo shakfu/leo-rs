@@ -6,14 +6,26 @@
 #
 #     make corpus LEO_EDITOR=~/projects/leo-editor
 
-# leo-entangled is left out unless ENTANGLED=1, e.g. `make test ENTANGLED=1`.
+# PLUGINS=all builds and runs leotui-all and leogui-all (crates/leo-all): every
+# plugin, the unpublished leo-entangled and the agents included. It sets ENTANGLED=1.
+ifeq ($(PLUGINS),all)
+ENTANGLED := 1
+TUI := -p leo-all --bin leotui-all
+GUI_BIN := -p leo-all --bin leogui-all
+else
+TUI := -p leotui
+GUI_BIN := -p leogui --bin leogui
+endif
+
+# leo-entangled, and leo-all, which depends on it, are left out unless
+# ENTANGLED=1, e.g. `make test ENTANGLED=1`.
 ifeq ($(ENTANGLED),1)
 WS := --workspace --features leo-entangled/leoapp
 else
-WS := --workspace --exclude leo-entangled
+WS := --workspace --exclude leo-entangled --exclude leo-all
 endif
 
-.PHONY: test corpus bench build release fmt lint audit check publish run tui gui gui-glow agent-demo dump clean
+.PHONY: test corpus bench build release install uninstall fmt lint audit check publish run tui gui gui-glow agent-demo dump clean
 
 test:
 	cargo test $(WS)
@@ -32,6 +44,18 @@ build:
 release:
 	cargo build $(WS) --release
 
+# leotui-all and leogui-all, release builds with every plugin, installed as
+# leotui and leogui. BINDIR=... installs elsewhere.
+BINDIR ?= $(HOME)/.local/bin
+install:
+	cargo build --release -p leo-all
+	mkdir -p $(BINDIR)
+	install -m 755 target/release/leotui-all $(BINDIR)/leotui
+	install -m 755 target/release/leogui-all $(BINDIR)/leogui
+
+uninstall:
+	rm -f $(BINDIR)/leotui $(BINDIR)/leogui
+
 fmt:
 	cargo fmt --all
 
@@ -48,18 +72,18 @@ audit:
 
 check: lint test
 
-# Not $(WS): ENTANGLED=1 must not publish leo-entangled, which is unpublished.
+# Not $(WS): ENTANGLED=1 must not publish leo-entangled or leo-all.
 publish:
-	cargo publish --workspace --exclude leo-entangled
+	cargo publish --workspace --exclude leo-entangled --exclude leo-all
 
 run:
-	cargo run -p leotui -- $(FILE)
+	cargo run $(TUI) -- $(FILE)
 
 tui: run
 
 # Release: egui's debug build is slow to draw.
 gui:
-	cargo run --release -p leogui --bin leogui -- $(FILE)
+	cargo run --release $(GUI_BIN) -- $(FILE)
 
 # The same, drawn with OpenGL (glow) instead of wgpu, to compare.
 gui-glow:

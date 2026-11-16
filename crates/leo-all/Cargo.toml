@@ -1,0 +1,28 @@
+[package]
+name = "leo-all"
+description = "leotui and leogui with every plugin, the unpublished @entangled included, to test plugins locally before they are published."
+version.workspace = true
+edition.workspace = true
+# leogui's floor.
+rust-version = "1.95"
+license.workspace = true
+repository.workspace = true
+# It depends on leo-entangled, which is not published.
+publish = false
+
+[[bin]]
+name = "leotui-all"
+path = "src/bin/leotui-all.rs"
+
+[[bin]]
+name = "leogui-all"
+path = "src/bin/leogui-all.rs"
+
+[dependencies]
+leolib.workspace = true
+leoapp.workspace = true
+leo-plugins = { workspace = true, features = ["agent"] }
+leo-entangled = { workspace = true, features = ["leoapp"] }
+leotui = { path = "../leotui" }
+leogui = { path = "../leogui" }
+eframe = "0.36"

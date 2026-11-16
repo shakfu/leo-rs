@@ -369,3 +369,138 @@ fn a_body_forms_own_body_is_not_sent() {
     assert!(sent.contains("\n  * Sorting\n  * Sibling\n"), "{sent}");
     assert!(!sent.contains("Private notes"), "{sent}");
 }
+
+#[test]
+fn gd_on_the_agent_line_runs_it() {
+    let mut app = app("Top 5", "@agent prompt=headline\n", ECHO);
+    app.focus = leoapp::app::Focus::Body;
+    app.editor.cursor = (0, 0);
+    key(&mut app, 'g');
+    key(&mut app, 'd');
+    assert_eq!(app.mode, Mode::Confirm);
+    key(&mut app, 'y');
+    finish(&mut app);
+    assert!(
+        body(&app, "Top 5").ends_with(" echo --\nTop 5\n"),
+        "{}",
+        body(&app, "Top 5")
+    );
+}
+
+#[test]
+fn the_question_names_the_agent_provider_and_model() {
+    let args = script("args", "cat");
+    let agents =
+        format!("default = args\nargs = {args}\nargs.model = {{model}}\nargs.p.env = FOO=bar\n");
+    let mut app = app("@agent provider=p model=m1 hi", "", &agents);
+    app.run_command_line("agent-run");
+    assert_eq!(app.mini_label(), "agent: send 1 KB to args p m1? (y/n) ");
+    key(&mut app, 'y');
+    finish(&mut app);
+    let b = body(&app, "@agent provider=p model=m1 hi");
+    assert!(b.contains(" args p m1 --\nhi\n"), "{b}");
+}
+
+#[test]
+fn two_prompts_in_one_node_refuse_and_name_the_lines() {
+    let mut app = app("@agent hi", "@agent prompt=headline\n", ECHO);
+    app.run_command_line("agent-run");
+    assert!(
+        app.message
+            .contains("and so is body line 1: one prompt per node"),
+        "{}",
+        app.message
+    );
+    let mut app = self::app(
+        "Notes",
+        "@agent\nhi\n@agent-end\n@agent prompt=headline\n",
+        ECHO,
+    );
+    app.run_command_line("agent-run");
+    assert!(
+        app.message
+            .contains("body lines 1 and 4 are both @agent lines"),
+        "{}",
+        app.message
+    );
+    assert!(!leo_agent::busy(&app));
+}
+
+#[test]
+fn a_scope_past_the_top_refuses_rather_than_send_the_whole_outline() {
+    let mut app = app("Parent", "", ECHO);
+    let top = find(&app, "Parent");
+    app.doc
+        .set_headline(&top, "@agent scope=1 sort the children");
+    app.run_command_line("agent-run");
+    assert_eq!(
+        app.message,
+        "agent: scope=1 is past the top of the outline: this node has 0 ancestors. Use scope=0, or scope=all for the whole outline"
+    );
+    assert!(app.mode != Mode::Confirm && !leo_agent::busy(&app));
+}
+
+#[test]
+fn confirm_reply_names_what_an_agent_node_reply_does() {
+    let agents = "default = echo\necho = cat\necho.confirm-reply = always\n";
+    for (headline, asked) in [
+        ("@agent hi", "agent: append the 1-line reply from echo to `@agent hi`? (y/n) "),
+        (
+            "@agent reply=child hi",
+            "agent: add the 1-line reply from echo as a child of `@agent reply=child hi`? (y/n) ",
+        ),
+        (
+            "@agent reply=replace hi",
+            "agent: replace the replies in `@agent reply=replace hi` with the 1-line reply from echo? (y/n) ",
+        ),
+    ] {
+        let mut app = app(headline, "", agents);
+        run(&mut app);
+        assert_eq!(app.mini_label(), asked);
+        assert!(app.answer_key('y'));
+        let p = find(&app, headline);
+        let o = app.outline();
+        let written = match headline.contains("child") {
+            true => p.children(o)[0].b(o).to_string(),
+            false => p.b(o).to_string(),
+        };
+        assert!(written.ends_with(" echo --\nhi\n"), "{written}");
+    }
+}
+
+#[test]
+fn an_agents_reply_is_the_nodes_default_and_a_parameter_wins() {
+    let agents = "default = echo\necho = cat\necho.reply = child\n";
+    let mut app = app("@agent hi", "", agents);
+    run(&mut app);
+    let p = find(&app, "@agent hi");
+    let o = app.outline();
+    assert_eq!(p.b(o), "");
+    assert_eq!(p.children(o).len(), 1);
+
+    let mut app = self::app("@agent reply=append hi", "", agents);
+    run(&mut app);
+    let p = find(&app, "@agent reply=append hi");
+    assert!(p.children(app.outline()).is_empty());
+    assert!(body(&app, "@agent reply=append hi").ends_with(" echo --\nhi\n"));
+}
+
+#[test]
+fn stamp_local_writes_the_local_time_and_its_offset() {
+    let mut app = app(
+        "@agent hi",
+        "",
+        "default = echo\necho = cat\nstamp = local\n",
+    );
+    run(&mut app);
+    let b = body(&app, "@agent hi");
+    let line = b.lines().next().unwrap();
+    // -- 2026-11-16 16:03+0200 echo --
+    let time = &line[3..24];
+    assert!(
+        matches!(time.as_bytes()[16], b'+' | b'-')
+            && time[17..].chars().all(|c| c.is_ascii_digit()),
+        "{line}"
+    );
+    assert!(line.ends_with(" echo --"), "{line}");
+}

@@ -121,10 +121,12 @@ fn the_exercises_hold() {
         "echo-agent (model: none) got 1 lines:\n> hello\n"
     );
 
-    // 3: scope=1 sends the node and its children.
-    let h = "3. Scope: outline text with the prompt";
-    ask(&mut app, h, 0, "ask agent=echo scope=1 compare");
-    let b = body(&app, h);
+    // 3: scope=1 from a child sends its parent's subtree; scope=2 is past
+    // the top and refuses.
+    ask(&mut app, "Quicksort", 0, "ask agent=echo scope=2 compare");
+    assert!(app.message.contains("past the top"), "{}", app.message);
+    ask(&mut app, "Quicksort", 0, "ask agent=echo scope=1 compare");
+    let b = body(&app, "Quicksort");
     for line in [
         "> * 3. Scope: outline text with the prompt",
         ">   * Quicksort",
