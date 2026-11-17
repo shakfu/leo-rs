@@ -40,8 +40,8 @@ jobs:
       matrix:
         include:
           - { toolchain: "1.89", packages: "-p leolib" }
-          - { toolchain: "1.90", packages: "--workspace --exclude leogui --features leo-entangled/leoapp" }
-          - { toolchain: "1.95", packages: "-p leogui" }
+          - { toolchain: "1.90", packages: "--workspace --exclude leogui --exclude leo-all --features leo-entangled/leoapp" }
+          - { toolchain: "1.95", packages: "-p leogui -p leo-all" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the toolchain
